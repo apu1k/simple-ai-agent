@@ -1,26 +1,26 @@
 from agent.agent import Agent
 from agent.prompt import build_system_prompt
-from utils.logger import user, ai
+from config import MODEL
+from utils.logger import ai
+
 
 def run_agent():
-    agent = Agent(build_system_prompt())
+    agent = Agent(build_system_prompt(), MODEL)
 
     while True:
-        user_input = input("Du: ")
+        user_input = input("You: ")
         cmd = user_input.strip().lower()
 
-        # ✅ Commands
         if cmd.startswith("\\"):
             if cmd == "\\reset":
-                agent = Agent(build_system_prompt())
-                ai("AI: Kontext zurückgesetzt.")
+                agent = Agent(build_system_prompt(), MODEL)
+                ai("AI: Context has been reset.")
             elif cmd in ["\\exit", "\\quit"]:
-                ai("AI: Beenden.")
+                ai("AI: Goodbye.")
                 break
             else:
-                ai("AI: Unbekannter Befehl")
+                ai("AI: Unknown command.")
             continue
 
-        # ✅ Agent arbeitet
         reply = agent.step(user_input)
         ai("AI: " + reply)
