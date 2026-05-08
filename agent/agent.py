@@ -1,3 +1,4 @@
+from agent.state import AgentState
 from llm.client import chat
 from tools import TOOLS
 from utils.parser import parse_action
@@ -5,10 +6,30 @@ from utils.logger import debug, tool, raw, error
 
 
 class Agent:
-    def __init__(self, system_prompt, model):
-        self.model = model
+    def __init__(self, system_prompt, state: AgentState):
+        self.state = state
         self.messages = [{"role": "system", "content": system_prompt}]
         debug(f"SYSTEM PROMPT: {system_prompt}")
+        debug(f"AGENT STATE: cwd={self.state.cwd}, model={self.state.model}")
+
+    def _runtime_context(self):
+        return (
+            "Current local agent runtime state:\n"
+            f"- current working directory: {self.state.cwd}\n"
+            f"- selected model: {self.state.model}\n\n"
+            "Important:\n"
+            "- You are controlling a local agent runtime through tools.\n"
+            "- If the user asks where you are in the filesystem, use the current working directory.\n"
+            "- If the user asks for the current path, directory, location, or agent state, call the pwd tool or answer using this runtime state.\n"
+            "- Do not answer such questions as if you were only a remote AI model without local state.\n"
+        )
+
+    def _messages_with_runtime_context(self):
+        return [
+            self.messages[0],
+            {"role": "system", "content": self._runtime_context()},
+            *self.messages[1:],
+        ]
 
     def step(self, user_input):
         debug(f"USER INPUT: {user_input}")
@@ -17,7 +38,7 @@ class Agent:
         retry_count = 0
 
         for _ in range(10):
-            response = chat(self.messages, self.model)
+            response = chat(self._messages_with_runtime_context(), self.state.model)
             reply = response.choices[0].message.content
 
             if not reply:
@@ -58,8 +79,15 @@ class Agent:
                     error("Tool input is not a dictionary")
                     return "Error: Invalid tool input. Expected a JSON object."
 
+                tool_spec = TOOLS[action]
+                tool_function = tool_spec["function"]
+                requires_state = tool_spec.get("requires_state", False)
+
                 try:
-                    tool_result = TOOLS[action](**result)
+                    if requires_state:
+                        tool_result = tool_function(self.state, **result)
+                    else:
+                        tool_result = tool_function(**result)
                 except TypeError as e:
                     error(f"Tool argument error: {e}")
                     return f"Error: Invalid arguments for tool '{action}': {e}"

@@ -1,11 +1,34 @@
 from .math_tools import add, subtract, multiply, divide, power
-from .file_tools import read_file
+from .file_tools import pwd, read_file
+
 
 TOOLS = {
-    "add": add,
-    "subtract": subtract,
-    "multiply": multiply,
-    "divide": divide,
-    "power": power,
-    "read_file": read_file
+    "add": {
+        "function": add,
+        "requires_state": False,
+    },
+    "subtract": {
+        "function": subtract,
+        "requires_state": False,
+    },
+    "multiply": {
+        "function": multiply,
+        "requires_state": False,
+    },
+    "divide": {
+        "function": divide,
+        "requires_state": False,
+    },
+    "power": {
+        "function": power,
+        "requires_state": False,
+    },
+    "pwd": {
+        "function": pwd,
+        "requires_state": True,
+    },
+    "read_file": {
+        "function": read_file,
+        "requires_state": True,
+    },
 }
