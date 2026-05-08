@@ -1,5 +1,5 @@
 from .math_tools import add, subtract, multiply, divide, power
-from .file_tools import pwd, read_file
+from .file_tools import pwd, ls, cd, read_file
 
 
 TOOLS = {
@@ -25,6 +25,14 @@ TOOLS = {
     },
     "pwd": {
         "function": pwd,
+        "requires_state": True,
+    },
+    "ls": {
+        "function": ls,
+        "requires_state": True,
+    },
+    "cd": {
+        "function": cd,
         "requires_state": True,
     },
     "read_file": {
