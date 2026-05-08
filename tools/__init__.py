@@ -1,5 +1,5 @@
 from .math_tools import add, subtract, multiply, divide, power
-from .file_tools import pwd, ls, cd, read_file
+from .file_tools import pwd, ls, cd, read_file, find_files, search_text
 
 
 TOOLS = {
@@ -37,6 +37,14 @@ TOOLS = {
     },
     "read_file": {
         "function": read_file,
+        "requires_state": True,
+    },
+    "find_files": {
+        "function": find_files,
+        "requires_state": True,
+    },
+    "search_text": {
+        "function": search_text,
         "requires_state": True,
     },
 }
