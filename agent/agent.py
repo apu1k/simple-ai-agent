@@ -10,13 +10,19 @@ class Agent:
         self.state = state
         self.messages = [{"role": "system", "content": system_prompt}]
         debug(f"SYSTEM PROMPT: {system_prompt}")
-        debug(f"AGENT STATE: cwd={self.state.cwd}, model={self.state.model}")
+        debug(
+            f"AGENT STATE: cwd={self.state.cwd}, "
+            f"provider={self.state.model_config.provider_label}, "
+            f"model={self.state.model_config.model}, "
+            f"api_type={self.state.model_config.api_type}"
+        )
 
     def _runtime_context(self):
         return (
             "Current local agent runtime state:\n"
             f"- current working directory: {self.state.cwd}\n"
-            f"- selected model: {self.state.model}\n\n"
+            f"- selected provider: {self.state.model_config.provider_label}\n"
+            f"- selected model: {self.state.model_config.model}\n\n"
             "Important:\n"
             "- You are controlling a local agent runtime through tools.\n"
             "- If the user asks where you are in the filesystem, use the current working directory.\n"
@@ -38,8 +44,7 @@ class Agent:
         retry_count = 0
 
         for _ in range(10):
-            response = chat(self._messages_with_runtime_context(), self.state.model)
-            reply = response.choices[0].message.content
+            reply = chat(self._messages_with_runtime_context(), self.state.model_config)
 
             if not reply:
                 error("Empty response from model")
