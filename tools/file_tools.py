@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 
@@ -33,6 +34,25 @@ def should_skip_path(path):
     return any(part in IGNORED_DIRS for part in path.parts)
 
 
+def quote_value(value):
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def format_ls_entry(entry):
+    if entry.is_dir():
+        entry_type = "DIR"
+    elif entry.is_file():
+        entry_type = "FILE"
+    else:
+        entry_type = "OTHER"
+
+    return (
+        f"[{entry_type}] "
+        f"name={quote_value(entry.name)} "
+        f"path={quote_value(entry)}"
+    )
+
+
 def pwd(state):
     return str(state.cwd)
 
@@ -49,21 +69,20 @@ def ls(state, path="."):
 
         entries = sorted(
             directory_path.iterdir(),
-            key=lambda entry: (not entry.is_dir(), entry.name.lower())
+            key=lambda entry: (not entry.is_dir(), entry.name.lower()),
         )
 
         if not entries:
             return f"Directory is empty: {directory_path}"
 
-        lines = [f"Directory: {directory_path}", ""]
+        lines = [
+            f"Directory: {directory_path}",
+            f"Entries: {len(entries)}",
+            "",
+        ]
 
         for entry in entries:
-            if entry.is_dir():
-                lines.append(f"[DIR]  {entry.name}")
-            elif entry.is_file():
-                lines.append(f"[FILE] {entry.name}")
-            else:
-                lines.append(f"[OTHER] {entry.name}")
+            lines.append(format_ls_entry(entry))
 
         return "\n".join(lines)
 
@@ -84,6 +103,7 @@ def cd(state, path):
             return f"Error: Path is not a directory: {directory_path}"
 
         state.cwd = directory_path
+
         return f"Changed directory to: {state.cwd}"
 
     except PermissionError:
@@ -143,8 +163,10 @@ def find_files(state, pattern, path=".", max_results=100):
         if not matches:
             return f"No files found for pattern '{pattern}' in {search_root}"
 
-        result = [f"Found {len(matches)} file(s) for pattern '{pattern}' in {search_root}:", ""]
-
+        result = [
+            f"Found {len(matches)} file(s) for pattern '{pattern}' in {search_root}:",
+            "",
+        ]
         result.extend(matches)
 
         if len(matches) >= max_results:
@@ -208,9 +230,8 @@ def search_text(state, query, path=".", file_pattern="*", max_results=100):
         result = [
             f"Found {len(matches)} text match(es) for query '{query}' "
             f"in {search_root} with file pattern '{file_pattern}':",
-            ""
+            "",
         ]
-
         result.extend(matches)
 
         if len(matches) >= max_results:

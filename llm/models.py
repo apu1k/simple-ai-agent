@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-
 from openai import OpenAI
 
 from llm.providers import PROVIDERS, ProviderConfig
@@ -75,8 +74,30 @@ def choose_provider():
     return provider_items[selected_index]
 
 
+def filter_models(models):
+    if not models:
+        return []
+
+    filter_text = input("Filter models? Leave empty for all: ").strip()
+
+    if not filter_text:
+        return models
+
+    filtered_models = [
+        model for model in models
+        if filter_text.lower() in model.lower()
+    ]
+
+    if not filtered_models:
+        print(f"No models matched '{filter_text}'. Showing all models.")
+        return models
+
+    return filtered_models
+
+
 def choose_model(provider: ProviderConfig):
-    models = list_provider_models(provider)
+    all_models = list_provider_models(provider)
+    models = filter_models(all_models)
 
     print()
     print(f"Choose model for {provider.label}:")
@@ -87,6 +108,8 @@ def choose_model(provider: ProviderConfig):
     for index, model in enumerate(models, start=1):
         marker = " (default)" if model == provider.default_model else ""
         print(f"[{index}] {model}{marker}")
+
+    print("[m] Enter model ID manually")
 
     if not models and not provider.default_model:
         manual_model = input(
