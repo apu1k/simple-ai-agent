@@ -1,7 +1,7 @@
 from agent.state import AgentState
 from llm.client import chat
 from tools import TOOLS
-from utils.parser import parse_action
+from utils.parser import parse_model_response
 from utils.logger import debug, tool, raw, error
 
 
@@ -9,6 +9,7 @@ class Agent:
     def __init__(self, system_prompt, state: AgentState):
         self.state = state
         self.messages = [{"role": "system", "content": system_prompt}]
+
         debug(f"SYSTEM PROMPT: {system_prompt}")
         debug(
             f"AGENT STATE: cwd={self.state.cwd}, "
@@ -37,11 +38,17 @@ class Agent:
             *self.messages[1:],
         ]
 
+    def _append_tool_observation(self, action, tool_result):
+        self.messages.append({
+            "role": "user",
+            "content": f"TOOL RESULT ({action}): {tool_result}",
+        })
+
     def step(self, user_input):
         debug(f"USER INPUT: {user_input}")
         self.messages.append({"role": "user", "content": user_input})
 
-        retry_count = 0
+        invalid_tool_call_retry_count = 0
 
         for _ in range(10):
             reply = chat(self._messages_with_runtime_context(), self.state.model_config)
@@ -52,37 +59,60 @@ class Agent:
 
             raw(f"RAW MODEL RESPONSE: {reply}")
 
-            action, result = parse_action(reply)
+            parsed = parse_model_response(reply)
 
-            if action is None and result is None:
-                if retry_count < 2:
-                    error("Invalid JSON from model, retrying...")
+            if not parsed.is_valid:
+                error(f"Invalid model response: {parsed.error}")
+
+                if invalid_tool_call_retry_count < 2:
+                    self.messages.append({"role": "assistant", "content": reply})
                     self.messages.append({
                         "role": "user",
                         "content": (
-                            "Your previous response was not valid JSON or did not match the required schema. "
-                            "Reply ONLY with valid JSON in one of these formats: "
-                            '{"action": "tool_name", "input": {"param": "value"}} '
-                            'or {"final": "your answer"}.'
-                        )
+                            "Your previous response looked like a tool call, but it was invalid.\n"
+                            f"Parser error: {parsed.error}\n\n"
+                            "If you want to call a tool, reply ONLY with one valid raw JSON object "
+                            "matching exactly this schema:\n"
+                            '{"action": "tool_name", "input": {"param": "value"}}\n\n'
+                            "Rules for tool calls:\n"
+                            "- no Markdown\n"
+                            "- no code fences\n"
+                            "- no explanations\n"
+                            "- no comments\n"
+                            "- no extra keys\n"
+                            "- always include \"input\", even if it is empty\n\n"
+                            "If you are finished and want to answer the user, do not use JSON. "
+                            "Write the final answer as normal text."
+                        ),
                     })
-                    retry_count += 1
+                    invalid_tool_call_retry_count += 1
                     continue
 
-                error("Model failed to return valid JSON after retries")
-                return reply
+                error("Model failed to return a valid tool call after retries")
+                return (
+                    "Error: Model failed to return a valid tool call after retries. "
+                    f"Last parser error: {parsed.error}"
+                )
 
-            debug(f"AVAILABLE TOOLS: {list(TOOLS.keys())}")
-            debug(f"REQUESTED ACTION: {action}")
+            invalid_tool_call_retry_count = 0
 
-            if action:
+            if parsed.kind == "tool":
+                action = parsed.action
+                tool_input = parsed.tool_input or {}
+
+                debug(f"AVAILABLE TOOLS: {list(TOOLS.keys())}")
+                debug(f"REQUESTED ACTION: {action}")
+
+                self.messages.append({"role": "assistant", "content": reply})
+
                 if action not in TOOLS:
-                    error(f"Tool '{action}' not found")
-                    return f"Error: Tool '{action}' does not exist."
-
-                if not isinstance(result, dict):
-                    error("Tool input is not a dictionary")
-                    return "Error: Invalid tool input. Expected a JSON object."
+                    tool_result = (
+                        f"Error: Tool '{action}' does not exist. "
+                        f"Available tools: {', '.join(TOOLS.keys())}"
+                    )
+                    error(tool_result)
+                    self._append_tool_observation(action, tool_result)
+                    continue
 
                 tool_spec = TOOLS[action]
                 tool_function = tool_spec["function"]
@@ -90,32 +120,27 @@ class Agent:
 
                 try:
                     if requires_state:
-                        tool_result = tool_function(self.state, **result)
+                        tool_result = tool_function(self.state, **tool_input)
                     else:
-                        tool_result = tool_function(**result)
+                        tool_result = tool_function(**tool_input)
                 except TypeError as e:
-                    error(f"Tool argument error: {e}")
-                    return f"Error: Invalid arguments for tool '{action}': {e}"
+                    tool_result = f"Error: Invalid arguments for tool '{action}': {e}"
+                    error(tool_result)
                 except Exception as e:
-                    error(f"Tool execution error: {e}")
-                    return f"Error: Tool execution failed: {e}"
+                    tool_result = f"Error: Tool execution failed for tool '{action}': {e}"
+                    error(tool_result)
 
-                tool(f"TOOL CALL: {action}({result}) -> {tool_result}")
+                tool(f"TOOL CALL: {action}({tool_input}) -> {tool_result}")
 
-                self.messages.append({"role": "assistant", "content": reply})
-                self.messages.append({
-                    "role": "user",
-                    "content": f"TOOL RESULT: {tool_result}"
-                })
-
+                self._append_tool_observation(action, tool_result)
                 continue
 
-            if result is not None:
-                if isinstance(result, str) and result.startswith("FINAL:"):
-                    result = result.replace("FINAL:", "", 1).strip()
-                return str(result)
+            if parsed.kind == "final":
+                final_answer = parsed.final
+                self.messages.append({"role": "assistant", "content": reply})
+                return final_answer
 
-            return reply
+            return "Error: Unexpected parser state."
 
         return "Error: Too many agent steps"
 
