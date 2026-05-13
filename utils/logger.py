@@ -1,7 +1,9 @@
-from colorama import Fore, Style, init
+from rich.console import Console
+from rich.panel import Panel
 
 
-init(autoreset=True)
+console = Console()
+error_console = Console(stderr=True)
 
 
 _DEBUG_ENABLED = False
@@ -17,27 +19,61 @@ def is_debug_enabled():
 
 
 def user(msg):
-    print(Fore.CYAN + msg)
+    console.print(str(msg), style="cyan", markup=False)
 
 
 def ai(msg):
-    print(Fore.WHITE + msg)
+    console.print(str(msg), style="white", markup=False)
 
 
 def debug(msg):
-    if _DEBUG_ENABLED:
-        print(Fore.YELLOW + msg)
+    if not _DEBUG_ENABLED:
+        return
+
+    console.print(
+        Panel(
+            str(msg),
+            title="DEBUG",
+            border_style="yellow",
+            expand=False,
+        )
+    )
 
 
 def tool(msg):
-    if _DEBUG_ENABLED:
-        print(Fore.GREEN + msg)
+    if not _DEBUG_ENABLED:
+        return
+
+    console.print(
+        Panel(
+            str(msg),
+            title="TOOL",
+            border_style="green",
+            expand=False,
+        )
+    )
 
 
 def raw(msg):
-    if _DEBUG_ENABLED:
-        print(Fore.BLUE + msg)
+    if not _DEBUG_ENABLED:
+        return
+
+    console.print(
+        Panel(
+            str(msg),
+            title="RAW MODEL RESPONSE",
+            border_style="blue",
+            expand=False,
+        )
+    )
 
 
 def error(msg):
-    print(Fore.RED + msg)
+    error_console.print(
+        Panel(
+            str(msg),
+            title="ERROR",
+            border_style="red",
+            expand=False,
+        )
+    )
