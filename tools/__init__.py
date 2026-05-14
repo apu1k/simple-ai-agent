@@ -181,6 +181,9 @@ TOOLS = {
             "Display a UTF-8 text file, or a line range from a file, directly to the user "
             "in the CLI. The file contents are not returned to the model; the model receives "
             "only a short confirmation. Use this when the user asks to see a file."
+            "Do not use this tool unless the user explicitly requests a file to be shown,"
+            "because the tool provides no useful information to the agent itself."
+            "dont call this during code analysis task."
         ),
         "parameters": {
             "path": (
@@ -224,7 +227,10 @@ TOOLS = {
             "Recursively find matching UTF-8 text files and display their complete contents "
             "directly to the user in the CLI. The file contents are not returned to the model; "
             "the model receives only a short confirmation and a list of displayed files. "
-            "Use this when the user asks to receive or see many files, for example all Python files."
+            "Use this when the user asks to receive or see many files, for example: show all Python files."
+            "Do not use this tool unless the user explicitly requests a file to be shown,"
+            "because the tool provides no useful information to the agent itself."
+            "dont call this during code analysis task."
         ),
         "parameters": {
             "pattern": (
