@@ -1,8 +1,10 @@
 from agent.state import AgentState
 from llm.client import chat
 from tools import TOOLS
+from tools.results import ToolResult
 from utils.parser import parse_model_response
 from utils.logger import debug, tool, raw, error
+from utils.ui import show_display_items
 
 
 class Agent:
@@ -44,10 +46,19 @@ class Agent:
             "content": f"TOOL RESULT ({action}): {tool_result}",
         })
 
+    def _process_tool_result(self, tool_result):
+        if isinstance(tool_result, ToolResult):
+            if tool_result.display_items:
+                show_display_items(tool_result.display_items)
+
+            return tool_result.observation
+
+        return str(tool_result)
+
     def step(self, user_input):
         debug(f"USER INPUT: {user_input}")
-        self.messages.append({"role": "user", "content": user_input})
 
+        self.messages.append({"role": "user", "content": user_input})
         invalid_tool_call_retry_count = 0
 
         for _ in range(10):
@@ -86,6 +97,7 @@ class Agent:
                             "If you are finished and do not need tools, answer normally in plain text."
                         ),
                     })
+
                     invalid_tool_call_retry_count += 1
                     continue
 
@@ -121,19 +133,21 @@ class Agent:
 
                 try:
                     if requires_state:
-                        tool_result = tool_function(self.state, **tool_input)
+                        raw_tool_result = tool_function(self.state, **tool_input)
                     else:
-                        tool_result = tool_function(**tool_input)
+                        raw_tool_result = tool_function(**tool_input)
+
+                    tool_observation = self._process_tool_result(raw_tool_result)
+
                 except TypeError as e:
-                    tool_result = f"Error: Invalid arguments for tool '{action}': {e}"
-                    error(tool_result)
+                    tool_observation = f"Error: Invalid arguments for tool '{action}': {e}"
+                    error(tool_observation)
                 except Exception as e:
-                    tool_result = f"Error: Tool execution failed for tool '{action}': {e}"
-                    error(tool_result)
+                    tool_observation = f"Error: Tool execution failed for tool '{action}': {e}"
+                    error(tool_observation)
 
-                tool(f"TOOL CALL: {action}({tool_input}) -> {tool_result}")
-
-                self._append_tool_observation(action, tool_result)
+                tool(f"TOOL CALL: {action}({tool_input}) -> {tool_observation}")
+                self._append_tool_observation(action, tool_observation)
                 continue
 
             if parsed.kind == "final":

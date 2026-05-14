@@ -1,6 +1,14 @@
 from .math_tools import add, subtract, multiply, divide, power
-from .file_tools import pwd, ls, cd, read_file, find_files, search_text
-
+from .file_tools import (
+    pwd,
+    ls,
+    cd,
+    read_file,
+    show_file,
+    find_files,
+    show_files,
+    search_text,
+)
 
 TOOLS = {
     "add": {
@@ -81,9 +89,15 @@ TOOLS = {
     "ls": {
         "function": ls,
         "requires_state": True,
-        "description": "List files and directories in a local directory. Relative paths are resolved against the current working directory.",
+        "description": (
+            "List files and directories in a local directory. "
+            "Relative paths are resolved against the current working directory."
+        ),
         "parameters": {
-            "path": "Directory path to list. Defaults to '.'. Relative and absolute paths are allowed.",
+            "path": (
+                "Directory path to list. Defaults to '.'. "
+                "Relative and absolute paths are allowed."
+            ),
         },
         "example": {
             "action": "ls",
@@ -93,7 +107,10 @@ TOOLS = {
     "cd": {
         "function": cd,
         "requires_state": True,
-        "description": "Change the current local working directory. Relative and absolute paths are allowed.",
+        "description": (
+            "Change the current local working directory. "
+            "Relative and absolute paths are allowed."
+        ),
         "parameters": {
             "path": "Directory path to change into.",
         },
@@ -105,12 +122,42 @@ TOOLS = {
     "read_file": {
         "function": read_file,
         "requires_state": True,
-        "description": "Read a UTF-8 text file from the local filesystem. Relative paths are resolved against the current working directory.",
+        "description": (
+            "Read a UTF-8 text file from the local filesystem and return its contents "
+            "to the model for analysis. Use this when you need to inspect, reason about, "
+            "summarize, or modify file contents."
+        ),
         "parameters": {
-            "path": "File path to read. Relative and absolute paths are allowed.",
+            "path": (
+                "File path to read. Relative and absolute paths are allowed."
+            ),
         },
         "example": {
             "action": "read_file",
+            "input": {"path": "main.py"},
+        },
+    },
+    "show_file": {
+        "function": show_file,
+        "requires_state": True,
+        "description": (
+            "Display a UTF-8 text file, or a line range from a file, directly to the user "
+            "in the CLI. The file contents are not returned to the model; the model receives "
+            "only a short confirmation. Use this when the user asks to see a file."
+        ),
+        "parameters": {
+            "path": (
+                "File path to display. Relative and absolute paths are allowed."
+            ),
+            "start_line": (
+                "Optional 1-based start line for displaying only part of the file."
+            ),
+            "end_line": (
+                "Optional 1-based inclusive end line for displaying only part of the file."
+            ),
+        },
+        "example": {
+            "action": "show_file",
             "input": {"path": "main.py"},
         },
     },
@@ -119,13 +166,45 @@ TOOLS = {
         "requires_state": True,
         "description": "Recursively find files by filename pattern.",
         "parameters": {
-            "pattern": "Filename pattern to search for, for example '*.py', '*.md', or 'config*'.",
-            "path": "Directory to search in. Defaults to '.'. Relative and absolute paths are allowed.",
+            "pattern": (
+                "Filename pattern to search for, for example '*.py', '*.md', or 'config*'."
+            ),
+            "path": (
+                "Directory to search in. Defaults to '.'. "
+                "Relative and absolute paths are allowed."
+            ),
             "max_results": "Maximum number of results to return. Defaults to 100.",
         },
         "example": {
             "action": "find_files",
             "input": {"pattern": "*.py", "path": ".", "max_results": 100},
+        },
+    },
+    "show_files": {
+        "function": show_files,
+        "requires_state": True,
+        "description": (
+            "Recursively find matching UTF-8 text files and display their complete contents "
+            "directly to the user in the CLI. The file contents are not returned to the model; "
+            "the model receives only a short confirmation and a list of displayed files. "
+            "Use this when the user asks to receive or see many files, for example all Python files."
+        ),
+        "parameters": {
+            "pattern": (
+                "Filename pattern to display, for example '*.py', '*.md', or 'config*'."
+            ),
+            "path": (
+                "Directory to search in. Defaults to '.'. "
+                "Relative and absolute paths are allowed."
+            ),
+            "max_files": (
+                "Maximum number of files to display. Defaults to the tool limit. "
+                "A hard safety limit is still enforced."
+            ),
+        },
+        "example": {
+            "action": "show_files",
+            "input": {"pattern": "*.py", "path": ".", "max_files": 30},
         },
     },
     "search_text": {
@@ -134,8 +213,14 @@ TOOLS = {
         "description": "Recursively search for exact text in files.",
         "parameters": {
             "query": "Exact text to search for.",
-            "path": "Directory to search in. Defaults to '.'. Relative and absolute paths are allowed.",
-            "file_pattern": "Filename pattern used to limit searched files. Defaults to '*'. Example: '*.py'.",
+            "path": (
+                "Directory to search in. Defaults to '.'. "
+                "Relative and absolute paths are allowed."
+            ),
+            "file_pattern": (
+                "Filename pattern used to limit searched files. "
+                "Defaults to '*'. Example: '*.py'."
+            ),
             "max_results": "Maximum number of matches to return. Defaults to 100.",
         },
         "example": {

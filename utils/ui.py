@@ -1,17 +1,17 @@
 from contextlib import contextmanager
 
 from rich.panel import Panel
+from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
+from tools.results import DisplayItem
 from utils.logger import console, is_debug_enabled
-
 
 try:
     from rich.spinner import SPINNERS
 except Exception:
     SPINNERS = {}
-
 
 PROCESSING_SPINNER = "star2" if "star2" in SPINNERS else "dots"
 
@@ -49,7 +49,6 @@ def show_help():
         header_style="bold cyan",
         border_style="blue",
     )
-
     table.add_column("Command", style="cyan", no_wrap=True)
     table.add_column("Description", style="white")
 
@@ -76,7 +75,6 @@ def show_input_help():
         header_style="bold magenta",
         border_style="magenta",
     )
-
     table.add_column("Shortcut", style="magenta", no_wrap=True)
     table.add_column("Action", style="white")
 
@@ -187,6 +185,44 @@ def show_command_message(message, title="Info", border_style="white"):
             expand=False,
         )
     )
+
+
+def show_display_item(display_item: DisplayItem):
+    if display_item.kind != "file":
+        show_command_error(f"Unsupported display item kind: {display_item.kind}")
+        return
+
+    content = display_item.content
+
+    if not content:
+        renderable = Text("(empty file)", style="dim")
+    else:
+        try:
+            renderable = Syntax(
+                content,
+                display_item.language or "text",
+                line_numbers=True,
+                start_line=max(display_item.start_line, 1),
+                word_wrap=False,
+            )
+        except Exception:
+            renderable = Text(content)
+
+    console.print()
+    console.print(
+        Panel(
+            renderable,
+            title=display_item.title,
+            border_style="cyan",
+            expand=False,
+        )
+    )
+    console.print()
+
+
+def show_display_items(display_items):
+    for display_item in display_items:
+        show_display_item(display_item)
 
 
 @contextmanager
