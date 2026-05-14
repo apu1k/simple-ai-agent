@@ -4,6 +4,8 @@ from .file_tools import (
     ls,
     cd,
     read_file,
+    analyze_python_file,
+    analyze_python_files,
     show_file,
     find_files,
     show_files,
@@ -135,6 +137,41 @@ TOOLS = {
         "example": {
             "action": "read_file",
             "input": {"path": "main.py"},
+        },
+    },
+    "analyze_python_file": {
+        "function": analyze_python_file,
+        "requires_state": True,
+        "description": (
+            "Analyze a Python file using the ast module and return structured information "
+            "such as imports, module docstring status, top-level assignments, functions, "
+            "classes, class variables, and methods without returning code bodies."
+        ),
+        "parameters": {
+            "path": (
+                "Python file path to analyze. Relative and absolute paths are allowed."
+            ),
+        },
+    },
+    "analyze_python_files": {
+        "function": analyze_python_files,
+        "requires_state": True,
+        "description": (
+            "Recursively analyze matching Python files using the ast module and return "
+            "structured information without returning code bodies."
+        ),
+        "parameters": {
+            "pattern": (
+                "Filename pattern to search for. Defaults to '*.py'."
+            ),
+            "path": (
+                "Directory to search in. Defaults to '.'. "
+                "Relative and absolute paths are allowed."
+            ),
+            "max_files": (
+                "Maximum number of Python files to analyze. "
+                "A hard safety limit is still enforced."
+            ),
         },
     },
     "show_file": {

@@ -1,3 +1,4 @@
+import ast
 import json
 from pathlib import Path
 
@@ -25,6 +26,7 @@ MAX_DISPLAY_FILE_SIZE_BYTES = 100_000
 MAX_DISPLAY_TOTAL_BYTES = 500_000
 MAX_DISPLAY_FILES = 30
 MAX_DISPLAY_LINES = 2_000
+MAX_ANALYZE_FILES = 30
 
 
 def resolve_path(state, path="."):
@@ -112,6 +114,315 @@ def validate_file_for_reading(file_path):
 
     return None
 
+
+ASSIGNMENT_NODES = (ast.Assign, ast.AnnAssign, ast.AugAssign)
+
+
+def validate_python_file_for_analysis(file_path):
+    validation_error = validate_file_for_reading(file_path)
+    if validation_error:
+        return validation_error
+
+    if file_path.suffix.lower() != ".py":
+        return f"Error: Path is not a Python file: {file_path}"
+
+    if file_path.stat().st_size > MAX_FILE_SIZE_BYTES:
+        return f"Error: File is too large to analyze: {file_path}"
+
+    return None
+
+
+def safe_unparse(node):
+    try:
+        return ast.unparse(node)
+    except Exception:
+        return type(node).__name__
+
+
+def format_alias(alias):
+    if alias.asname:
+        return f"{alias.name} as {alias.asname}"
+
+    return alias.name
+
+
+def format_import_node(node):
+    if isinstance(node, ast.Import):
+        names = ", ".join(format_alias(alias) for alias in node.names)
+        return f"import {names}"
+
+    if isinstance(node, ast.ImportFrom):
+        module_prefix = "." * node.level
+        module_name = f"{module_prefix}{node.module or ''}" or "."
+        names = ", ".join(format_alias(alias) for alias in node.names)
+        return f"from {module_name} import {names}"
+
+    return None
+
+
+def line_range_text(node):
+    start_line = getattr(node, "lineno", None)
+    end_line = getattr(node, "end_lineno", None)
+
+    if start_line is None:
+        return "line unknown"
+
+    if end_line is not None and end_line != start_line:
+        return f"lines {start_line}-{end_line}"
+
+    return f"line {start_line}"
+
+
+def collect_target_names(target):
+    if isinstance(target, ast.Name):
+        return [target.id]
+
+    if isinstance(target, (ast.Tuple, ast.List)):
+        names = []
+
+        for element in target.elts:
+            names.extend(collect_target_names(element))
+
+        return names
+
+    if isinstance(target, ast.Starred):
+        return collect_target_names(target.value)
+
+    if isinstance(target, (ast.Attribute, ast.Subscript)):
+        return [safe_unparse(target)]
+
+    return []
+
+
+def collect_assignment_names(node):
+    names = []
+
+    if isinstance(node, ast.Assign):
+        for target in node.targets:
+            names.extend(collect_target_names(target))
+
+    elif isinstance(node, ast.AnnAssign):
+        names.extend(collect_target_names(node.target))
+
+    elif isinstance(node, ast.AugAssign):
+        names.extend(collect_target_names(node.target))
+
+    return list(dict.fromkeys(names))
+
+
+def format_assignment_summary(node):
+    names = collect_assignment_names(node)
+
+    if not names:
+        return None
+
+    return f"{', '.join(names)}, {line_range_text(node)}"
+
+
+def format_function_signature(node):
+    try:
+        arguments = ast.unparse(node.args)
+    except Exception:
+        arguments = "..."
+
+    return_annotation = ""
+
+    if node.returns is not None:
+        return_annotation = f" -> {safe_unparse(node.returns)}"
+
+    prefix = "async " if isinstance(node, ast.AsyncFunctionDef) else ""
+
+    return f"{prefix}{node.name}({arguments}){return_annotation}"
+
+
+def format_function_summary(node):
+    signature = format_function_signature(node)
+    return f"{signature}, {line_range_text(node)}"
+
+
+def format_class_bases(node):
+    bases = [safe_unparse(base) for base in node.bases]
+
+    for keyword in node.keywords:
+        if keyword.arg is None:
+            bases.append(f"**{safe_unparse(keyword.value)}")
+        else:
+            bases.append(f"{keyword.arg}={safe_unparse(keyword.value)}")
+
+    return bases
+
+
+def module_docstring_line(tree):
+    if not tree.body:
+        return None
+
+    first_node = tree.body[0]
+
+    if not isinstance(first_node, ast.Expr):
+        return None
+
+    value = first_node.value
+
+    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+        return getattr(first_node, "lineno", None)
+
+    return None
+
+
+def analyze_python_tree(state, file_path, source_text, tree):
+    display_path = build_display_path(state, file_path)
+    lines = [
+        f"File: {display_path}",
+        f"Lines: {len(source_text.splitlines())}",
+    ]
+
+    docstring_line = module_docstring_line(tree)
+
+    lines.append("")
+    lines.append("Module docstring:")
+    if docstring_line is None:
+        lines.append("- none")
+    else:
+        lines.append(f"- present, line {docstring_line}")
+
+    imports = []
+
+    for node in tree.body:
+        import_text = format_import_node(node)
+
+        if import_text:
+            imports.append(f"{import_text}, {line_range_text(node)}")
+
+    lines.append("")
+    lines.append("Imports:")
+    if imports:
+        lines.extend(f"- {item}" for item in imports)
+    else:
+        lines.append("- none")
+
+    assignments = []
+
+    for node in tree.body:
+        if isinstance(node, ASSIGNMENT_NODES):
+            assignment_text = format_assignment_summary(node)
+
+            if assignment_text:
+                assignments.append(assignment_text)
+
+    lines.append("")
+    lines.append("Top-level constants/assignments:")
+    if assignments:
+        lines.extend(f"- {item}" for item in assignments)
+    else:
+        lines.append("- none")
+
+    functions = [
+        format_function_summary(node)
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+
+    lines.append("")
+    lines.append("Top-level functions:")
+    if functions:
+        lines.extend(f"- {item}" for item in functions)
+    else:
+        lines.append("- none")
+
+    classes = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    ]
+
+    lines.append("")
+    lines.append("Classes:")
+
+    if not classes:
+        lines.append("- none")
+        return "\n".join(lines)
+
+    for class_node in classes:
+        lines.append(f"- {class_node.name}, {line_range_text(class_node)}")
+
+        bases = format_class_bases(class_node)
+
+        if bases:
+            lines.append(f"  Bases: {', '.join(bases)}")
+        else:
+            lines.append("  Bases: none")
+
+        class_assignments = []
+
+        for child in class_node.body:
+            if isinstance(child, ASSIGNMENT_NODES):
+                assignment_text = format_assignment_summary(child)
+
+                if assignment_text:
+                    class_assignments.append(assignment_text)
+
+        lines.append("  Class variables:")
+        if class_assignments:
+            lines.extend(f"  - {item}" for item in class_assignments)
+        else:
+            lines.append("  - none")
+
+        methods = [
+            format_function_summary(child)
+            for child in class_node.body
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+
+        lines.append("  Methods:")
+        if methods:
+            lines.extend(f"  - {item}" for item in methods)
+        else:
+            lines.append("  - none")
+
+    return "\n".join(lines)
+
+
+def analyze_python_file_path(state, file_path):
+    validation_error = validate_python_file_for_analysis(file_path)
+    if validation_error:
+        return validation_error
+
+    try:
+        source_text = file_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return f"Error: File is not a valid UTF-8 text file: {file_path}"
+    except PermissionError:
+        return f"Error: Permission denied: {file_path}"
+    except Exception as e:
+        return f"Error: Failed to read file '{file_path}': {e}"
+
+    try:
+        tree = ast.parse(source_text, filename=str(file_path))
+    except SyntaxError as e:
+        location_parts = []
+
+        if e.lineno is not None:
+            location_parts.append(f"line {e.lineno}")
+
+        if e.offset is not None:
+            location_parts.append(f"column {e.offset}")
+
+        location = ", ".join(location_parts) or "unknown location"
+        display_path = build_display_path(state, file_path)
+
+        return "\n".join([
+            f"File: {display_path}",
+            "",
+            "Syntax error:",
+            f"- {location}: {e.msg}",
+        ])
+
+    return analyze_python_tree(
+        state=state,
+        file_path=file_path,
+        source_text=source_text,
+        tree=tree,
+    )
 
 def normalize_optional_int(value, name):
     if value is None:
@@ -341,6 +652,98 @@ def read_file(state, path):
     except Exception as e:
         return f"Error: Failed to read file '{file_path}': {e}"
 
+def analyze_python_file(state, path):
+    file_path = resolve_path(state, path)
+
+    try:
+        return analyze_python_file_path(state, file_path)
+    except PermissionError:
+        return f"Error: Permission denied: {file_path}"
+    except Exception as e:
+        return f"Error: Failed to analyze Python file '{file_path}': {e}"
+
+
+def analyze_python_files(state, pattern="*.py", path=".", max_files=MAX_ANALYZE_FILES):
+    search_root = resolve_path(state, path)
+
+    try:
+        max_files = int(max_files)
+
+        if max_files < 1:
+            return "Error: max_files must be greater than or equal to 1."
+
+        effective_max_files = min(max_files, MAX_ANALYZE_FILES)
+
+        if not search_root.exists():
+            return f"Error: Path does not exist: {search_root}"
+
+        if not search_root.is_dir():
+            return f"Error: Path is not a directory: {search_root}"
+
+        matching_paths = sorted(
+            search_root.rglob(pattern),
+            key=lambda candidate: str(candidate).lower(),
+        )
+
+        analyzed = []
+        skipped_non_python = 0
+        result_limit_reached = False
+
+        for file_path in matching_paths:
+            if should_skip_path(file_path):
+                continue
+
+            if not file_path.is_file():
+                continue
+
+            if file_path.suffix.lower() != ".py":
+                skipped_non_python += 1
+                continue
+
+            if len(analyzed) >= effective_max_files:
+                result_limit_reached = True
+                break
+
+            analyzed.append(analyze_python_file_path(state, file_path))
+
+        if not analyzed:
+            return (
+                f"No Python files were analyzed for pattern '{pattern}' "
+                f"in {search_root}."
+            )
+
+        result = [
+            (
+                f"Analyzed {len(analyzed)} Python file(s) matching "
+                f"'{pattern}' in {search_root}."
+            ),
+        ]
+
+        if skipped_non_python:
+            result.append(f"Skipped non-Python files: {skipped_non_python}.")
+
+        if result_limit_reached:
+            result.append(f"Result limit reached: analyzed at most {effective_max_files} file(s).")
+
+        if max_files > MAX_ANALYZE_FILES:
+            result.append(
+                f"Requested max_files was {max_files}, "
+                f"but hard limit is {MAX_ANALYZE_FILES}."
+            )
+
+        result.append("")
+        result.append("---")
+        result.append("")
+        result.append("\n\n---\n\n".join(analyzed))
+
+        return "\n".join(result)
+
+    except ValueError:
+        return "Error: max_files must be an integer."
+    except PermissionError:
+        return f"Error: Permission denied while analyzing files in: {search_root}"
+    except Exception as e:
+        return f"Error: Failed to analyze Python files in '{search_root}': {e}"
 
 def show_file(state, path, start_line=None, end_line=None):
     file_path = resolve_path(state, path)

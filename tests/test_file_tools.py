@@ -4,6 +4,8 @@ from pathlib import Path
 import pytest
 
 from tools.file_tools import (
+    analyze_python_file,
+    analyze_python_files,
     cd,
     find_files,
     ls,
@@ -353,3 +355,138 @@ def test_show_files_skips_ignored_dirs(tmp_path):
     assert "visible.py" in result.observation
     assert "hidden.py" not in result.observation
     assert "hidden" not in result.observation
+
+
+def test_analyze_python_file_returns_structure_without_bodies(tmp_path):
+    state = make_state(tmp_path)
+    file_path = tmp_path / "example.py"
+    file_path.write_text(
+        "\n".join([
+            '"""Example module."""',
+            "import os",
+            "from pathlib import Path",
+            "",
+            "CONSTANT = 123",
+            "",
+            "class Example(Base):",
+            "    class_value = 456",
+            "",
+            "    async def run(self, value: int = 1) -> str:",
+            "        hidden_detail = 'must not be exposed'",
+            "        return str(value)",
+            "",
+            "def helper(name):",
+            "    hidden_body = 'also not exposed'",
+            "    return name",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+
+    result = analyze_python_file(state, "example.py")
+
+    assert "File: example.py" in result
+    assert "Module docstring:" in result
+    assert "present" in result
+    assert "Imports:" in result
+    assert "import os" in result
+    assert "from pathlib import Path" in result
+    assert "Top-level constants/assignments:" in result
+    assert "CONSTANT" in result
+    assert "Top-level functions:" in result
+    assert "helper(name)" in result
+    assert "Classes:" in result
+    assert "Example" in result
+    assert "Bases: Base" in result
+    assert "class_value" in result
+    assert "async run(self, value: int=1) -> str" in result
+
+    assert "hidden_detail" not in result
+    assert "hidden_body" not in result
+    assert "return str(value)" not in result
+    assert "return name" not in result
+
+
+def test_analyze_python_file_reports_syntax_error(tmp_path):
+    state = make_state(tmp_path)
+    file_path = tmp_path / "broken.py"
+    file_path.write_text("def broken(:\n    pass\n", encoding="utf-8")
+
+    result = analyze_python_file(state, "broken.py")
+
+    assert "File: broken.py" in result
+    assert "Syntax error:" in result
+    assert "line" in result
+
+
+def test_analyze_python_file_returns_error_for_non_python_file(tmp_path):
+    state = make_state(tmp_path)
+    file_path = tmp_path / "example.txt"
+    file_path.write_text("hello", encoding="utf-8")
+
+    result = analyze_python_file(state, "example.txt")
+
+    assert result.startswith("Error:")
+    assert "not a Python file" in result
+
+
+def test_analyze_python_files_analyzes_multiple_python_files(tmp_path):
+    state = make_state(tmp_path)
+
+    (tmp_path / "a.py").write_text(
+        "VALUE_A = 1\n\ndef alpha():\n    return VALUE_A\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "b.py").write_text(
+        "VALUE_B = 2\n\nclass Beta:\n    def run(self):\n        return VALUE_B\n",
+        encoding="utf-8",
+    )
+
+    result = analyze_python_files(state, "*.py", path=".", max_files=30)
+
+    assert "Analyzed 2 Python file(s)" in result
+    assert "File: a.py" in result
+    assert "VALUE_A" in result
+    assert "alpha()" in result
+    assert "File: b.py" in result
+    assert "VALUE_B" in result
+    assert "Beta" in result
+    assert "run(self)" in result
+
+    assert "return VALUE_A" not in result
+    assert "return VALUE_B" not in result
+
+
+def test_analyze_python_files_skips_ignored_dirs(tmp_path):
+    state = make_state(tmp_path)
+
+    (tmp_path / "visible.py").write_text(
+        "def visible():\n    pass\n",
+        encoding="utf-8",
+    )
+
+    ignored_dir = tmp_path / "__pycache__"
+    ignored_dir.mkdir()
+    (ignored_dir / "hidden.py").write_text(
+        "def hidden():\n    pass\n",
+        encoding="utf-8",
+    )
+
+    result = analyze_python_files(state, "*.py", path=".", max_files=30)
+
+    assert "visible.py" in result
+    assert "visible()" in result
+    assert "hidden.py" not in result
+    assert "hidden()" not in result
+
+
+def test_analyze_python_files_respects_max_files(tmp_path):
+    state = make_state(tmp_path)
+
+    (tmp_path / "a.py").write_text("def a():\n    pass\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("def b():\n    pass\n", encoding="utf-8")
+
+    result = analyze_python_files(state, "*.py", path=".", max_files=1)
+
+    assert "Analyzed 1 Python file(s)" in result
+    assert "Result limit reached" in result
