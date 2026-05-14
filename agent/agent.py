@@ -69,20 +69,21 @@ class Agent:
                     self.messages.append({
                         "role": "user",
                         "content": (
-                            "Your previous response looked like a tool call, but it was invalid.\n"
+                            "Your previous response was invalid.\n"
                             f"Parser error: {parsed.error}\n\n"
-                            "If you want to call a tool, reply ONLY with one valid raw JSON object "
+                            "If you intended to call a tool, reply ONLY with one valid raw JSON object "
                             "matching exactly this schema:\n"
                             '{"action": "tool_name", "input": {"param": "value"}}\n\n'
-                            "Rules for tool calls:\n"
-                            "- no Markdown\n"
-                            "- no code fences\n"
-                            "- no explanations\n"
-                            "- no comments\n"
-                            "- no extra keys\n"
-                            "- always include \"input\", even if it is empty\n\n"
-                            "If you are finished and want to answer the user, do not use JSON. "
-                            "Write the final answer as normal text."
+                            "Important:\n"
+                            "- Do not explain the tool call.\n"
+                            "- Do not introduce the tool call.\n"
+                            "- Do not say what tool you would call.\n"
+                            "- Do not put the tool call in Markdown.\n"
+                            "- Do not put the tool call in a code fence.\n"
+                            "- Do not include prose before or after the JSON.\n"
+                            "- Do not include extra keys.\n"
+                            "- Always include \"input\", even if it is empty.\n\n"
+                            "If you are finished and do not need tools, answer normally in plain text."
                         ),
                     })
                     invalid_tool_call_retry_count += 1

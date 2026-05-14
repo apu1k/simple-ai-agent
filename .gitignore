@@ -4,3 +4,4 @@ __pycache__/
 .env
 apikey.txt
 .vscode/
+.agent_history

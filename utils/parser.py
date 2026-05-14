@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -74,31 +75,74 @@ def validate_tool_call(data):
     return tool_response(action, tool_input)
 
 
-def looks_like_attempted_tool_call(text):
+def _contains_embedded_tool_call(text):
+    """
+    Detects cases where the model prints a tool call inside a normal answer,
+    for example:
+
+    "I would use this:
+    {\"action\": \"pwd\", \"input\": {}}"
+
+    This should be invalid, because actual tool calls must be the entire response.
+    """
+
+    if not isinstance(text, str):
+        return False
+
+    # Fast cheap check first.
+    if '"action"' not in text or '"input"' not in text:
+        return False
+
+    # Look for JSON-looking objects that contain action/input.
+    # This is intentionally conservative enough for our tool-call protocol.
+    possible_objects = re.findall(r"\{.*?\}", text, flags=re.DOTALL)
+
+    for possible_object in possible_objects:
+        if '"action"' not in possible_object or '"input"' not in possible_object:
+            continue
+
+        try:
+            data = json.loads(possible_object)
+        except Exception:
+            continue
+
+        if isinstance(data, dict) and "action" in data and "input" in data:
+            return True
+
+    # Fallback: even if the regex fails because nested braces are involved,
+    # the text clearly contains tool-call protocol keys embedded in prose.
+    return True
+
+
+def _looks_like_invalid_raw_tool_call(text):
     clean_text = text.strip()
 
     if not clean_text:
         return False
 
-    starts_like_json_tool = clean_text.startswith("{") or clean_text.startswith("```")
+    if clean_text.startswith("```") and '"action"' in clean_text:
+        return True
 
-    return starts_like_json_tool and '"action"' in clean_text
+    if clean_text.startswith("{") and '"action"' in clean_text:
+        return True
+
+    return False
 
 
 def parse_model_response(text):
     """
-    New model response format:
+    Response protocol:
 
     1. Tool call:
-       The entire model response must be strict JSON:
+       The entire model response must be strict raw JSON:
        {"action": "tool_name", "input": {...}}
 
     2. Final answer:
-       Any normal non-tool text is treated as the final answer.
+       Normal non-tool text is treated as the final answer.
 
-    Transitional compatibility:
-    - {"final": "..."} is still accepted and unwrapped as a final answer,
-      but the prompt should no longer ask the model to use this format.
+    Important:
+    - If a tool call JSON is embedded inside normal text, that is invalid.
+      The model must retry and output only the raw JSON tool call.
     """
 
     if not isinstance(text, str):
@@ -112,11 +156,19 @@ def parse_model_response(text):
     try:
         data = json.loads(clean_text)
     except json.JSONDecodeError as e:
-        if looks_like_attempted_tool_call(clean_text):
+        if _looks_like_invalid_raw_tool_call(clean_text):
             return invalid_response(
                 "The response looks like an attempted tool call, but it is not valid raw JSON. "
                 f"JSON error: {e.msg} at line {e.lineno}, column {e.colno}. "
-                "Tool calls must be a single raw JSON object without Markdown or code fences."
+                "Tool calls must be a single raw JSON object without Markdown, code fences, or prose."
+            )
+
+        if _contains_embedded_tool_call(clean_text):
+            return invalid_response(
+                "The response contains an embedded tool call inside normal text. "
+                "If you want to call a tool, the entire response must be exactly one raw JSON object "
+                'like {"action": "tool_name", "input": {...}}. '
+                "Do not introduce, explain, quote, or wrap the tool call."
             )
 
         return final_response(text)
@@ -127,6 +179,7 @@ def parse_model_response(text):
         if "action" in keys or "input" in keys:
             return validate_tool_call(data)
 
+        # Transitional compatibility: accept legacy final JSON, but do not encourage it.
         if keys == {"final"} and isinstance(data["final"], str):
             return final_response(data["final"])
 

@@ -1,5 +1,8 @@
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.rule import Rule
+from rich.text import Text
 
 
 console = Console()
@@ -19,11 +22,30 @@ def is_debug_enabled():
 
 
 def user(msg):
-    console.print(str(msg), style="cyan", markup=False)
+    console.print(Text(str(msg), style="cyan"))
 
 
 def ai(msg):
-    console.print(str(msg), style="white", markup=False)
+    console.print(Text(str(msg), style="white"))
+
+
+def ai_response(msg):
+    text = "" if msg is None else str(msg)
+
+    console.print()
+    console.print(Rule("AI", style="white"))
+
+    if not text.strip():
+        console.print(Text("(empty response)", style="dim white"))
+        console.print()
+        return
+
+    try:
+        console.print(Markdown(text))
+    except Exception:
+        console.print(Text(text, style="white"))
+
+    console.print()
 
 
 def debug(msg):
@@ -32,7 +54,7 @@ def debug(msg):
 
     console.print(
         Panel(
-            str(msg),
+            Text(str(msg)),
             title="DEBUG",
             border_style="yellow",
             expand=False,
@@ -46,7 +68,7 @@ def tool(msg):
 
     console.print(
         Panel(
-            str(msg),
+            Text(str(msg)),
             title="TOOL",
             border_style="green",
             expand=False,
@@ -60,7 +82,7 @@ def raw(msg):
 
     console.print(
         Panel(
-            str(msg),
+            Text(str(msg)),
             title="RAW MODEL RESPONSE",
             border_style="blue",
             expand=False,
@@ -71,7 +93,7 @@ def raw(msg):
 def error(msg):
     error_console.print(
         Panel(
-            str(msg),
+            Text(str(msg)),
             title="ERROR",
             border_style="red",
             expand=False,
