@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+
 from openai import OpenAI
 
 from llm.providers import PROVIDERS, ProviderConfig
@@ -16,7 +17,7 @@ class ModelConfig:
 
 def create_openai_client(provider: ProviderConfig):
     if not provider.api_key:
-        raise ValueError(f"Missing API key for provider: {provider.label}")
+        raise ValueError(_missing_api_key_message(provider))
 
     if provider.base_url:
         return OpenAI(
@@ -27,13 +28,26 @@ def create_openai_client(provider: ProviderConfig):
     return OpenAI(api_key=provider.api_key)
 
 
+def _missing_api_key_message(provider: ProviderConfig):
+    if provider.api_key_envs:
+        return (
+            f"Missing API key for provider: {provider.label}. "
+            f"Set one of these environment variables: "
+            f"{', '.join(provider.api_key_envs)}"
+        )
+
+    return (
+        f"Missing API key for provider: {provider.label}. "
+        "Set api_key_env/api_key_envs in providers.toml and define the variable in .env."
+    )
+
+
 def list_provider_models(provider: ProviderConfig):
     if not provider.supports_model_listing:
         return []
 
-    client = create_openai_client(provider)
-
     try:
+        client = create_openai_client(provider)
         models_response = client.models.list()
         model_ids = sorted([model.id for model in models_response.data])
         return model_ids
@@ -65,6 +79,9 @@ def choose_from_list(title, items):
 
 
 def choose_provider():
+    if not PROVIDERS:
+        raise ValueError("No providers configured.")
+
     provider_items = list(PROVIDERS.values())
     labels = [provider.label for provider in provider_items]
 
@@ -113,7 +130,8 @@ def choose_model(provider: ProviderConfig):
 
     if not models and not provider.default_model:
         manual_model = input(
-            f"No models could be fetched for {provider.label}. Enter model ID manually: "
+            f"No models could be fetched for {provider.label}. "
+            "Enter model ID manually: "
         ).strip()
 
         if not manual_model:
@@ -153,7 +171,7 @@ def select_model_config():
     model = choose_model(provider)
 
     if not provider.api_key:
-        raise ValueError(f"Missing API key for provider: {provider.label}")
+        raise ValueError(_missing_api_key_message(provider))
 
     return ModelConfig(
         provider_key=provider.key,

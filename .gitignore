@@ -1,7 +1,39 @@
-__pycache__/
-*.pyc
-.venv/
+# Environment variables / secrets
 .env
+.env.*
+!.env.example
 apikey.txt
-.vscode/
+
+# Local provider configuration
+providers.toml
+
+# Local agent files
 .agent_history
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# IDE / editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

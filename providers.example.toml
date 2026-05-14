@@ -1,0 +1,75 @@
+# Example provider configuration for simple-ai-agent.
+#
+# Copy this file to providers.toml and edit it for your own setup:
+#
+#   cp providers.example.toml providers.toml
+#
+# Windows PowerShell:
+#
+#   Copy-Item providers.example.toml providers.toml
+#
+# API keys should usually stay in .env.
+# Use api_key_env or api_key_envs to reference environment variables.
+
+[[providers]]
+key = "openai"
+label = "Personal OpenAI"
+api_type = "responses"
+api_key_envs = ["OPENAI_API_KEY", "OPENAI_PERSONAL_API_KEY"]
+default_model_env = "OPENAI_PERSONAL_DEFAULT_MODEL"
+default_model = "gpt-4.1-mini"
+supports_model_listing = true
+
+[[providers]]
+key = "openai_compatible"
+label = "OpenAI-Compatible API"
+api_type = "chat_completions"
+api_key_env = "OPENAI_COMPATIBLE_API_KEY"
+base_url_env = "OPENAI_COMPATIBLE_BASE_URL"
+default_model_env = "OPENAI_COMPATIBLE_DEFAULT_MODEL"
+default_model = ""
+supports_model_listing = true
+
+[[providers]]
+key = "local_openai_compatible"
+label = "Local OpenAI-Compatible API"
+api_type = "chat_completions"
+api_key_env = "LOCAL_OPENAI_API_KEY"
+base_url_env = "LOCAL_OPENAI_BASE_URL"
+default_model_env = "LOCAL_OPENAI_DEFAULT_MODEL"
+base_url = "http://localhost:1234/v1"
+default_model = ""
+supports_model_listing = true
+
+# Example: GWDG as an OpenAI-compatible provider
+#
+# [[providers]]
+# key = "gwdg"
+# label = "GWDG"
+# api_type = "chat_completions"
+# api_key_env = "GWDG_API_KEY"
+# base_url_env = "GWDG_BASE_URL"
+# default_model = "gwdg.qwen3-30b-a3b-instruct-2507"
+# supports_model_listing = true
+
+# Example: UPB AI Gateway as an OpenAI-compatible provider
+#
+# [[providers]]
+# key = "upb"
+# label = "UPB AI Gateway"
+# api_type = "chat_completions"
+# api_key_env = "UPB_API_KEY"
+# base_url = "https://ai-gateway.uni-paderborn.de/v1"
+# default_model = ""
+# supports_model_listing = true
+
+# Example: LM Studio local server
+#
+# [[providers]]
+# key = "lm_studio"
+# label = "LM Studio"
+# api_type = "chat_completions"
+# api_key_env = "LOCAL_OPENAI_API_KEY"
+# base_url = "http://localhost:1234/v1"
+# default_model = ""
+# supports_model_listing = true
