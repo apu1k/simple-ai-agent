@@ -21,6 +21,92 @@ from utils.ui import (
 )
 
 
+def handle_pending_command(state):
+    if not state.pending_edits:
+        show_command_message(
+            "No pending edits.",
+            title="Pending Edits",
+            border_style="yellow",
+        )
+        return
+
+    lines = []
+
+    for edit_id, edit in state.pending_edits.items():
+        lines.append(
+            f"#{edit_id} | {edit.status} | {edit.path}"
+        )
+
+    show_command_message(
+        "\n".join(lines),
+        title="Pending Edits",
+        border_style="cyan",
+    )
+
+def handle_approve_command(state, argument):
+    argument = argument.strip()
+
+    if not argument.isdigit():
+        show_command_error("Usage: \\approve <id>")
+        return
+
+    edit_id = int(argument)
+
+    if edit_id not in state.pending_edits:
+        show_command_error(
+            f"Pending edit #{edit_id} does not exist."
+        )
+        return
+
+    pending_edit = state.pending_edits[edit_id]
+
+    current_content = pending_edit.path.read_text(
+        encoding="utf-8"
+    )
+
+    if current_content != pending_edit.original_content:
+        show_command_error(
+            "File changed since edit proposal. "
+            "Edit is stale and cannot be applied safely."
+        )
+        return
+
+    pending_edit.path.write_text(
+        pending_edit.new_content,
+        encoding="utf-8"
+    )
+
+    pending_edit.status = "applied"
+
+    show_command_message(
+        f"Applied pending edit #{edit_id}.",
+        title="Approved",
+        border_style="green",
+    )
+
+def handle_reject_command(state, argument):
+    argument = argument.strip()
+
+    if not argument.isdigit():
+        show_command_error("Usage: \\reject <id>")
+        return
+
+    edit_id = int(argument)
+
+    if edit_id not in state.pending_edits:
+        show_command_error(
+            f"Pending edit #{edit_id} does not exist."
+        )
+        return
+
+    state.pending_edits[edit_id].status = "rejected"
+
+    show_command_message(
+        f"Rejected pending edit #{edit_id}.",
+        title="Rejected",
+        border_style="yellow",
+    )
+
 def handle_debug_command(argument):
     value = argument.strip().lower()
 
@@ -84,7 +170,19 @@ def handle_command(user_input, agent: Agent, state: AgentState):
             border_style="cyan",
         )
         return True, agent
+    
+    if command == "\\pending":
+        handle_pending_command(state)
+        return True, agent
 
+    if command == "\\approve":
+        handle_approve_command(state, argument)
+        return True, agent
+
+    if command == "\\reject":
+        handle_reject_command(state, argument)
+        return True, agent
+        
     if command == "\\cd":
         path = argument.strip()
 

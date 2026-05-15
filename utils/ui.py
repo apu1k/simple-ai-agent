@@ -62,6 +62,9 @@ def show_help():
     table.add_row("\\debug off", "Disable debug output")
     table.add_row("\\reset", "Reset conversation context but keep current state")
     table.add_row("\\exit / \\quit", "Exit the agent")
+    table.add_row("\\pending", "Show pending file edits")
+    table.add_row("\\approve <id>", "Approve and apply pending edit")
+    table.add_row("\\reject <id>", "Reject pending edit")
 
     console.print(table)
 

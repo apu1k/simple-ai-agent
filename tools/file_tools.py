@@ -2,6 +2,8 @@ import ast
 import json
 from pathlib import Path
 
+from agent.pending_edits import FileEdit, PendingEdit
+from utils.diff import create_unified_diff
 from tools.results import DisplayItem, ToolResult
 
 IGNORED_DIRS = {
@@ -28,6 +30,22 @@ MAX_DISPLAY_FILES = 30
 MAX_DISPLAY_LINES = 2_000
 MAX_ANALYZE_FILES = 30
 
+
+def _apply_exact_edit(content, edit: FileEdit):
+    matches = content.count(edit.find)
+
+    if matches == 0:
+        raise ValueError(
+            f"Edit find block not found:\n{edit.find}"
+        )
+
+    if matches > 1:
+        raise ValueError(
+            "Edit find block matched multiple locations. "
+            "Edits must match exactly once."
+        )
+
+    return content.replace(edit.find, edit.replace, 1)
 
 def resolve_path(state, path="."):
     target_path = Path(path).expanduser()
@@ -1073,3 +1091,66 @@ def search_text(state, query, path=".", file_pattern="*", max_results=100):
         return f"Error: Permission denied while searching in: {search_root}"
     except Exception as e:
         return f"Error: Failed to search text in '{search_root}': {e}"
+    
+
+def propose_file_edit(state, path, edits):
+    resolved_path = resolve_path(state.cwd, path)
+
+    if not resolved_path.exists():
+        return f"Error: File does not exist: {resolved_path}"
+
+    original_content = resolved_path.read_text(encoding="utf-8")
+
+    updated_content = original_content
+
+    parsed_edits = []
+
+    for raw_edit in edits:
+        if not isinstance(raw_edit, dict):
+            return "Error: Each edit must be an object."
+
+        find = raw_edit.get("find")
+        replace = raw_edit.get("replace")
+
+        if not isinstance(find, str):
+            return "Error: Edit 'find' must be a string."
+
+        if not isinstance(replace, str):
+            return "Error: Edit 'replace' must be a string."
+
+        edit = FileEdit(
+            find=find,
+            replace=replace,
+        )
+
+        parsed_edits.append(edit)
+
+        try:
+            updated_content = _apply_exact_edit(updated_content, edit)
+        except Exception as e:
+            return f"Error: {e}"
+
+    diff = create_unified_diff(
+        resolved_path,
+        original_content,
+        updated_content,
+    )
+
+    edit_id = state.next_pending_edit_id
+    state.next_pending_edit_id += 1
+
+    pending_edit = PendingEdit(
+        id=edit_id,
+        path=resolved_path,
+        original_content=original_content,
+        new_content=updated_content,
+        diff=diff,
+        edits=parsed_edits,
+    )
+
+    state.pending_edits[edit_id] = pending_edit
+
+    return (
+        f"Pending edit #{edit_id} created for {resolved_path}\n\n"
+        f"Diff:\n{diff}"
+    )

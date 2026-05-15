@@ -10,6 +10,7 @@ from .file_tools import (
     find_files,
     show_files,
     search_text,
+    propose_file_edit
 )
 
 TOOLS = {
@@ -273,6 +274,33 @@ TOOLS = {
                 "path": ".",
                 "file_pattern": "*.py",
                 "max_results": 100,
+            },
+        },
+    },
+    "propose_file_edit": {
+        "function": propose_file_edit,
+        "requires_state": True,
+        "description": (
+            "Propose exact-match file edits without directly modifying the file. "
+            "The edit becomes pending until user approval."
+        ),
+        "parameters": {
+            "path": "Path to the file.",
+            "edits": (
+                "List of exact-match edits. "
+                "Each edit must contain 'find' and 'replace'."
+            ),
+        },
+        "example": {
+            "action": "propose_file_edit",
+            "input": {
+                "path": "main.py",
+                "edits": [
+                    {
+                        "find": "print('hello')",
+                        "replace": "print('hello world')",
+                    }
+                ],
             },
         },
     },
