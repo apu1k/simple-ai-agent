@@ -1,3 +1,3 @@
-from agent.loop import run_agent
+from runtime.loop import run_agent
 
 run_agent()

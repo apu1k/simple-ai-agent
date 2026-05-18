@@ -1,0 +1,36 @@
+"""
+runtime/state.py
+
+AgentState holds everything the agent needs at runtime:
+  - cwd:          current working directory (updated by cd tool)
+  - model_config: currently selected LLM provider + model
+  - edit_store:   owns all pending file edits
+
+ModelConfig is a plain dataclass; it's updated when the user runs \models.
+"""
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal
+
+from editing.store import EditStore
+
+
+ApiType = Literal["chat_completions", "responses"]
+
+
+@dataclass
+class ModelConfig:
+    provider_key: str
+    provider_label: str
+    model: str
+    api_key: str
+    base_url: str | None
+    api_type: ApiType
+
+
+@dataclass
+class AgentState:
+    cwd: Path
+    model_config: ModelConfig
+    edit_store: EditStore = field(default_factory=EditStore)

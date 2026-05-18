@@ -1,0 +1,157 @@
+"""
+tests/core/test_protocol.py
+
+Tests for core/protocol.py (the LLM response parser).
+Migrated from tests/test_parser.py.
+"""
+
+import pytest
+from core.protocol import parse
+
+
+# ---------------------------------------------------------------------------
+# Valid tool calls
+# ---------------------------------------------------------------------------
+
+def test_valid_tool_call_no_params():
+    r = parse('{"action": "pwd", "input": {}}')
+    assert r.is_valid is True
+    assert r.kind == "tool"
+    assert r.action == "pwd"
+    assert r.tool_input == {}
+    assert r.final is None
+    assert r.error is None
+
+
+def test_valid_tool_call_with_params():
+    r = parse('{"action": "read_file", "input": {"path": "main.py"}}')
+    assert r.is_valid is True
+    assert r.kind == "tool"
+    assert r.action == "read_file"
+    assert r.tool_input == {"path": "main.py"}
+
+
+def test_valid_tool_call_with_outer_whitespace():
+    r = parse('\n  {"action": "pwd", "input": {}}  \n')
+    assert r.is_valid is True
+    assert r.kind == "tool"
+    assert r.action == "pwd"
+
+
+# ---------------------------------------------------------------------------
+# Final answers
+# ---------------------------------------------------------------------------
+
+def test_plain_text_is_final_answer():
+    text = "I displayed the files above."
+    r = parse(text)
+    assert r.is_valid is True
+    assert r.kind == "final"
+    assert r.final == text
+    assert r.action is None
+    assert r.tool_input is None
+
+
+def test_markdown_text_is_final_answer():
+    text = "\nHere is the result:\n\n- Item one\n- Item two\n\n**Done.**\n"
+    r = parse(text)
+    assert r.is_valid is True
+    assert r.kind == "final"
+    assert r.final == text
+
+
+def test_non_tool_json_object_is_final_answer():
+    text = '{"name": "Alice", "age": 30}'
+    r = parse(text)
+    assert r.is_valid is True
+    assert r.kind == "final"
+    assert r.final == text
+
+
+def test_legacy_final_json_is_final_answer():
+    r = parse('{"final": "Done."}')
+    assert r.is_valid is True
+    assert r.kind == "final"
+    assert r.final == "Done."
+
+
+# ---------------------------------------------------------------------------
+# Embedded tool call in prose → invalid
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text", [
+    'I would call: {"action": "pwd", "input": {}}',
+    'Here is the tool call:\n{"action": "pwd", "input": {}}',
+    '{"action": "pwd", "input": {}} is what I would use.',
+    'To inspect the file, I would use {"action": "read_file", "input": {"path": "main.py"}}.',
+])
+def test_embedded_tool_call_in_prose_is_invalid(text):
+    r = parse(text)
+    assert r.is_valid is False
+    assert r.kind == "invalid"
+    assert r.error is not None
+    assert "embedded tool call" in r.error or "attempted tool call" in r.error
+
+
+# ---------------------------------------------------------------------------
+# Markdown-fenced tool call → invalid
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text", [
+    '```json\n{"action": "pwd", "input": {}}\n```',
+    '```\n{"action": "pwd", "input": {}}\n```',
+])
+def test_markdown_fenced_tool_call_is_invalid(text):
+    r = parse(text)
+    assert r.is_valid is False
+    assert r.kind == "invalid"
+
+
+# ---------------------------------------------------------------------------
+# Invalid tool call structures
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text", [
+    '{"action": "pwd"}',                              # missing input
+    '{"input": {}}',                                  # missing action
+    '{"action": "pwd", "input": {}, "note": "x"}',   # extra key
+    '{"action": 123, "input": {}}',                   # action not a string
+    '{"action": "   ", "input": {}}',                 # action blank
+    '{"action": "pwd", "input": []}',                 # input is array
+    '{"action": "pwd", "input": "nope"}',             # input is string
+    '{"action": "pwd", "input": null}',               # input is null
+])
+def test_invalid_tool_call_structures(text):
+    r = parse(text)
+    assert r.is_valid is False
+    assert r.kind == "invalid"
+    assert r.error is not None
+
+
+def test_malformed_json_looks_like_tool_call():
+    r = parse('{"action": "pwd", "input": {}')   # truncated
+    assert r.is_valid is False
+    assert r.kind == "invalid"
+    assert "not valid raw JSON" in r.error or "attempted tool call" in r.error
+
+
+# ---------------------------------------------------------------------------
+# Empty / null inputs
+# ---------------------------------------------------------------------------
+
+def test_empty_string_is_invalid():
+    r = parse("")
+    assert r.is_valid is False
+    assert r.kind == "invalid"
+
+
+def test_whitespace_only_is_invalid():
+    r = parse("   \n\t   ")
+    assert r.is_valid is False
+    assert r.kind == "invalid"
+
+
+def test_none_is_invalid():
+    r = parse(None)
+    assert r.is_valid is False
+    assert r.kind == "invalid"
