@@ -103,6 +103,9 @@ class EditStore:
 
         edit = self._edits[edit_id]
 
+        if edit.status != "pending":
+            raise ValueError(f"Pending edit #{edit_id} is already {edit.status}.")
+
         if edit.kind == "edit":
             current = edit.path.read_text(encoding="utf-8")
             if current != edit.original_content:
@@ -139,7 +142,11 @@ class EditStore:
         if edit_id not in self._edits:
             raise KeyError(f"Pending edit #{edit_id} does not exist.")
 
-        self._edits[edit_id].status = "rejected"
+        edit = self._edits[edit_id]
+        if edit.status != "pending":
+            raise ValueError(f"Pending edit #{edit_id} is already {edit.status}.")
+
+        edit.status = "rejected"
         return f"Rejected pending edit #{edit_id}."
 
     # ------------------------------------------------------------------

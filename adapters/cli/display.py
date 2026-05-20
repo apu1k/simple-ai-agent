@@ -51,6 +51,8 @@ def show_help() -> None:
         ("\\reset", "Reset conversation context"),
         ("\\exit / \\quit", "Exit the agent"),
         ("\\pending", "Show pending file edits"),
+        ("\\pending <id>", "Show git-style diff for a proposed edit (any status)"),
+        ("\\pending diff <id>", "Alias for showing edit diff"),
         ("\\approve <id>", "Approve and apply a pending edit"),
         ("\\reject <id>", "Reject a pending edit"),
     ]
@@ -117,6 +119,24 @@ def show_command_error(message: str) -> None:
 
 def show_command_message(message: str, title="Info", border_style="white") -> None:
     console.print(Panel(Text(str(message)), title=str(title), border_style=border_style, expand=False))
+
+
+def show_pending_diff(edit_id: int, path: str, status: str, diff_text: str) -> None:
+    title = f"Edit #{edit_id} [{status}]"
+    subtitle = path
+    content = diff_text if diff_text.strip() else "(no diff)"
+
+    try:
+        renderable = Syntax(
+            content,
+            "diff",
+            line_numbers=False,
+            word_wrap=False,
+        )
+    except Exception:
+        renderable = Text(content)
+
+    console.print(Panel(renderable, title=title, subtitle=subtitle, border_style="cyan", expand=False))
 
 
 def show_display_item(item: DisplayItem) -> None:

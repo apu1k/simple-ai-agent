@@ -30,6 +30,11 @@ def test_apply_exact_edit_raises_if_multiple_matches():
         _apply_exact_edit("aa aa", FileEdit(find="aa", replace="bb"))
 
 
+def test_apply_exact_edit_raises_on_empty_find():
+    with pytest.raises(ValueError):
+        _apply_exact_edit("hello", FileEdit(find="", replace="x"))
+
+
 # ---------------------------------------------------------------------------
 # EditStore.propose
 # ---------------------------------------------------------------------------
@@ -71,6 +76,36 @@ def test_propose_raises_on_bad_find(tmp_path):
         store.propose(f, [FileEdit(find="not_there", replace="x")])
 
 
+def test_propose_applies_multiple_edits_in_order(tmp_path):
+    f = tmp_path / "f.py"
+    f.write_text("A\nB\n", encoding="utf-8")
+
+    store = EditStore()
+    edit, _ = store.propose(
+        f,
+        [
+            FileEdit(find="A\nB\n", replace="X\nB\n"),
+            FileEdit(find="X\nB\n", replace="X\nY\n"),
+        ],
+    )
+
+    assert edit.original_content == "A\nB\n"
+    assert edit.new_content == "X\nY\n"
+
+
+def test_propose_returns_diff_with_expected_markers(tmp_path):
+    f = tmp_path / "f.py"
+    f.write_text("hello\n", encoding="utf-8")
+
+    store = EditStore()
+    _, diff = store.propose(f, [FileEdit(find="hello", replace="hi")])
+
+    assert "---" in diff
+    assert "+++" in diff
+    assert "-hello" in diff
+    assert "+hi" in diff
+
+
 # ---------------------------------------------------------------------------
 # EditStore.approve
 # ---------------------------------------------------------------------------
@@ -108,6 +143,32 @@ def test_approve_raises_if_file_changed(tmp_path):
         store.approve(edit.id)
 
 
+def test_approve_raises_if_already_applied(tmp_path):
+    f = tmp_path / "f.py"
+    f.write_text("hello\n", encoding="utf-8")
+
+    store = EditStore()
+    edit, _ = store.propose(f, [FileEdit(find="hello", replace="world")])
+
+    store.approve(edit.id)
+
+    with pytest.raises(ValueError, match="already applied"):
+        store.approve(edit.id)
+
+
+def test_approve_raises_if_already_rejected(tmp_path):
+    f = tmp_path / "f.py"
+    f.write_text("hello\n", encoding="utf-8")
+
+    store = EditStore()
+    edit, _ = store.propose(f, [FileEdit(find="hello", replace="world")])
+
+    store.reject(edit.id)
+
+    with pytest.raises(ValueError, match="already rejected"):
+        store.approve(edit.id)
+
+
 # ---------------------------------------------------------------------------
 # EditStore.reject
 # ---------------------------------------------------------------------------
@@ -129,6 +190,32 @@ def test_reject_raises_if_id_missing():
     store = EditStore()
     with pytest.raises(KeyError):
         store.reject(42)
+
+
+def test_reject_raises_if_already_rejected(tmp_path):
+    f = tmp_path / "f.py"
+    f.write_text("hello\n", encoding="utf-8")
+
+    store = EditStore()
+    edit, _ = store.propose(f, [FileEdit(find="hello", replace="bye")])
+
+    store.reject(edit.id)
+
+    with pytest.raises(ValueError, match="already rejected"):
+        store.reject(edit.id)
+
+
+def test_reject_raises_if_already_applied(tmp_path):
+    f = tmp_path / "f.py"
+    f.write_text("hello\n", encoding="utf-8")
+
+    store = EditStore()
+    edit, _ = store.propose(f, [FileEdit(find="hello", replace="world")])
+
+    store.approve(edit.id)
+
+    with pytest.raises(ValueError, match="already applied"):
+        store.reject(edit.id)
 
 
 # ---------------------------------------------------------------------------

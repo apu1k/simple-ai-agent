@@ -111,7 +111,7 @@ def handle_command(
 
     # --------------------------------------------------------------- pending
     if command == "\\pending":
-        _handle_pending(state)
+        _handle_pending(state, argument)
         return True, False
 
     # --------------------------------------------------------------- approve
@@ -146,13 +146,44 @@ def handle_command(
 # Sub-handlers (only display + state, no external imports)
 # ---------------------------------------------------------------------------
 
-def _handle_pending(state: "AgentState") -> None:
-    pending = state.edit_store.pending()
-    if not pending:
-        display.show_command_message("No pending edits.", title="Pending Edits", border_style="yellow")
+def _handle_pending(state: "AgentState", argument: str) -> None:
+    arg = argument.strip()
+
+    # \pending  -> list pending edits
+    if not arg:
+        pending = state.edit_store.pending()
+        if not pending:
+            display.show_command_message("No pending edits.", title="Pending Edits", border_style="yellow")
+            return
+        lines = [f"#{e.id} | {e.status} | {e.path}" for e in pending.values()]
+        display.show_command_message("\n".join(lines), title="Pending Edits", border_style="cyan")
         return
-    lines = [f"#{e.id} | {e.status} | {e.path}" for e in pending.values()]
-    display.show_command_message("\n".join(lines), title="Pending Edits", border_style="cyan")
+
+    # \pending <id>
+    # \pending diff <id>
+    edit_id: int | None = None
+    if arg.isdigit():
+        edit_id = int(arg)
+    else:
+        tokens = arg.split()
+        if len(tokens) == 2 and tokens[0].lower() == "diff" and tokens[1].isdigit():
+            edit_id = int(tokens[1])
+
+    if edit_id is None:
+        display.show_command_error("Usage: \\pending  |  \\pending <id>  |  \\pending diff <id>")
+        return
+
+    edit = state.edit_store.get(edit_id)
+    if edit is None:
+        display.show_command_error(f"Pending edit #{edit_id} does not exist.")
+        return
+
+    display.show_pending_diff(
+        edit_id=edit.id,
+        path=str(edit.path),
+        status=edit.status,
+        diff_text=edit.diff,
+    )
 
 
 def _handle_approve(state: "AgentState", argument: str) -> None:
@@ -180,6 +211,8 @@ def _handle_reject(state: "AgentState", argument: str) -> None:
         message = state.edit_store.reject(edit_id)
         display.show_command_message(message, title="Rejected", border_style="yellow")
     except KeyError as e:
+        display.show_command_error(str(e))
+    except ValueError as e:
         display.show_command_error(str(e))
 
 
