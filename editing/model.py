@@ -18,6 +18,7 @@ class FileEdit:
 
 
 EditStatus = Literal["pending", "applied", "rejected"]
+EditKind = Literal["edit", "create"]
 
 
 @dataclass
@@ -36,3 +37,4 @@ class PendingEdit:
     diff: str
     edits: list[FileEdit]
     status: EditStatus = "pending"
+    kind: EditKind = "edit"

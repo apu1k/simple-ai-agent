@@ -57,6 +57,31 @@ class EditStore:
             new_content=updated_content,
             diff=diff,
             edits=edits,
+            kind="edit",
+        )
+        self._edits[edit_id] = pending
+        return pending, diff
+
+    def propose_create(self, path: Path, content: str) -> tuple[PendingEdit, str]:
+        """
+        Create a pending proposal for creating a brand-new file.
+        Does NOT write to disk until approve() is called.
+        """
+        if path.exists():
+            raise ValueError(f"File already exists: {path}")
+
+        diff = create_unified_diff(path, "", content)
+        edit_id = self._next_id
+        self._next_id += 1
+
+        pending = PendingEdit(
+            id=edit_id,
+            path=path,
+            original_content="",
+            new_content=content,
+            diff=diff,
+            edits=[],
+            kind="create",
         )
         self._edits[edit_id] = pending
         return pending, diff
@@ -78,14 +103,25 @@ class EditStore:
 
         edit = self._edits[edit_id]
 
-        current = edit.path.read_text(encoding="utf-8")
-        if current != edit.original_content:
-            raise ValueError(
-                f"File changed since edit #{edit_id} was proposed. "
-                "Edit is stale and cannot be applied safely."
-            )
+        if edit.kind == "edit":
+            current = edit.path.read_text(encoding="utf-8")
+            if current != edit.original_content:
+                raise ValueError(
+                    f"File changed since edit #{edit_id} was proposed. "
+                    "Edit is stale and cannot be applied safely."
+                )
 
-        edit.path.write_text(edit.new_content, encoding="utf-8")
+            edit.path.write_text(edit.new_content, encoding="utf-8")
+        elif edit.kind == "create":
+            if edit.path.exists():
+                raise ValueError(
+                    f"Cannot apply create edit #{edit_id}: file already exists at {edit.path}."
+                )
+            edit.path.parent.mkdir(parents=True, exist_ok=True)
+            edit.path.write_text(edit.new_content, encoding="utf-8")
+        else:
+            raise ValueError(f"Unknown pending edit kind: {edit.kind}")
+
         edit.status = "applied"
         return f"Applied pending edit #{edit_id} to {edit.path}."
 

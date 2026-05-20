@@ -73,3 +73,34 @@ def propose_file_edit(state, path: str, edits: list) -> str:
         f"Diff:\n{diff}\n\n"
         f"Run \\approve {pending_edit.id} to apply or \\reject {pending_edit.id} to discard."
     )
+
+
+@tool(
+    description=(
+        "Propose creating a new file without writing it immediately. "
+        "The creation is added to pending edits and must be approved with \\approve <id>."
+    ),
+    params={
+        "path": "Path of the file to create.",
+        "content": "Initial UTF-8 content for the new file.",
+    },
+    requires_state=True,
+)
+def create_file(state, path: str, content: str = "") -> str:
+    resolved_path = resolve_path(state, path)
+
+    if resolved_path.exists():
+        return f"Error: File already exists: {resolved_path}"
+
+    try:
+        pending_edit, diff = state.edit_store.propose_create(resolved_path, content)
+    except ValueError as e:
+        return f"Error: {e}"
+    except Exception as e:
+        return f"Error: Failed to propose file creation: {e}"
+
+    return (
+        f"Pending file creation #{pending_edit.id} created for {resolved_path}\n\n"
+        f"Diff:\n{diff}\n\n"
+        f"Run \\approve {pending_edit.id} to create or \\reject {pending_edit.id} to discard."
+    )
