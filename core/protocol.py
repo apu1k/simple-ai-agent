@@ -13,7 +13,7 @@ No I/O, no imports from this project.
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 
@@ -21,11 +21,19 @@ from typing import Literal
 # Response types
 # ---------------------------------------------------------------------------
 
+MAX_TOOL_CALLS_PER_TURN = 5
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    action: str
+    tool_input: dict
+
+
 @dataclass(frozen=True)
 class ParsedResponse:
     kind: Literal["tool", "final", "invalid"]
-    action: str | None = None
-    tool_input: dict | None = None
+    tool_calls: list[ToolCall] = field(default_factory=list)
     final: str | None = None
     error: str | None = None
 
@@ -33,9 +41,25 @@ class ParsedResponse:
     def is_valid(self) -> bool:
         return self.kind != "invalid"
 
+    # Backward compatibility for existing call sites/tests
+    @property
+    def action(self) -> str | None:
+        return self.tool_calls[0].action if self.tool_calls else None
+
+    @property
+    def tool_input(self) -> dict | None:
+        return self.tool_calls[0].tool_input if self.tool_calls else None
+
 
 def _tool(action: str, tool_input: dict) -> ParsedResponse:
-    return ParsedResponse(kind="tool", action=action, tool_input=tool_input)
+    return ParsedResponse(
+        kind="tool",
+        tool_calls=[ToolCall(action=action, tool_input=tool_input)],
+    )
+
+
+def _tools(tool_calls: list[ToolCall]) -> ParsedResponse:
+    return ParsedResponse(kind="tool", tool_calls=tool_calls)
 
 
 def _final(text: str) -> ParsedResponse:
@@ -50,7 +74,7 @@ def _invalid(message: str) -> ParsedResponse:
 # Validation helpers
 # ---------------------------------------------------------------------------
 
-def _validate_tool_call(data: dict) -> ParsedResponse:
+def _validate_single_tool_call_dict(data: dict) -> ParsedResponse:
     if not isinstance(data, dict):
         return _invalid("Tool call JSON root must be an object.")
 
@@ -79,6 +103,32 @@ def _validate_tool_call(data: dict) -> ParsedResponse:
         return _invalid("'input' must be a JSON object.")
 
     return _tool(action, tool_input)
+
+
+def _validate_tool_call_list(items) -> ParsedResponse:
+    if not isinstance(items, list):
+        return _invalid("'tool_calls' must be a JSON array.")
+
+    if not items:
+        return _invalid("'tool_calls' must contain at least one tool call.")
+
+    if len(items) > MAX_TOOL_CALLS_PER_TURN:
+        return _invalid(
+            f"Too many tool calls in one response: {len(items)} > {MAX_TOOL_CALLS_PER_TURN}."
+        )
+
+    calls: list[ToolCall] = []
+    for item in items:
+        if not isinstance(item, dict):
+            return _invalid("Each entry in 'tool_calls' must be an object.")
+
+        validated = _validate_single_tool_call_dict(item)
+        if validated.kind == "invalid":
+            return validated
+
+        calls.extend(validated.tool_calls)
+
+    return _tools(calls)
 
 
 def _contains_embedded_tool_call(text: str) -> bool:
@@ -156,8 +206,15 @@ def parse(text) -> ParsedResponse:
     if isinstance(data, dict):
         keys = set(data.keys())
 
+        if "tool_calls" in keys:
+            if "action" in keys or "input" in keys:
+                return _invalid(
+                    "Tool call JSON must use either {'action','input'} or 'tool_calls', not both."
+                )
+            return _validate_tool_call_list(data["tool_calls"])
+
         if "action" in keys or "input" in keys:
-            return _validate_tool_call(data)
+            return _validate_single_tool_call_dict(data)
 
         # Legacy compatibility: {"final": "..."}
         if keys == {"final"} and isinstance(data["final"], str):

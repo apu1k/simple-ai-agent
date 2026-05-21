@@ -6,7 +6,7 @@ Migrated from tests/test_parser.py.
 """
 
 import pytest
-from core.protocol import parse
+from core.protocol import MAX_TOOL_CALLS_PER_TURN, parse
 
 
 # ---------------------------------------------------------------------------
@@ -36,6 +36,58 @@ def test_valid_tool_call_with_outer_whitespace():
     assert r.is_valid is True
     assert r.kind == "tool"
     assert r.action == "pwd"
+
+
+def test_valid_batch_tool_calls():
+    r = parse(
+        '{"tool_calls": ['
+        '{"action": "pwd", "input": {}}, '
+        '{"action": "ls", "input": {"path": "."}}'
+        ']}'
+    )
+    assert r.is_valid is True
+    assert r.kind == "tool"
+    assert len(r.tool_calls) == 2
+    assert r.tool_calls[0].action == "pwd"
+    assert r.tool_calls[0].tool_input == {}
+    assert r.tool_calls[1].action == "ls"
+    assert r.tool_calls[1].tool_input == {"path": "."}
+
+    # Backward-compat properties should still reflect first call
+    assert r.action == "pwd"
+    assert r.tool_input == {}
+
+
+def test_invalid_batch_tool_calls_empty():
+    r = parse('{"tool_calls": []}')
+    assert r.is_valid is False
+    assert r.kind == "invalid"
+    assert "at least one" in (r.error or "")
+
+
+def test_invalid_batch_tool_calls_non_list():
+    r = parse('{"tool_calls": {"action": "pwd", "input": {}}}')
+    assert r.is_valid is False
+    assert r.kind == "invalid"
+    assert "JSON array" in (r.error or "")
+
+
+def test_invalid_batch_mixed_root_shapes():
+    r = parse(
+        '{"tool_calls": [{"action": "pwd", "input": {}}], '
+        '"action": "pwd", "input": {}}'
+    )
+    assert r.is_valid is False
+    assert r.kind == "invalid"
+    assert "either {'action','input'} or 'tool_calls'" in (r.error or "")
+
+
+def test_invalid_batch_too_many_tool_calls():
+    calls = ", ".join('{"action": "pwd", "input": {}}' for _ in range(MAX_TOOL_CALLS_PER_TURN + 1))
+    r = parse('{"tool_calls": [' + calls + ']}')
+    assert r.is_valid is False
+    assert r.kind == "invalid"
+    assert "Too many tool calls" in (r.error or "")
 
 
 # ---------------------------------------------------------------------------
