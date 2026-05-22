@@ -322,10 +322,23 @@ The model has two response modes.
 
 ### 1. Tool call mode
 
-If the model wants to call a tool, the entire model response must be exactly one valid raw JSON object:
+If the model wants to call tools, the entire model response must be exactly one valid raw JSON object in one of these root shapes.
+
+Single tool call:
 
 ```json
 {"action": "tool_name", "input": {"param": "value"}}
+```
+
+Batch tool calls:
+
+```json
+{
+  "tool_calls": [
+    {"action": "tool_name_1", "input": {}},
+    {"action": "tool_name_2", "input": {"x": 1}}
+  ]
+}
 ```
 
 Rules:
@@ -337,12 +350,19 @@ Rules:
 - No comments.
 - No extra keys.
 - The JSON root must be an object.
-- The object must contain exactly:
-  - `"action"`
-  - `"input"`
-- `"action"` must be a non-empty string.
-- `"input"` must be a JSON object.
-- Only one tool call is allowed per response.
+- Valid root shapes are exactly one of:
+  - single-call object with exactly `"action"` and `"input"`, or
+  - batch object with exactly `"tool_calls"`.
+- In single-call mode:
+  - `"action"` must be a non-empty string.
+  - `"input"` must be a JSON object.
+- In batch mode:
+  - `"tool_calls"` must be a non-empty array.
+  - each item must be an object with exactly `"action"` and `"input"`.
+  - each `"action"` must be a non-empty string.
+  - each `"input"` must be a JSON object.
+- Mixed root shapes are invalid (for example using both `"action"` and `"tool_calls"` in one object).
+- Batch calls are executed in order with fail-fast behavior.
 
 ### 2. Final answer mode
 

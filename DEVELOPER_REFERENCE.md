@@ -25,12 +25,12 @@ tools/fs/search.py       — find_files, search_text
 tools/fs/edit.py         — propose_file_edit
 tools/fs/analyze.py      — analyze_python_file, analyze_python_files
 tools/math/arithmetic.py — add, subtract, multiply, divide, power
-io/base.py               — IOAdapter protocol
-io/cli/adapter.py        — CLIAdapter (wires logger + display + input)
-io/cli/commands.py       — backslash command handlers (\help, \approve, etc.)
-io/cli/display.py        — Rich panels, file display, banners, spinners
-io/cli/input.py          — prompt_toolkit input with history + multiline
-io/cli/logger.py         — debug / tool / raw / error / ai_response logging
+adapters/base.py         — IOAdapter protocol
+adapters/cli/adapter.py  — CLIAdapter (wires logger + display + input)
+adapters/cli/commands.py — backslash command handlers (\help, \approve, etc.)
+adapters/cli/display.py  — Rich panels, file display, banners, spinners
+adapters/cli/input.py    — prompt_toolkit input with history + multiline
+adapters/cli/logger.py   — debug / tool / raw / error / ai_response logging
 runtime/state.py         — AgentState (cwd + model_config + edit_store)
 runtime/prompt.py        — builds system prompt from the tool registry
 runtime/loop.py          — entry point, wires everything together
@@ -50,15 +50,15 @@ editing/         → core/ only
 llm/             → config/  (for file paths)
 tools/           → tools/_base.py, editing/model.py only
                    (tools/fs/* also imports from tools/fs/_shared.py)
-io/              → tools/_base.py  (for DisplayItem type only)
-                   io/cli/commands.py also imports from tools/fs/read.py and llm/providers.py
+adapters/        → tools/_base.py  (for DisplayItem type only)
+                   adapters/cli/commands.py also imports from tools/fs/read.py and llm/providers.py
 runtime/         → everything (this is the only composition root)
 ```
 
 **Red flags — if you see these, something is wrong:**
-- Any file in `core/` importing from `tools/`, `io/`, `runtime/`, `editing/`, or `llm/`
-- Any file in `tools/` importing from `io/`, `runtime/`, or `core/` (except `core/tool_registry.py` via `tools/_base.py`)
-- Any file in `editing/` importing from `tools/`, `io/`, `runtime/`, or `llm/`
+- Any file in `core/` importing from `tools/`, `adapters/`, `runtime/`, `editing/`, or `llm/`
+- Any file in `tools/` importing from `adapters/`, `runtime/`, or `core/` (except `core/tool_registry.py` via `tools/_base.py`)
+- Any file in `editing/` importing from `tools/`, `adapters/`, `runtime/`, or `llm/`
 - Any file importing from `runtime/` except `main.py`
 
 ---
@@ -97,7 +97,7 @@ runtime/         → everything (this is the only composition root)
 - Return a plain `str` for simple text results.
 - Return a `ToolResult(observation=..., display_items=[...])` if you want to show the user a rendered panel (like a file view) while keeping the LLM observation separate and short.
 - If the tool needs to read `state.cwd` or `state.edit_store`, add `requires_state=True` to `@tool` and accept `state` as the first parameter.
-- Never import from `io/`, `runtime/`, or `core/agent.py` inside a tool.
+- Never import from `adapters/`, `runtime/`, or `core/agent.py` inside a tool.
 - Never write to disk directly — use `state.edit_store.propose()` and let the user approve.
 
 ---
@@ -140,7 +140,7 @@ runtime/         → everything (this is the only composition root)
 
 ## How to add a new IO mode (voice, web API, etc.)
 
-1. Create `io/mymode/adapter.py` implementing the `IOAdapter` protocol from `io/base.py`.
+1. Create `adapters/mymode/adapter.py` implementing the `IOAdapter` protocol from `adapters/base.py`.
 
 2. In `runtime/loop.py`, replace `CLIAdapter()` with `MyModeAdapter()`.
 
@@ -150,7 +150,7 @@ The agent, tools, LLM clients, and editing — none of them change.
 
 ## How to add a new backslash command
 
-Add a branch in `io/cli/commands.py` inside `handle_command()`:
+Add a branch in `adapters/cli/commands.py` inside `handle_command()`:
 
 ```python
 if command == "\\mycommand":
@@ -165,7 +165,7 @@ def _handle_mycommand(state, argument: str) -> None:
     display.show_command_message("Hello from mycommand.", title="My Command", border_style="cyan")
 ```
 
-Also add it to the help table in `io/cli/display.py` inside `show_help()`.
+Also add it to the help table in `adapters/cli/display.py` inside `show_help()`.
 
 ---
 
@@ -241,7 +241,7 @@ When you add a new tool file `tools/finance/market.py`, add `tests/tools/finance
 
 1. `python -m pytest tests/ -v` — all green.
 2. No import from `runtime/` anywhere except `main.py`.
-3. No import from `io/` or `core/agent.py` inside any `tools/` file.
+3. No import from `adapters/` or `core/agent.py` inside any `tools/` file.
 4. New tools use `@tool` from `tools._base` (not directly from `core.tool_registry`).
 5. New tools don't write files directly — they use `state.edit_store.propose()`.
 6. New `__init__.py` files exist for any new subpackage.

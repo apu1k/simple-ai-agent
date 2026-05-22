@@ -48,6 +48,19 @@ def test_find_files_no_results(tmp_path):
     assert "No files found" in result
 
 
+def test_find_files_skips_site_packages_dir(tmp_path):
+    state = make_state(tmp_path)
+    (tmp_path / "keep.py").write_text("x", encoding="utf-8")
+    site_packages = tmp_path / "site-packages"
+    site_packages.mkdir()
+    (site_packages / "ignored.py").write_text("x", encoding="utf-8")
+
+    result = find_files(state, "*.py", path=".", max_results=100)
+
+    assert "keep.py" in result
+    assert "ignored.py" not in result
+
+
 # ---------------------------------------------------------------------------
 # search_text
 # ---------------------------------------------------------------------------
@@ -69,6 +82,17 @@ def test_search_text_skips_ignored_dirs(tmp_path):
     venv = tmp_path / ".venv"
     venv.mkdir()
     (venv / "ignored.py").write_text("needle\n", encoding="utf-8")
+
+    result = search_text(state, "needle", path=".", file_pattern="*.py")
+
+    assert "No text matches found" in result
+
+
+def test_search_text_skips_site_packages_dir(tmp_path):
+    state = make_state(tmp_path)
+    site_packages = tmp_path / "site-packages"
+    site_packages.mkdir()
+    (site_packages / "ignored.py").write_text("needle\n", encoding="utf-8")
 
     result = search_text(state, "needle", path=".", file_pattern="*.py")
 
