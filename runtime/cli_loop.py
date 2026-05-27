@@ -1,30 +1,31 @@
 """
-runtime/loop.py
+runtime/cli_loop.py
 
-The composition root. The only module allowed to import from everything.
+CLI composition root.
 
 Wires together:
-  - config/settings.py         (env + paths, loaded on import)
-  - core/tool_registry.py      (autodiscovery)
-  - core/agent.py              (agent loop)
-  - llm/providers.py           (provider config, LLM client factory)
+  - runtime/bootstrap.py       (shared setup helpers)
+  - llm/providers.py           (interactive provider/model selection)
   - adapters/cli/adapter.py    (terminal IO)
   - adapters/cli/commands.py   (backslash commands)
   - adapters/cli/display.py    (startup UI)
-  - runtime/state.py           (AgentState, ModelConfig)
   - runtime/prompt.py          (system prompt builder)
 
-Nothing outside runtime/ should import from here.
+Future non-CLI frontends should use their own runtime module and share common
+setup through runtime/bootstrap.py.
 """
 
-from pathlib import Path
-
 from core.agent import Agent
-from core.tool_registry import autodiscover
 from adapters.cli.adapter import CLIAdapter
 from adapters.cli import display
 from adapters.cli.commands import handle_command
-from llm.providers import PROVIDERS, choose_model, choose_provider, create_llm_client
+from llm.providers import PROVIDERS, choose_model, choose_provider
+from runtime.bootstrap import (
+    build_model_config_and_client,
+    create_agent,
+    create_initial_state,
+    initialize_tools,
+)
 from runtime.prompt import build_system_prompt
 from runtime.state import AgentState, ModelConfig
 
@@ -33,30 +34,12 @@ from runtime.state import AgentState, ModelConfig
 # Provider / model selection
 # ---------------------------------------------------------------------------
 
-def _build_model_config_and_client(provider, model) -> tuple[ModelConfig, object]:
-    if not provider.api_key:
-        envs = ", ".join(provider.api_key_envs) if provider.api_key_envs else "none configured"
-        raise ValueError(
-            f"Missing API key for provider '{provider.label}'. "
-            f"Expected one of these environment variables: {envs}"
-        )
-    config = ModelConfig(
-        provider_key=provider.key,
-        provider_label=provider.label,
-        model=model,
-        api_key=provider.api_key,
-        base_url=provider.base_url,
-        api_type=provider.api_type,
-    )
-    llm = create_llm_client(provider, model)
-    return config, llm
-
 
 def _select_model_config() -> tuple[ModelConfig, object]:
     """Interactive startup provider + model selection."""
     provider = choose_provider(PROVIDERS)
     model = choose_model(provider)
-    return _build_model_config_and_client(provider, model)
+    return build_model_config_and_client(provider, model)
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +63,7 @@ def _make_on_model_switch() -> callable:
     def on_model_switch(agent: Agent, state: AgentState) -> None:
         provider = choose_provider(PROVIDERS)
         model = choose_model(provider)
-        config, llm = _build_model_config_and_client(provider, model)
+        config, llm = build_model_config_and_client(provider, model)
         state.model_config = config
         agent.llm = llm
     return on_model_switch
@@ -90,27 +73,22 @@ def _make_on_model_switch() -> callable:
 # Entry point
 # ---------------------------------------------------------------------------
 
-def run_agent() -> None:
+def run_cli_agent() -> None:
     """
-    Entry point. Called from main.py.
+    CLI entry point. Called from main.py.
 
     1. Autodiscovers all @tool-decorated functions.
     2. Prompts the user to select a provider + model.
     3. Runs the interactive agent loop.
     """
-    autodiscover("tools")
+    initialize_tools()
 
     model_config, llm = _select_model_config()
-
-    state = AgentState(
-        cwd=Path.cwd(),
-        model_config=model_config,
-    )
+    state = create_initial_state(model_config)
 
     io = CLIAdapter()
 
-    agent = Agent(
-        system_prompt=build_system_prompt(),
+    agent = create_agent(
         state=state,
         llm=llm,
         on_debug=io.show_debug,

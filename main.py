@@ -1,3 +1,3 @@
-from runtime.loop import run_agent
+from runtime.cli_loop import run_cli_agent
 
-run_agent()
+run_cli_agent()
