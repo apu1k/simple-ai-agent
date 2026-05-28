@@ -1,0 +1,25 @@
+Screen.theme-light {
+    background: #FAFAF8;
+    color: #1C1C1C;
+}
+
+Screen.theme-light #chat {
+    background: #FAFAF8;
+    color: #1C1C1C;
+}
+
+Screen.theme-light #input {
+    background: #FFFFFF;
+    color: #1C1C1C;
+    border: round #A45A1C;
+}
+
+Screen.theme-light #input:focus {
+    border: heavy #C47A3A;
+}
+
+Screen.theme-light #footer_hint {
+    background: #E3D7CA;
+    color: #2A1A10;
+    text-style: bold;
+}

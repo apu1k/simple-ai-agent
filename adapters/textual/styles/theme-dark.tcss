@@ -1,0 +1,25 @@
+Screen.theme-dark {
+    background: #121212;
+    color: #F5F3EF;
+}
+
+Screen.theme-dark #chat {
+    background: #121212;
+    color: #F5F3EF;
+}
+
+Screen.theme-dark #input {
+    background: #1E1A17;
+    color: #F5F3EF;
+    border: round #C47A3A;
+}
+
+Screen.theme-dark #input:focus {
+    border: heavy #D9904F;
+}
+
+Screen.theme-dark #footer_hint {
+    background: #1E1A17;
+    color: #F5F3EF;
+    text-style: bold;
+}

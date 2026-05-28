@@ -3,3 +3,4 @@ python-dotenv
 rich
 prompt_toolkit
 textual
+textual-dev
