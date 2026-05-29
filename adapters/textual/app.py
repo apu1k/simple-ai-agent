@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from rich.console import Group
+from rich.markdown import Markdown
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
@@ -23,6 +25,7 @@ from textual.widgets import Input, Static
 
 from runtime.bootstrap import create_agent
 from runtime.prompt import build_system_prompt
+
 
 
 class AgentTextualApp(App):
@@ -57,13 +60,13 @@ class AgentTextualApp(App):
         self.agent = None
         self._theme_dark = True
         self._processing = False
-        self._pending_inputs: list[str] = []
+
         self._current_suggestion: str | None = None
-        self._chat_lines: list[str] = ["Chat ready."]
+        self._messages: list[tuple[str, str]] = []
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="chat_scroll"):
-            yield Static("Chat ready.", id="chat")
+            yield Static("", id="chat")
         yield Static("", id="command_suggestion")
         yield Input(placeholder="Type a message and press Enter...", id="input")
         yield Static("  ^C  Quit    ^R  Theme", id="footer_hint")
@@ -81,13 +84,7 @@ class AgentTextualApp(App):
         )
         self.query_one("#command_suggestion", Static).display = False
         self.query_one("#input", Input).focus()
-        self._append_chat("System", "Textual UI started.")
-        self._append_chat(
-            "System",
-            "Commands: \\help, \\reset, \\pwd, \\state. "
-            "Keys: ^C quit, ^R theme. "
-            "You can keep typing while the AI is processing.",
-        )
+
 
     def on_input_changed(self, event: Input.Changed) -> None:
         self._update_command_suggestion(event.value)
@@ -106,28 +103,21 @@ class AgentTextualApp(App):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
         input_widget = self.query_one("#input", Input)
-        input_widget.value = ""
-        self._update_command_suggestion("")
 
         if not text:
             return
 
+        if self._processing:
+            return
+
+        input_widget.value = ""
+        self._update_command_suggestion("")
+
         if text.startswith("\\"):
-            if self._processing:
-                self._append_chat(
-                    "System",
-                    "Commands are disabled while the AI is processing. "
-                    "Please wait for the current response to finish.",
-                )
-                return
             self._handle_command(text)
             return
 
         self._append_chat("You", text)
-        if self._processing:
-            self._pending_inputs.append(text)
-            return
-
         self._start_agent_step(text)
 
     def _handle_command(self, text: str) -> None:
@@ -198,27 +188,45 @@ class AgentTextualApp(App):
     def _finish_agent_step(self) -> None:
         self._set_processing(False)
 
-        if not self._pending_inputs:
-            return
-
-        next_text = self._pending_inputs.pop(0)
-        self.set_timer(0.05, lambda: self._start_agent_step(next_text))
-
     def _set_processing(self, processing: bool) -> None:
         self._processing = processing
         input_widget = self.query_one("#input", Input)
         input_widget.disabled = False
         if processing:
-            input_widget.placeholder = "AI is processing... keep typing to queue another message."
+            input_widget.placeholder = "AI is processing... you can type, then press Enter when done."
         else:
             input_widget.placeholder = "Type a message and press Enter..."
         input_widget.focus()
 
     def _append_chat(self, who: str, text: str) -> None:
-        self._chat_lines.append(f"[{who}]\n{text}")
+        self._messages.append((who, text))
+        self._render_chat()
+
+    def _render_chat(self) -> None:
+        renderables = []
+        for index, (who, text) in enumerate(self._messages):
+            if index > 0:
+                renderables.append(Text(""))
+            renderables.append(self._message_renderable(who, text))
+
         chat = self.query_one("#chat", Static)
-        chat.update("\n\n".join(self._chat_lines))
+        chat.update(Group(*renderables) if renderables else "")
         self.query_one("#chat_scroll", VerticalScroll).scroll_end(animate=False)
+
+    def _message_renderable(self, who: str, text: str):
+        if who == "You":
+            return Text(text, style="dim")
+        if who == "AI":
+            return self._format_ai_markdown(text)
+        if who == "Error":
+            return Text(text, style="red")
+        return Text(text)
+
+    def _format_ai_markdown(self, text: str):
+        try:
+            return Markdown(text)
+        except Exception:
+            return Text(text)
 
     def _update_command_suggestion(self, value: str) -> None:
         suggestion_widget = self.query_one("#command_suggestion", Static)
@@ -295,8 +303,4 @@ class AgentTextualApp(App):
         for item in items:
             title = getattr(item, "title", "Display item")
             path = getattr(item, "display_path", getattr(item, "path", ""))
-            self._from_any_thread(
-                self._append_chat,
-                "Display",
-                f"{title}\n{path}",
-            )
+            self._append_log("display", f"{title}\n{path}")
