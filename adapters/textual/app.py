@@ -21,7 +21,8 @@ from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import VerticalScroll
-from textual.widgets import Input, Static
+from textual.suggester import SuggestFromList
+from textual.widgets import Footer, Input, Static
 
 from runtime.bootstrap import create_agent
 from runtime.prompt import build_system_prompt
@@ -61,15 +62,17 @@ class AgentTextualApp(App):
         self._theme_dark = True
         self._processing = False
 
-        self._current_suggestion: str | None = None
         self._messages: list[tuple[str, str]] = []
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="chat_scroll"):
             yield Static("", id="chat")
-        yield Static("", id="command_suggestion")
-        yield Input(placeholder="Type a message and press Enter...", id="input")
-        yield Static("  ^C  Quit    ^R  Theme", id="footer_hint")
+        yield Input(
+            placeholder="Type a message and press Enter...",
+            suggester=SuggestFromList(self.COMMANDS, case_sensitive=True),
+            id="input",
+        )
+        yield Footer(compact=True, show_command_palette=False)
 
     def on_mount(self) -> None:
         self.screen.add_class("theme-dark")
@@ -82,23 +85,7 @@ class AgentTextualApp(App):
             on_error=self._on_error,
             on_display=self._on_display,
         )
-        self.query_one("#command_suggestion", Static).display = False
         self.query_one("#input", Input).focus()
-
-
-    def on_input_changed(self, event: Input.Changed) -> None:
-        self._update_command_suggestion(event.value)
-
-    def on_key(self, event) -> None:
-        if event.key != "tab" or self._current_suggestion is None:
-            return
-
-        input_widget = self.query_one("#input", Input)
-        input_widget.value = self._current_suggestion
-        input_widget.cursor_position = len(self._current_suggestion)
-        self._update_command_suggestion(input_widget.value)
-        event.prevent_default()
-        event.stop()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
@@ -111,7 +98,6 @@ class AgentTextualApp(App):
             return
 
         input_widget.value = ""
-        self._update_command_suggestion("")
 
         if text.startswith("\\"):
             self._handle_command(text)
@@ -228,39 +214,6 @@ class AgentTextualApp(App):
         except Exception:
             return Text(text)
 
-    def _update_command_suggestion(self, value: str) -> None:
-        suggestion_widget = self.query_one("#command_suggestion", Static)
-        value = value.strip()
-
-        if not value.startswith("\\") or " " in value:
-            self._current_suggestion = None
-            suggestion_widget.update("")
-            suggestion_widget.display = False
-            return
-
-        matches = [command for command in self.COMMANDS if command.startswith(value)]
-        if not matches:
-            self._current_suggestion = None
-            suggestion_widget.update("")
-            suggestion_widget.display = False
-            return
-
-        self._current_suggestion = matches[0]
-        if value == matches[0]:
-            self._current_suggestion = None
-            suggestion_widget.update("  Matches: " + "  ".join(matches))
-            suggestion_widget.display = True
-            return
-
-        typed_length = len(value)
-        completion = matches[0][typed_length:]
-        hint = Text.assemble(
-            "  Matches: " + "  ".join(matches) + "    ",
-            value,
-            (completion, "dim"),
-        )
-        suggestion_widget.update(hint)
-        suggestion_widget.display = True
 
     def _append_log(self, kind: str, text: str) -> None:
         print(f"[{kind}] {text}", flush=True)

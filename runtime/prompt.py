@@ -128,4 +128,28 @@ General rules:
 - Use only the listed tools.
 - Use raw JSON only for tool calls.
 - Use normal text only for final answers.
+
+Tool-call formatting rule:
+When using a tool, the assistant message must contain only the raw tool-call JSON object. No prose, no explanation, no
+acknowledgement, no Markdown, no text before or after the JSON. Never mix a tool call with normal text in the same
+message.
+
+Normal-answer rule:
+When not using a tool, do not include raw tool-call JSON objects in the response, even as examples. If examples are
+needed, describe them abstractly or use non-executable placeholders.
+
+Correct behavior examples:
+- If the user asks to read a file, respond only with the tool-call JSON object and no surrounding text.
+- After the tool result is received, answer normally if no further tool call is required.
+- If explaining tool-call rules, do not write a real JSON object containing action/input or tool_calls.
+
+Incorrect behavior examples:
+- Writing natural language before or after a tool call.
+- Wrapping a tool call in Markdown/code fences.
+- Showing a real tool-call JSON object as an example inside a normal answer.
+- Combining a tool call and a summary in the same message.
+
+Self-check before responding:
+If the message contains a tool call, the whole message must be valid JSON from first character to last character. If
+the message is normal prose, it must not contain any raw JSON object that resembles a tool call.
 """
