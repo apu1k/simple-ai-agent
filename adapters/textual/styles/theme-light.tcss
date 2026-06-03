@@ -8,6 +8,20 @@ Screen.theme-light #chat {
     color: #1C1C1C;
 }
 
+Screen.theme-light #model_select {
+    background: #EFF8FF;
+    color: #102A43;
+}
+
+Screen.theme-light #model_header {
+    color: #186FAF;
+}
+
+Screen.theme-light #model_tree {
+    background: #EFF8FF;
+    color: #102A43;
+}
+
 Screen.theme-light #input {
     background: #FFFFFF;
     color: #1C1C1C;
@@ -16,6 +30,16 @@ Screen.theme-light #input {
 
 Screen.theme-light #input:focus {
     border: heavy #C47A3A;
+}
+
+Screen.theme-light.model-select-mode #input {
+    background: #DCEEFF;
+    color: #102A43;
+    border: round #2680C2;
+}
+
+Screen.theme-light.model-select-mode #input:focus {
+    border: heavy #186FAF;
 }
 
 Screen.theme-light #footer_hint {

@@ -8,6 +8,20 @@ Screen.theme-dark #chat {
     color: #F5F3EF;
 }
 
+Screen.theme-dark #model_select {
+    background: #081A2A;
+    color: #E8F6FF;
+}
+
+Screen.theme-dark #model_header {
+    color: #66B8FF;
+}
+
+Screen.theme-dark #model_tree {
+    background: #081A2A;
+    color: #E8F6FF;
+}
+
 Screen.theme-dark #input {
     background: #1E1A17;
     color: #F5F3EF;
@@ -16,6 +30,16 @@ Screen.theme-dark #input {
 
 Screen.theme-dark #input:focus {
     border: heavy #D9904F;
+}
+
+Screen.theme-dark.model-select-mode #input {
+    background: #062B49;
+    color: #E8F6FF;
+    border: round #339CFF;
+}
+
+Screen.theme-dark.model-select-mode #input:focus {
+    border: heavy #66B8FF;
 }
 
 Screen.theme-dark #footer_hint {
