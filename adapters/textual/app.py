@@ -17,6 +17,7 @@ from typing import Any, Callable, Literal
 
 from rich.console import Group
 from rich.markdown import Markdown
+from rich.syntax import Syntax
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
@@ -44,11 +45,13 @@ class AgentTextualApp(App):
     BINDINGS = [
         ("ctrl+c", "quit", "Quit"),
         ("ctrl+r", "toggle_theme", "Theme"),
+        ("ctrl+g", "cancel_overlay", "Back"),
     ]
 
     COMMANDS = [
         "\\help",
         "\\models",
+        "\\pending",
         "\\reset",
         "\\pwd",
         "\\state",
@@ -63,7 +66,7 @@ class AgentTextualApp(App):
         self.agent = None
         self._theme_dark = True
         self._processing = False
-        self._mode: Literal["chat", "model_select"] = "chat"
+        self._mode: Literal["chat", "model_select", "pending_select"] = "chat"
 
         self._messages: list[tuple[str, str]] = []
         self._models_by_provider: dict[str, list[str]] = {}
@@ -72,12 +75,23 @@ class AgentTextualApp(App):
         self._model_search = ""
         self._visible_model_matches: list[tuple[str, str]] = []
 
+        self._pending_search = ""
+        self._visible_pending_ids: list[int] = []
+        self._selected_pending_id: int | None = None
+
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="chat_scroll"):
             yield Static("", id="chat")
         with Container(id="model_select", classes="hidden"):
             yield Static("Model selection is loading...", id="model_header")
             yield Tree("Models", id="model_tree")
+        with Container(id="pending_select", classes="hidden"):
+            yield Static("Pending edits", id="pending_header")
+            with Container(id="pending_body"):
+                with Container(id="pending_list_pane"):
+                    yield Static("", id="pending_list")
+                with VerticalScroll(id="pending_diff_scroll"):
+                    yield Static("", id="pending_diff")
         yield Input(
             placeholder="Type a message and press Enter...",
             suggester=SuggestFromList(self.COMMANDS, case_sensitive=True),
@@ -103,6 +117,10 @@ class AgentTextualApp(App):
             self._submit_model_selection()
             return
 
+        if self._mode == "pending_select":
+            self._approve_selected_pending()
+            return
+
         text = event.value.strip()
         input_widget = self.query_one("#input", Input)
 
@@ -122,15 +140,51 @@ class AgentTextualApp(App):
         self._start_agent_step(text)
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        if self._mode != "model_select" or event.input.id != "input":
+        if event.input.id != "input":
             return
-        self._model_search = event.value.strip()
-        self._render_model_tree()
+
+        if self._mode == "model_select":
+            self._model_search = event.value.strip()
+            self._render_model_tree()
+            return
+
+        if self._mode == "pending_select":
+            self._pending_search = event.value.strip()
+            self._render_pending_view()
 
     def on_key(self, event) -> None:
-        if self._mode == "model_select" and event.key == "escape":
+        if self._mode != "pending_select":
+            return
+
+        key = event.key
+        if key == "up":
             event.stop()
-            self._exit_model_select_mode()
+            self._move_pending_selection(-1)
+            return
+        if key == "down":
+            event.stop()
+            self._move_pending_selection(1)
+            return
+        if key == "home":
+            event.stop()
+            self._select_pending_index(0)
+            return
+        if key == "end":
+            event.stop()
+            self._select_pending_index(len(self._visible_pending_ids) - 1)
+            return
+        if key == "pageup":
+            event.stop()
+            self._scroll_pending_diff(-10)
+            return
+        if key == "pagedown":
+            event.stop()
+            self._scroll_pending_diff(10)
+            return
+        if key in {"delete", "backspace"}:
+            event.stop()
+            self._reject_selected_pending()
+            return
 
     def _handle_command(self, text: str) -> None:
         command = text.strip().lower()
@@ -138,12 +192,16 @@ class AgentTextualApp(App):
         if command == "\\help":
             self._append_chat(
                 "System",
-                "Supported Textual commands: \\help, \\models, \\reset, \\pwd, \\state, \\theme, \\quit",
+                "Supported Textual commands: \\help, \\models, \\pending, \\reset, \\pwd, \\state, \\theme, \\quit",
             )
             return
 
         if command == "\\models":
             self._enter_model_select_mode()
+            return
+
+        if command == "\\pending":
+            self._enter_pending_select_mode()
             return
 
         if command == "\\reset":
@@ -187,7 +245,7 @@ class AgentTextualApp(App):
 
         input_widget = self.query_one("#input", Input)
         input_widget.value = ""
-        input_widget.placeholder = "Search models... Enter selects one match, Esc cancels"
+        input_widget.placeholder = "Search models... Enter selects one match, Ctrl+G cancels"
         input_widget.focus()
 
         if self._model_tree_loaded:
@@ -215,6 +273,158 @@ class AgentTextualApp(App):
     def action_cancel_model_select(self) -> None:
         if self._mode == "model_select":
             self._exit_model_select_mode()
+
+    def action_cancel_overlay(self) -> None:
+        if self._mode == "model_select":
+            self._exit_model_select_mode()
+            return
+        if self._mode == "pending_select":
+            self._exit_pending_select_mode()
+            return
+
+    def _enter_pending_select_mode(self) -> None:
+        self._mode = "pending_select"
+        self._pending_search = ""
+        self.query_one("#chat_scroll", VerticalScroll).add_class("hidden")
+        self.query_one("#model_select", Container).add_class("hidden")
+        self.query_one("#pending_select", Container).remove_class("hidden")
+        self.screen.add_class("pending-select-mode")
+
+        input_widget = self.query_one("#input", Input)
+        input_widget.value = ""
+        input_widget.placeholder = "Search pending edits... Enter approve, Delete/Backspace reject, Ctrl+G cancels"
+        input_widget.focus()
+        self._render_pending_view()
+
+    def _exit_pending_select_mode(self) -> None:
+        self._mode = "chat"
+        self.query_one("#pending_select", Container).add_class("hidden")
+        self.query_one("#chat_scroll", VerticalScroll).remove_class("hidden")
+        self.screen.remove_class("pending-select-mode")
+
+        input_widget = self.query_one("#input", Input)
+        input_widget.value = ""
+        input_widget.placeholder = "Type a message and press Enter..."
+        input_widget.focus()
+        self.query_one("#chat_scroll", VerticalScroll).scroll_end(animate=False)
+
+    def _set_pending_header(self, text: str) -> None:
+        self.query_one("#pending_header", Static).update(text)
+
+    def _render_pending_view(self) -> None:
+        if self._mode != "pending_select":
+            return
+
+        pending = self.state.edit_store.pending()
+        query = self._pending_search.lower()
+        visible = []
+        for edit_id, edit in sorted(pending.items()):
+            haystack = f"{edit.id} {edit.kind} {edit.status} {edit.path}".lower()
+            if not query or query in haystack:
+                visible.append(edit_id)
+
+        self._visible_pending_ids = visible
+
+        if not visible:
+            self._selected_pending_id = None
+            self._set_pending_header("No pending edits match your search. Ctrl+G returns to chat.")
+            self.query_one("#pending_list", Static).update(Text("No pending edits.", style="dim"))
+            self.query_one("#pending_diff", Static).update(Text("", style="dim"))
+            return
+
+        if self._selected_pending_id not in visible:
+            self._selected_pending_id = visible[0]
+
+        self._set_pending_header(
+            f"{len(visible)} pending edit(s) — Up/Down select, Enter approve, Delete/Backspace reject, PageUp/PageDown scroll diff, Ctrl+G back."
+        )
+        self._render_pending_list()
+        self._render_pending_diff()
+
+    def _render_pending_list(self) -> None:
+        text = Text()
+        pending = self.state.edit_store.pending()
+        for edit_id in self._visible_pending_ids:
+            edit = pending.get(edit_id)
+            if edit is None:
+                continue
+            marker = ">" if edit_id == self._selected_pending_id else " "
+            path = str(edit.path)
+            line = f"{marker} #{edit.id} [{edit.kind}] {path}\n"
+            style = "bold reverse" if edit_id == self._selected_pending_id else ""
+            text.append(line, style=style)
+        self.query_one("#pending_list", Static).update(text)
+
+    def _render_pending_diff(self) -> None:
+        edit = self._selected_pending_edit()
+        if edit is None:
+            self.query_one("#pending_diff", Static).update(Text("No pending edit selected.", style="dim"))
+            return
+
+        metadata = Text(
+            f"Edit #{edit.id} [{edit.kind}] {edit.status}\n{edit.path}\n\n",
+            style="bold",
+        )
+        diff_text = edit.diff if edit.diff.strip() else "(no diff)"
+        try:
+            diff = Syntax(diff_text, "diff", line_numbers=False, word_wrap=False)
+            renderable = Group(metadata, diff)
+        except Exception:
+            renderable = Group(metadata, Text(diff_text))
+        self.query_one("#pending_diff", Static).update(renderable)
+        self.query_one("#pending_diff_scroll", VerticalScroll).scroll_home(animate=False)
+
+    def _selected_pending_edit(self):
+        if self._selected_pending_id is None:
+            return None
+        return self.state.edit_store.get(self._selected_pending_id)
+
+    def _select_pending_index(self, index: int) -> None:
+        if not self._visible_pending_ids:
+            return
+        index = max(0, min(index, len(self._visible_pending_ids) - 1))
+        self._selected_pending_id = self._visible_pending_ids[index]
+        self._render_pending_list()
+        self._render_pending_diff()
+
+    def _move_pending_selection(self, delta: int) -> None:
+        if not self._visible_pending_ids:
+            return
+        try:
+            index = self._visible_pending_ids.index(self._selected_pending_id)
+        except ValueError:
+            index = 0
+        self._select_pending_index(index + delta)
+
+    def _scroll_pending_diff(self, amount: int) -> None:
+        try:
+            self.query_one("#pending_diff_scroll", VerticalScroll).scroll_relative(y=amount, animate=False)
+        except Exception:
+            pass
+
+    def _approve_selected_pending(self) -> None:
+        edit = self._selected_pending_edit()
+        if edit is None:
+            self._set_pending_header("No pending edit selected.")
+            return
+        try:
+            message = self.state.edit_store.approve(edit.id)
+            self._append_chat("System", message)
+        except (KeyError, ValueError) as e:
+            self._append_chat("Error", str(e))
+        self._render_pending_view()
+
+    def _reject_selected_pending(self) -> None:
+        edit = self._selected_pending_edit()
+        if edit is None:
+            self._set_pending_header("No pending edit selected.")
+            return
+        try:
+            message = self.state.edit_store.reject(edit.id)
+            self._append_chat("System", message)
+        except (KeyError, ValueError) as e:
+            self._append_chat("Error", str(e))
+        self._render_pending_view()
 
     def _set_model_header(self, text: str) -> None:
         self.query_one("#model_header", Static).update(text)
@@ -297,14 +507,14 @@ class AgentTextualApp(App):
 
         if not visible_matches:
             root.add_leaf("No models match your search.")
-            self._set_model_header("No matching models. Change the search text or press Esc to cancel.")
+            self._set_model_header("No matching models. Change the search text or press Ctrl+G to cancel.")
         elif query:
             self._set_model_header(
                 f"{len(visible_matches)} matching model(s). Narrow to one and press Enter, or select a tree item."
             )
         else:
             self._set_model_header(
-                "Select a model from the tree. Type to search; Enter selects one match; Esc cancels."
+                "Select a model from the tree. Type to search; Enter selects one match; Ctrl+G cancels."
             )
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
@@ -329,7 +539,7 @@ class AgentTextualApp(App):
             return
 
         if not self._visible_model_matches:
-            self._set_model_header("No matching models. Change the search text or press Esc to cancel.")
+            self._set_model_header("No matching models. Change the search text or press Ctrl+G to cancel.")
             return
 
         self._set_model_header(
@@ -394,7 +604,9 @@ class AgentTextualApp(App):
         input_widget = self.query_one("#input", Input)
         input_widget.disabled = False
         if self._mode == "model_select":
-            input_widget.placeholder = "Search models... Enter selects one match, Esc cancels"
+            input_widget.placeholder = "Search models... Enter selects one match, Ctrl+G cancels"
+        elif self._mode == "pending_select":
+            input_widget.placeholder = "Search pending edits... Enter approve, Delete/Backspace reject, Ctrl+G cancels"
         elif processing:
             input_widget.placeholder = "AI is processing... you can type, then press Enter when done."
         else:

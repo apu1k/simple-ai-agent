@@ -22,6 +22,33 @@ Screen.theme-light #model_tree {
     color: #102A43;
 }
 
+Screen.theme-light #pending_select {
+    background: #FFF7ED;
+    color: #2A1A10;
+}
+
+Screen.theme-light #pending_header {
+    color: #A45A1C;
+}
+
+Screen.theme-light #pending_list_pane {
+    border: round #C47A3A;
+}
+
+Screen.theme-light #pending_diff_scroll {
+    border: round #C47A3A;
+}
+
+Screen.theme-light.pending-select-mode #input {
+    background: #FFF1DD;
+    color: #2A1A10;
+    border: round #A45A1C;
+}
+
+Screen.theme-light.pending-select-mode #input:focus {
+    border: heavy #C47A3A;
+}
+
 Screen.theme-light #input {
     background: #FFFFFF;
     color: #1C1C1C;

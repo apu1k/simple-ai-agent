@@ -36,6 +36,47 @@ Screen {
     width: 100%;
 }
 
+#pending_select {
+    height: 1fr;
+    width: 100%;
+    padding: 1 2;
+}
+
+#pending_header {
+    height: auto;
+    width: 100%;
+    padding: 0 0 1 0;
+    text-style: bold;
+}
+
+#pending_body {
+    layout: horizontal;
+    height: 1fr;
+    width: 100%;
+}
+
+#pending_list_pane {
+    height: 100%;
+    width: 32%;
+    padding: 0 1 0 0;
+}
+
+#pending_list {
+    height: 100%;
+    width: 100%;
+}
+
+#pending_diff_scroll {
+    height: 100%;
+    width: 68%;
+}
+
+#pending_diff {
+    height: auto;
+    width: auto;
+    padding: 0 0 0 1;
+}
+
 #input {
     height: 3;
 }

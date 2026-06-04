@@ -22,6 +22,33 @@ Screen.theme-dark #model_tree {
     color: #E8F6FF;
 }
 
+Screen.theme-dark #pending_select {
+    background: #18120D;
+    color: #F5F3EF;
+}
+
+Screen.theme-dark #pending_header {
+    color: #E3A35C;
+}
+
+Screen.theme-dark #pending_list_pane {
+    border: round #8A5A32;
+}
+
+Screen.theme-dark #pending_diff_scroll {
+    border: round #8A5A32;
+}
+
+Screen.theme-dark.pending-select-mode #input {
+    background: #2A1A10;
+    color: #F5F3EF;
+    border: round #C47A3A;
+}
+
+Screen.theme-dark.pending-select-mode #input:focus {
+    border: heavy #E3A35C;
+}
+
 Screen.theme-dark #input {
     background: #1E1A17;
     color: #F5F3EF;

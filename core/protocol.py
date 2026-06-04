@@ -21,7 +21,7 @@ from typing import Literal
 # Response types
 # ---------------------------------------------------------------------------
 
-MAX_TOOL_CALLS_PER_TURN = 5
+MAX_TOOL_CALLS_PER_TURN = 10
 
 
 @dataclass(frozen=True)
