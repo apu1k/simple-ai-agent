@@ -37,3 +37,8 @@ dist/
 # OS files
 .DS_Store
 Thumbs.db
+
+# updates (caddy,...)
+Caddyfile
+scripts
+logs

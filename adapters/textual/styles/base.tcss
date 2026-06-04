@@ -2,6 +2,30 @@ Screen {
     layout: vertical;
 }
 
+#top_status {
+    dock: top;
+    height: 1;
+    layout: horizontal;
+    background: $surface;
+    color: $text-muted;
+}
+
+#status_cwd,
+#status_model,
+#status_edits {
+    height: 1;
+    width: 1fr;
+    padding: 0 1;
+}
+
+#status_model {
+    text-align: center;
+}
+
+#status_edits {
+    text-align: right;
+}
+
 .hidden {
     display: none;
 }

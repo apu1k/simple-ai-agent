@@ -80,6 +80,10 @@ class AgentTextualApp(App):
         self._selected_pending_id: int | None = None
 
     def compose(self) -> ComposeResult:
+        with Container(id="top_status"):
+            yield Static("", id="status_cwd")
+            yield Static("", id="status_model")
+            yield Static("", id="status_edits")
         with VerticalScroll(id="chat_scroll"):
             yield Static("", id="chat")
         with Container(id="model_select", classes="hidden"):
@@ -111,6 +115,7 @@ class AgentTextualApp(App):
             on_display=self._on_display,
         )
         self.query_one("#input", Input).focus()
+        self._refresh_state()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if self._mode == "model_select":
@@ -413,6 +418,7 @@ class AgentTextualApp(App):
         except (KeyError, ValueError) as e:
             self._append_chat("Error", str(e))
         self._render_pending_view()
+        self._refresh_state()
 
     def _reject_selected_pending(self) -> None:
         edit = self._selected_pending_edit()
@@ -425,6 +431,7 @@ class AgentTextualApp(App):
         except (KeyError, ValueError) as e:
             self._append_chat("Error", str(e))
         self._render_pending_view()
+        self._refresh_state()
 
     def _set_model_header(self, text: str) -> None:
         self.query_one("#model_header", Static).update(text)
@@ -562,6 +569,7 @@ class AgentTextualApp(App):
         self.llm = llm
         if self.agent is not None:
             self.agent.llm = llm
+        self._refresh_state()
 
         self._exit_model_select_mode()
         self._append_chat(
@@ -598,6 +606,7 @@ class AgentTextualApp(App):
 
     def _finish_agent_step(self) -> None:
         self._set_processing(False)
+        self._refresh_state()
 
     def _set_processing(self, processing: bool) -> None:
         self._processing = processing
@@ -635,6 +644,8 @@ class AgentTextualApp(App):
             return self._format_ai_markdown(text)
         if who == "Error":
             return Text(text, style="red")
+        if who == "System":
+            return Text(text, style="dim")
         return Text(text)
 
     def _format_ai_markdown(self, text: str):
@@ -647,9 +658,19 @@ class AgentTextualApp(App):
     def _append_log(self, kind: str, text: str) -> None:
         print(f"[{kind}] {text}", flush=True)
 
+    def _refresh_header(self) -> None:
+        model_text = (
+            f"{self.state.model_config.provider_label} / "
+            f"{self.state.model_config.model}"
+        )
+        pending_count = len(self.state.edit_store.pending())
+
+        self.query_one("#status_cwd", Static).update(str(self.state.cwd))
+        self.query_one("#status_model", Static).update(model_text)
+        self.query_one("#status_edits", Static).update(f"pending edits: {pending_count}")
+
     def _refresh_state(self) -> None:
-        # Kept for command/worker compatibility; the minimal UI has no state panel.
-        return
+        self._refresh_header()
 
     def _state_text(self) -> str:
         return (
