@@ -21,6 +21,7 @@ from rich.syntax import Syntax
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, VerticalScroll
 from textual.suggester import SuggestFromList
 from textual.widgets import Footer, Input, Static, Tree
@@ -44,8 +45,17 @@ class AgentTextualApp(App):
 
     BINDINGS = [
         ("ctrl+c", "quit", "Quit"),
-        ("ctrl+r", "toggle_theme", "Theme"),
+
+        ("f8", "toggle_theme", "Theme"),
         ("ctrl+g", "cancel_overlay", "Back"),
+
+        Binding("ctrl+v", "input_paste", show=False),
+        Binding("ctrl+w", "input_delete_word_left", show=False),
+        Binding("alt+backspace", "input_delete_word_left", show=False),
+        Binding("alt+delete", "input_delete_word_right", show=False),
+
+        ("f9", "open_pending", "Pending"),
+        ("f2", "open_models", "Models"),
     ]
 
     COMMANDS = [
@@ -158,6 +168,19 @@ class AgentTextualApp(App):
             self._render_pending_view()
 
     def on_key(self, event) -> None:
+        # Temporary diagnostics: inspect key events in Textual Serve/browser mode.
+        try:
+            input_widget = self.query_one("#input", Input)
+            if self.focused is input_widget:
+                self._append_log(
+                    "key",
+                    f"key={event.key!r} character={getattr(event, 'character', None)!r} "
+                    f"name={getattr(event, 'name', None)!r} aliases={getattr(event, 'aliases', None)!r} "
+                    f"is_printable={getattr(event, 'is_printable', None)!r}",
+                )
+        except Exception:
+            pass
+
         if self._mode != "pending_select":
             return
 
@@ -243,6 +266,7 @@ class AgentTextualApp(App):
             return
 
         self._mode = "model_select"
+        self._refresh_footer_bindings()
         self._model_search = ""
         self.query_one("#chat_scroll", VerticalScroll).add_class("hidden")
         self.query_one("#model_select", Container).remove_class("hidden")
@@ -265,6 +289,7 @@ class AgentTextualApp(App):
 
     def _exit_model_select_mode(self) -> None:
         self._mode = "chat"
+        self._refresh_footer_bindings()
         self.query_one("#model_select", Container).add_class("hidden")
         self.query_one("#chat_scroll", VerticalScroll).remove_class("hidden")
         self.screen.remove_class("model-select-mode")
@@ -289,6 +314,7 @@ class AgentTextualApp(App):
 
     def _enter_pending_select_mode(self) -> None:
         self._mode = "pending_select"
+        self._refresh_footer_bindings()
         self._pending_search = ""
         self.query_one("#chat_scroll", VerticalScroll).add_class("hidden")
         self.query_one("#model_select", Container).add_class("hidden")
@@ -303,6 +329,7 @@ class AgentTextualApp(App):
 
     def _exit_pending_select_mode(self) -> None:
         self._mode = "chat"
+        self._refresh_footer_bindings()
         self.query_one("#pending_select", Container).add_class("hidden")
         self.query_one("#chat_scroll", VerticalScroll).remove_class("hidden")
         self.screen.remove_class("pending-select-mode")
@@ -586,6 +613,34 @@ class AgentTextualApp(App):
             self.screen.remove_class("theme-dark")
             self.screen.add_class("theme-light")
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action in {"toggle_theme", "open_pending", "open_models"}:
+            return self._mode == "chat"
+
+        if action == "cancel_overlay":
+            return self._mode in {"model_select", "pending_select"}
+
+        return True
+
+    def _refresh_footer_bindings(self) -> None:
+        try:
+            self.refresh_bindings()
+        except AttributeError:
+            try:
+                self.query_one(Footer).refresh()
+            except Exception:
+                pass
+
+    def action_open_pending(self) -> None:
+        if self._mode != "chat":
+            return
+        self._enter_pending_select_mode()
+
+    def action_open_models(self) -> None:
+        if self._mode != "chat":
+            return
+        self._enter_model_select_mode()
+
     def _start_agent_step(self, text: str) -> None:
         self._set_processing(True)
         self._run_agent_step(text)
@@ -679,6 +734,64 @@ class AgentTextualApp(App):
             f"model: {self.state.model_config.model}\n"
             f"api_type: {self.state.model_config.api_type}"
         )
+
+    def action_input_paste(self) -> None:
+        input_widget = self.query_one("#input", Input)
+        if self.focused is not input_widget:
+            return
+
+        # Browser / Textual Serve may intercept Ctrl+V before app-level actions.
+        # If this action is reached, ask the Input widget to handle paste.
+        try:
+            input_widget.action_paste()
+        except Exception:
+            pass
+
+    def action_input_delete_word_left(self) -> None:
+        input_widget = self.query_one("#input", Input)
+        if self.focused is not input_widget:
+            return
+
+        value = input_widget.value
+        cursor = input_widget.cursor_position
+
+        if cursor <= 0:
+            return
+
+        left = value[:cursor]
+        right = value[cursor:]
+
+        i = len(left)
+        while i > 0 and left[i - 1].isspace():
+            i -= 1
+        while i > 0 and not left[i - 1].isspace():
+            i -= 1
+
+        input_widget.value = left[:i] + right
+        input_widget.cursor_position = i
+
+    def action_input_delete_word_right(self) -> None:
+        input_widget = self.query_one("#input", Input)
+        if self.focused is not input_widget:
+            return
+
+        value = input_widget.value
+        cursor = input_widget.cursor_position
+
+        if cursor >= len(value):
+            return
+
+        left = value[:cursor]
+        right = value[cursor:]
+
+        j = 0
+        while j < len(right) and right[j].isspace():
+            j += 1
+        while j < len(right) and not right[j].isspace():
+            j += 1
+
+        input_widget.value = left + right[j:]
+        input_widget.cursor_position = cursor
 
     def _from_any_thread(self, callback: Callable[..., None], *args: Any) -> None:
         """
