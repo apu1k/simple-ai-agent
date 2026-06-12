@@ -36,6 +36,7 @@ class AgentTextualApp(App):
     """Minimal Textual UI around the existing synchronous Agent."""
 
     ENABLE_COMMAND_PALETTE = False
+    AUTO_FOCUS = "#input"
 
     CSS_PATH = [
         "styles/base.tcss",
@@ -49,6 +50,7 @@ class AgentTextualApp(App):
         ("f8", "toggle_theme", "Theme"),
         ("ctrl+g", "cancel_overlay", "Back"),
 
+        Binding("tab", "input_complete_command", show=False),
         Binding("ctrl+v", "input_paste", show=False),
         Binding("ctrl+w", "input_delete_word_left", show=False),
         Binding("alt+backspace", "input_delete_word_left", show=False),
@@ -89,6 +91,10 @@ class AgentTextualApp(App):
         self._visible_pending_ids: list[int] = []
         self._selected_pending_id: int | None = None
 
+        self._command_completion_prefix = ""
+        self._command_completion_matches: list[str] = []
+        self._command_completion_index = -1
+
     def compose(self) -> ComposeResult:
         with Container(id="top_status"):
             yield Static("", id="status_cwd")
@@ -124,8 +130,32 @@ class AgentTextualApp(App):
             on_error=self._on_error,
             on_display=self._on_display,
         )
-        self.query_one("#input", Input).focus()
         self._refresh_state()
+        self._schedule_initial_input_focus()
+
+    def _schedule_initial_input_focus(self) -> None:
+        """
+        Apply best-effort startup focus to the command input.
+
+        AUTO_FOCUS is the canonical Textual-side startup focus declaration.
+        The explicit retries below handle normal layout/startup timing in both
+        terminal and Serve modes.
+
+        In Textual Serve/browser mode, the browser may still withhold keyboard
+        events from the app until the page receives user activation, such as Tab
+        or a mouse click. Python-side widget focus cannot fully override that
+        browser focus boundary, so this remains best-effort rather than a hard
+        guarantee for browser startup.
+        """
+        self._focus_input()
+        self.call_after_refresh(self._focus_input)
+        for delay in (0.05, 0.20, 0.50, 1.00):
+            self.set_timer(delay, self._focus_input)
+
+    def _focus_input(self) -> None:
+        input_widget = self.query_one("#input", Input)
+        input_widget.disabled = False
+        input_widget.focus()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if self._mode == "model_select":
@@ -146,6 +176,7 @@ class AgentTextualApp(App):
             return
 
         input_widget.value = ""
+        self._reset_command_completion()
 
         if text.startswith("\\"):
             self._handle_command(text)
@@ -168,18 +199,19 @@ class AgentTextualApp(App):
             self._render_pending_view()
 
     def on_key(self, event) -> None:
-        # Temporary diagnostics: inspect key events in Textual Serve/browser mode.
-        try:
-            input_widget = self.query_one("#input", Input)
-            if self.focused is input_widget:
-                self._append_log(
-                    "key",
-                    f"key={event.key!r} character={getattr(event, 'character', None)!r} "
-                    f"name={getattr(event, 'name', None)!r} aliases={getattr(event, 'aliases', None)!r} "
-                    f"is_printable={getattr(event, 'is_printable', None)!r}",
-                )
-        except Exception:
-            pass
+        if event.key in {"tab", "shift+tab"}:
+            try:
+                input_widget = self.query_one("#input", Input)
+                if self.focused is input_widget:
+                    event.stop()
+                    event.prevent_default()
+                    if self._mode == "chat" and event.key == "tab":
+                        self.action_input_complete_command()
+                    input_widget.focus()
+                    return
+            except Exception:
+                pass
+
 
         if self._mode != "pending_select":
             return
@@ -734,6 +766,84 @@ class AgentTextualApp(App):
             f"model: {self.state.model_config.model}\n"
             f"api_type: {self.state.model_config.api_type}"
         )
+
+    def action_input_complete_command(self) -> None:
+        input_widget = self.query_one("#input", Input)
+        if self.focused is not input_widget:
+            return
+
+        if self._mode != "chat":
+            return
+
+        value = input_widget.value
+        cursor = input_widget.cursor_position
+
+        # Command completion is intentionally scoped to simple command input at
+        # the end of the line. This avoids surprising edits inside normal chat
+        # messages or partially typed arguments.
+        if cursor != len(value) or not value.startswith("\\") or any(ch.isspace() for ch in value):
+            self._reset_command_completion()
+            return
+
+        if (
+            len(self._command_completion_matches) > 1
+            and (value == self._command_completion_prefix or value in self._command_completion_matches)
+        ):
+            if value in self._command_completion_matches:
+                current_index = self._command_completion_matches.index(value)
+                next_index = (current_index + 1) % len(self._command_completion_matches)
+            else:
+                next_index = 0
+            self._command_completion_index = next_index
+            self._apply_command_completion(self._command_completion_matches[next_index])
+            return
+
+        matches = [command for command in self.COMMANDS if command.startswith(value)]
+        if not matches:
+            self._reset_command_completion()
+            return
+
+        if len(matches) == 1:
+            self._command_completion_prefix = matches[0]
+            self._command_completion_matches = matches
+            self._command_completion_index = 0
+            self._apply_command_completion(matches[0])
+            return
+
+        common_prefix = self._longest_common_prefix(matches)
+        self._command_completion_prefix = common_prefix
+        self._command_completion_matches = matches
+        self._command_completion_index = -1
+
+        if len(common_prefix) > len(value):
+            self._apply_command_completion(common_prefix)
+            return
+
+        self._command_completion_index = 0
+        self._apply_command_completion(matches[0])
+
+    def _apply_command_completion(self, text: str) -> None:
+        input_widget = self.query_one("#input", Input)
+        input_widget.value = text
+        input_widget.cursor_position = len(text)
+        input_widget.focus()
+
+    def _reset_command_completion(self) -> None:
+        self._command_completion_prefix = ""
+        self._command_completion_matches = []
+        self._command_completion_index = -1
+
+    def _longest_common_prefix(self, values: list[str]) -> str:
+        if not values:
+            return ""
+
+        prefix = values[0]
+        for value in values[1:]:
+            while not value.startswith(prefix):
+                prefix = prefix[:-1]
+                if not prefix:
+                    return ""
+        return prefix
 
     def action_input_paste(self) -> None:
         input_widget = self.query_one("#input", Input)

@@ -42,3 +42,6 @@ Thumbs.db
 Caddyfile
 scripts
 logs
+
+# temporary logs
+textual.log
