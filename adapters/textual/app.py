@@ -28,6 +28,7 @@ from textual.widgets import Footer, Input, Static, Tree
 
 from llm.providers import PROVIDERS, list_provider_models
 from runtime.bootstrap import build_model_config_and_client, create_agent
+from runtime.chat_store import record_final_turn, start_new_chat
 from runtime.prompt import build_system_prompt
 
 
@@ -64,6 +65,8 @@ class AgentTextualApp(App):
         "\\help",
         "\\models",
         "\\pending",
+        "\\new_chat",
+        "\\history",
         "\\reset",
         "\\pwd",
         "\\state",
@@ -252,7 +255,7 @@ class AgentTextualApp(App):
         if command == "\\help":
             self._append_chat(
                 "System",
-                "Supported Textual commands: \\help, \\models, \\pending, \\reset, \\pwd, \\state, \\theme, \\quit",
+                "Supported Textual commands: \\help, \\models, \\pending, \\new_chat, \\history, \\reset, \\pwd, \\state, \\theme, \\quit",
             )
             return
 
@@ -262,6 +265,19 @@ class AgentTextualApp(App):
 
         if command == "\\pending":
             self._enter_pending_select_mode()
+            return
+
+        if command == "\\new_chat":
+            session_id = start_new_chat(self.state)
+            if self.agent is not None:
+                self.agent.reset(build_system_prompt())
+            self._messages.clear()
+            self._render_chat()
+            self._append_chat("System", f"Started new chat session: {session_id}")
+            return
+
+        if command == "\\history":
+            self._append_chat("System", self.state.chat_store.format_session_list(limit=20))
             return
 
         if command == "\\reset":
@@ -684,6 +700,10 @@ class AgentTextualApp(App):
                 raise RuntimeError("Agent is not initialized.")
 
             reply = self.agent.step(text)
+            try:
+                record_final_turn(self.state, text, reply)
+            except Exception as history_error:
+                print(f"[history] write failed: {history_error}", flush=True)
             self._from_any_thread(self._append_chat, "AI", reply)
         except Exception as e:
             print(f"[error] {e}", flush=True)

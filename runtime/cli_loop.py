@@ -26,6 +26,7 @@ from runtime.bootstrap import (
     create_initial_state,
     initialize_tools,
 )
+from runtime.chat_store import record_final_turn, start_new_chat
 from runtime.prompt import build_system_prompt
 from runtime.state import AgentState, ModelConfig
 
@@ -69,6 +70,22 @@ def _make_on_model_switch() -> callable:
     return on_model_switch
 
 
+def _make_on_new_chat() -> callable:
+    """Returns a callback that starts a fresh persistent chat session."""
+    def on_new_chat(agent: Agent, state: AgentState) -> str:
+        session_id = start_new_chat(state)
+        agent.reset(build_system_prompt())
+        return session_id
+    return on_new_chat
+
+
+def _make_on_history() -> callable:
+    """Returns a callback that formats recent persistent chat sessions."""
+    def on_history(state: AgentState) -> str:
+        return state.chat_store.format_session_list(limit=20)
+    return on_history
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -100,6 +117,8 @@ def run_cli_agent() -> None:
 
     on_reset = _make_on_reset()
     on_model_switch = _make_on_model_switch()
+    on_new_chat = _make_on_new_chat()
+    on_history = _make_on_history()
 
     display.show_startup_banner(state)
     display.show_help()
@@ -128,6 +147,8 @@ def run_cli_agent() -> None:
             state,
             on_reset=on_reset,
             on_model_switch=on_model_switch,
+            on_new_chat=on_new_chat,
+            on_history=on_history,
         )
 
         if handled:
@@ -148,5 +169,10 @@ def run_cli_agent() -> None:
         except Exception as e:
             display.show_command_error(f"Agent processing failed: {e}")
             continue
+
+        try:
+            record_final_turn(state, user_input, reply)
+        except Exception as e:
+            display.show_command_error(f"History write failed: {e}")
 
         io.show_response(reply)

@@ -18,6 +18,7 @@ from typing import Callable
 from core.agent import Agent
 from core.tool_registry import autodiscover
 from llm.providers import create_llm_client
+from runtime.chat_store import start_new_chat
 from runtime.prompt import build_system_prompt
 from runtime.state import AgentState, ModelConfig
 
@@ -51,10 +52,12 @@ def build_model_config_and_client(provider, model) -> tuple[ModelConfig, object]
 
 def create_initial_state(model_config: ModelConfig) -> AgentState:
     """Create initial runtime state."""
-    return AgentState(
+    state = AgentState(
         cwd=Path.cwd(),
         model_config=model_config,
     )
+    start_new_chat(state)
+    return state
 
 
 def create_agent(

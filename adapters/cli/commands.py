@@ -2,7 +2,8 @@
 adapters/cli/commands.py
 
 Handles all backslash commands: \help, \approve, \reject, \pending,
-\cd, \models, \debug, \reset, \state, \pwd, \exit, \quit.
+\cd, \models, \debug, \reset, \new_chat, \history, \state, \pwd,
+\exit, \quit.
 
 Allowed imports:
   - adapters/cli/display  (rendering)
@@ -32,6 +33,8 @@ def handle_command(
     state: "AgentState",
     on_reset: Callable[[], str],
     on_model_switch: Callable[["Agent", "AgentState"], None],
+    on_new_chat: Callable[["Agent", "AgentState"], str],
+    on_history: Callable[["AgentState"], str],
 ) -> tuple[bool, bool]:
     """
     Try to handle user_input as a backslash command.
@@ -45,6 +48,9 @@ def handle_command(
         on_model_switch:  Callback that runs interactive provider/model selection
                           and updates agent.llm and state.model_config in place.
                           Provided by runtime/loop.py — keeps llm/ out of here.
+        on_new_chat:      Callback that starts a new persistent chat session and
+                          resets the agent context.
+        on_history:       Callback that formats recent persistent chat sessions.
 
     Returns:
         (handled, should_exit)
@@ -72,6 +78,28 @@ def handle_command(
             "Conversation context has been reset.",
             title="Reset",
             border_style="green",
+        )
+        return True, False
+
+    # ------------------------------------------------------------ new chat
+    if command == "\\new_chat":
+        session_id = on_new_chat(agent, state)
+        display.show_command_message(
+            f"Started new chat session: {session_id}",
+            title="New Chat",
+            border_style="green",
+        )
+        return True, False
+
+    # --------------------------------------------------------------- history
+    if command == "\\history":
+        if argument.strip():
+            display.show_command_error("Usage: \\history")
+            return True, False
+        display.show_command_message(
+            on_history(state),
+            title="Chat History",
+            border_style="cyan",
         )
         return True, False
 
