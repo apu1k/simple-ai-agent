@@ -39,6 +39,48 @@ Screen.theme-dark #pending_diff_scroll {
     border: round #8A5A32;
 }
 
+Screen.theme-dark #chat_select {
+    background: #18120D;
+    color: #F5F3EF;
+}
+
+Screen.theme-dark #chat_header {
+    color: #E3A35C;
+}
+
+Screen.theme-dark #chat_list_scroll {
+    border: round #8A5A32;
+}
+
+Screen.theme-dark #chat_detail_scroll {
+    border: round #8A5A32;
+}
+
+Screen.theme-dark #chat_history_scroll {
+    border: round #8A5A32;
+}
+
+Screen.theme-dark #chat_list_scroll,
+Screen.theme-dark #chat_detail_scroll,
+Screen.theme-dark #chat_history_scroll,
+Screen.theme-dark #pending_diff_scroll {
+    scrollbar-color: #C47A3A;
+    scrollbar-color-hover: #E3A35C;
+    scrollbar-color-active: #F0BB7A;
+    scrollbar-corner-color: #18120D;
+    scrollbar-background: #2A1A10;
+}
+
+Screen.theme-dark.chat-select-mode #input {
+    background: #2A1A10;
+    color: #F5F3EF;
+    border: round #C47A3A;
+}
+
+Screen.theme-dark.chat-select-mode #input:focus {
+    border: heavy #E3A35C;
+}
+
 Screen.theme-dark.pending-select-mode #input {
     background: #2A1A10;
     color: #F5F3EF;

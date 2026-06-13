@@ -151,6 +151,16 @@ class ChatStore:
             sessions[session_id]["turn_count"] += 1
             sessions[session_id]["updated_at"] = str(turn.get("created_at", sessions[session_id]["updated_at"]))
 
+            # Prefer latest per-turn model/provider so history reflects where the
+            # session ended, not only where it started.
+            turn_state = turn.get("state") if isinstance(turn.get("state"), dict) else {}
+            provider_label = str(turn_state.get("provider_label", "")).strip()
+            model = str(turn_state.get("model", "")).strip()
+            if provider_label:
+                sessions[session_id]["provider_label"] = provider_label
+            if model:
+                sessions[session_id]["model"] = model
+
         summaries = [ChatSessionSummary(**data) for data in sessions.values()]
         summaries.sort(key=lambda item: item.updated_at, reverse=True)
         if limit > 0:

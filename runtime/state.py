@@ -6,7 +6,7 @@ AgentState holds everything the agent needs at runtime:
   - model_config:    currently selected LLM provider + model
   - edit_store:      owns all pending file edits
   - chat_store:      owns persistent chat/session history
-  - chat_session_id: current persistent chat session id
+  - chat_session_id: current persistent chat session id (lazily created)
 
 ModelConfig is a plain dataclass; it's updated when the user runs \models.
 """
@@ -38,4 +38,4 @@ class AgentState:
     model_config: ModelConfig
     edit_store: EditStore = field(default_factory=EditStore)
     chat_store: ChatStore = field(default_factory=ChatStore)
-    chat_session_id: str = ""
+    chat_session_id: str | None = None

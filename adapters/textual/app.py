@@ -65,6 +65,7 @@ class AgentTextualApp(App):
         "\\help",
         "\\models",
         "\\pending",
+        "\\chats",
         "\\new_chat",
         "\\history",
         "\\reset",
@@ -81,7 +82,7 @@ class AgentTextualApp(App):
         self.agent = None
         self._theme_dark = True
         self._processing = False
-        self._mode: Literal["chat", "model_select", "pending_select"] = "chat"
+        self._mode: Literal["chat", "model_select", "pending_select", "chat_select"] = "chat"
 
         self._messages: list[tuple[str, str]] = []
         self._models_by_provider: dict[str, list[str]] = {}
@@ -93,6 +94,10 @@ class AgentTextualApp(App):
         self._pending_search = ""
         self._visible_pending_ids: list[int] = []
         self._selected_pending_id: int | None = None
+
+        self._chat_search = ""
+        self._visible_chat_sessions: list[Any] = []
+        self._selected_chat_session_id: str | None = None
 
         self._command_completion_prefix = ""
         self._command_completion_matches: list[str] = []
@@ -115,6 +120,16 @@ class AgentTextualApp(App):
                     yield Static("", id="pending_list")
                 with VerticalScroll(id="pending_diff_scroll"):
                     yield Static("", id="pending_diff")
+        with Container(id="chat_select", classes="hidden"):
+            yield Static("Chat sessions", id="chat_header")
+            with Container(id="chat_body"):
+                with VerticalScroll(id="chat_list_scroll"):
+                    with Container(id="chat_list_pane"):
+                        yield Static("", id="chat_list")
+                with VerticalScroll(id="chat_detail_scroll"):
+                    yield Static("", id="chat_detail")
+                with VerticalScroll(id="chat_history_scroll"):
+                    yield Static("", id="chat_history")
         yield Input(
             placeholder="Type a message and press Enter...",
             suggester=SuggestFromList(self.COMMANDS, case_sensitive=True),
@@ -169,6 +184,10 @@ class AgentTextualApp(App):
             self._approve_selected_pending()
             return
 
+        if self._mode == "chat_select":
+            self._submit_chat_selection()
+            return
+
         text = event.value.strip()
         input_widget = self.query_one("#input", Input)
 
@@ -200,6 +219,11 @@ class AgentTextualApp(App):
         if self._mode == "pending_select":
             self._pending_search = event.value.strip()
             self._render_pending_view()
+            return
+
+        if self._mode == "chat_select":
+            self._chat_search = event.value.strip()
+            self._render_chat_select_view()
 
     def on_key(self, event) -> None:
         if event.key in {"tab", "shift+tab"}:
@@ -215,6 +239,39 @@ class AgentTextualApp(App):
             except Exception:
                 pass
 
+
+        if self._mode == "chat_select":
+            key = event.key
+            if key == "up":
+                event.stop()
+                self._move_chat_selection(-1)
+                return
+            if key == "down":
+                event.stop()
+                self._move_chat_selection(1)
+                return
+            if key == "home":
+                event.stop()
+                self._select_chat_index(0)
+                return
+            if key == "end":
+                event.stop()
+                self._select_chat_index(len(self._visible_chat_sessions) - 1)
+                return
+            if key == "pageup":
+                event.stop()
+                try:
+                    self.query_one("#chat_detail_scroll", VerticalScroll).scroll_relative(y=-10, animate=False)
+                except Exception:
+                    pass
+                return
+            if key == "pagedown":
+                event.stop()
+                try:
+                    self.query_one("#chat_detail_scroll", VerticalScroll).scroll_relative(y=10, animate=False)
+                except Exception:
+                    pass
+                return
 
         if self._mode != "pending_select":
             return
@@ -255,7 +312,7 @@ class AgentTextualApp(App):
         if command == "\\help":
             self._append_chat(
                 "System",
-                "Supported Textual commands: \\help, \\models, \\pending, \\new_chat, \\history, \\reset, \\pwd, \\state, \\theme, \\quit",
+                "Supported Textual commands: \\help, \\models, \\pending, \\chats, \\new_chat, \\history, \\reset, \\pwd, \\state, \\theme, \\quit",
             )
             return
 
@@ -265,6 +322,10 @@ class AgentTextualApp(App):
 
         if command == "\\pending":
             self._enter_pending_select_mode()
+            return
+
+        if command == "\\chats":
+            self._enter_chat_select_mode()
             return
 
         if command == "\\new_chat":
@@ -358,6 +419,9 @@ class AgentTextualApp(App):
             return
         if self._mode == "pending_select":
             self._exit_pending_select_mode()
+            return
+        if self._mode == "chat_select":
+            self._exit_chat_select_mode()
             return
 
     def _enter_pending_select_mode(self) -> None:
@@ -507,6 +571,237 @@ class AgentTextualApp(App):
             self._append_chat("Error", str(e))
         self._render_pending_view()
         self._refresh_state()
+
+    def _set_chat_header(self, text: str) -> None:
+        self.query_one("#chat_header", Static).update(text)
+
+    def _enter_chat_select_mode(self) -> None:
+        if self._processing:
+            self._append_chat("System", "Cannot switch chats while AI is processing.")
+            return
+
+        self._mode = "chat_select"
+        self._refresh_footer_bindings()
+        self._chat_search = ""
+        self.query_one("#chat_scroll", VerticalScroll).add_class("hidden")
+        self.query_one("#model_select", Container).add_class("hidden")
+        self.query_one("#pending_select", Container).add_class("hidden")
+        self.query_one("#chat_select", Container).remove_class("hidden")
+        self.screen.add_class("chat-select-mode")
+
+        input_widget = self.query_one("#input", Input)
+        input_widget.value = ""
+        input_widget.placeholder = "Search chats... Enter loads selected chat, Ctrl+G cancels"
+        input_widget.focus()
+
+        self._render_chat_select_view()
+
+    def _exit_chat_select_mode(self) -> None:
+        self._mode = "chat"
+        self._refresh_footer_bindings()
+        self.query_one("#chat_select", Container).add_class("hidden")
+        self.query_one("#chat_scroll", VerticalScroll).remove_class("hidden")
+        self.screen.remove_class("chat-select-mode")
+
+        input_widget = self.query_one("#input", Input)
+        input_widget.value = ""
+        input_widget.placeholder = "Type a message and press Enter..."
+        input_widget.focus()
+        self.query_one("#chat_scroll", VerticalScroll).scroll_end(animate=False)
+
+    def _render_chat_select_view(self) -> None:
+        if self._mode != "chat_select":
+            return
+
+        sessions = self.state.chat_store.list_sessions(limit=200)
+        query = self._chat_search.lower()
+        visible = []
+        for session in sessions:
+            haystack = (
+                f"{session.session_id} {session.title} {session.updated_at} "
+                f"{session.provider_label} {session.model}"
+            ).lower()
+            if not query or query in haystack:
+                visible.append(session)
+
+        self._visible_chat_sessions = visible
+
+        if not visible:
+            self._selected_chat_session_id = None
+            self._set_chat_header("No chat sessions match your search. Ctrl+G returns to chat.")
+            self.query_one("#chat_list", Static).update(Text("No chat sessions.", style="dim"))
+            self.query_one("#chat_detail", Static).update(Text("", style="dim"))
+            self.query_one("#chat_history", Static).update(Text("", style="dim"))
+            return
+
+        visible_ids = {s.session_id for s in visible}
+        if self._selected_chat_session_id not in visible_ids:
+            self._selected_chat_session_id = visible[0].session_id
+
+        self._set_chat_header(
+            f"{len(visible)} chat session(s) — Up/Down select, Enter load, PageUp/PageDown scroll panes, Ctrl+G back."
+        )
+        self._render_chat_list()
+        self._render_chat_detail()
+
+    def _render_chat_list(self) -> None:
+        text = Text(no_wrap=True, overflow="ellipsis")
+        selected_index = 0
+        for index, session in enumerate(self._visible_chat_sessions):
+            selected = session.session_id == self._selected_chat_session_id
+            if selected:
+                selected_index = index
+            marker = ">" if selected else " "
+
+            # Keep each chat entry to exactly one visual row. The detail pane
+            # contains the full timestamp/provider/model/title; the list must
+            # stay compact so scroll math can map one session to one row.
+            title = str(session.title or "").strip()
+            title_text = f" {title[:10]}" if title else ""
+            line = f"{marker} {session.session_id[:10]} {session.turn_count}t{title_text}\n"
+
+            style = "bold reverse" if selected else ""
+            text.append(line, style=style)
+        self.query_one("#chat_list", Static).update(text)
+        self.call_after_refresh(self._scroll_chat_list_to_selected, selected_index)
+
+    def _scroll_chat_list_to_selected(self, selected_index: int) -> None:
+        if selected_index < 0:
+            return
+        try:
+            scroll = self.query_one("#chat_list_scroll", VerticalScroll)
+        except Exception:
+            return
+
+        # Keep the selected row roughly centered. This avoids fragile edge
+        # detection against Textual scroll internals while keeping the selected
+        # chat visible when navigating long lists.
+        visible_rows = max(1, getattr(scroll.size, "height", 1) - 2)
+        target_y = max(0, selected_index - (visible_rows // 2))
+        scroll.scroll_to(y=target_y, animate=False)
+
+    def _selected_chat_summary(self):
+        if not self._selected_chat_session_id:
+            return None
+        for session in self._visible_chat_sessions:
+            if session.session_id == self._selected_chat_session_id:
+                return session
+        return None
+
+    def _render_chat_detail(self) -> None:
+        session = self._selected_chat_summary()
+        if session is None:
+            self.query_one("#chat_detail", Static).update(Text("No chat selected.", style="dim"))
+            return
+
+        turns = self.state.chat_store.load_original_turns(session.session_id, limit=20)
+
+        detail = Text(
+            f"Session details\n"
+            f"id: {session.session_id}\n"
+            f"created: {session.created_at}\n"
+            f"updated: {session.updated_at}\n"
+            f"provider/model: {session.provider_label} / {session.model}\n"
+            f"turns: {session.turn_count}",
+            style="bold",
+        )
+        self.query_one("#chat_detail", Static).update(detail)
+        self.query_one("#chat_detail_scroll", VerticalScroll).scroll_home(animate=False)
+
+        history_parts: list[Any] = [Text("History preview (last 20 turns)\n", style="bold")]
+        if not turns:
+            history_parts.append(Text("No turns recorded yet.", style="dim"))
+        else:
+            first = True
+            for turn in turns:
+                user_text = str(turn.get("user", ""))
+                assistant_text = str(turn.get("assistant_final", ""))
+
+                if not first:
+                    history_parts.append(Text(""))
+                history_parts.append(self._message_renderable("You", user_text))
+                history_parts.append(Text(""))
+                history_parts.append(self._message_renderable("AI", assistant_text))
+                first = False
+
+        self.query_one("#chat_history", Static).update(Group(*history_parts))
+        self._scroll_chat_history_to_bottom()
+
+    def _scroll_chat_history_to_bottom(self) -> None:
+        self._scroll_chat_history_to_bottom_once()
+        self.call_after_refresh(self._scroll_chat_history_to_bottom_once)
+        self.set_timer(0.05, self._scroll_chat_history_to_bottom_once)
+
+    def _scroll_chat_history_to_bottom_once(self) -> None:
+        try:
+            self.query_one("#chat_history_scroll", VerticalScroll).scroll_end(animate=False)
+        except Exception:
+            pass
+
+    def _select_chat_index(self, index: int) -> None:
+        if not self._visible_chat_sessions:
+            return
+        index = max(0, min(index, len(self._visible_chat_sessions) - 1))
+        self._selected_chat_session_id = self._visible_chat_sessions[index].session_id
+        self._render_chat_list()
+        self._render_chat_detail()
+
+    def _move_chat_selection(self, delta: int) -> None:
+        if not self._visible_chat_sessions:
+            return
+        ids = [s.session_id for s in self._visible_chat_sessions]
+        try:
+            index = ids.index(self._selected_chat_session_id)
+        except ValueError:
+            index = 0
+        self._select_chat_index(index + delta)
+
+    def _submit_chat_selection(self) -> None:
+        session = self._selected_chat_summary()
+        if session is None:
+            self._set_chat_header("No chat selected.")
+            return
+
+        turns = self.state.chat_store.load_original_turns(session.session_id, limit=20)
+
+        self.state.chat_session_id = session.session_id
+
+        latest_state = None
+        if turns:
+            maybe_state = turns[-1].get("state")
+            if isinstance(maybe_state, dict):
+                latest_state = maybe_state
+
+        provider_key = str((latest_state or {}).get("provider_key", "")).strip()
+        model = str((latest_state or {}).get("model", "")).strip()
+        provider = PROVIDERS.get(provider_key) if provider_key else None
+        if provider is not None and model:
+            try:
+                config, llm = build_model_config_and_client(provider, model)
+                self.state.model_config = config
+                self.llm = llm
+                if self.agent is not None:
+                    self.agent.llm = llm
+            except Exception:
+                pass
+
+        self._messages.clear()
+        for turn in turns:
+            user_text = str(turn.get("user", ""))
+            assistant_text = str(turn.get("assistant_final", ""))
+            self._messages.append(("You", user_text))
+            self._messages.append(("AI", assistant_text))
+        self._render_chat()
+
+        if self.agent is not None:
+            self.agent.reset(build_system_prompt())
+            for turn in turns:
+                self.agent.messages.append({"role": "user", "content": str(turn.get("user", ""))})
+                self.agent.messages.append({"role": "assistant", "content": str(turn.get("assistant_final", ""))})
+
+        self._exit_chat_select_mode()
+        self._refresh_state()
+        self._append_chat("System", f"Loaded chat session: {session.session_id}")
 
     def _set_model_header(self, text: str) -> None:
         self.query_one("#model_header", Static).update(text)
@@ -662,11 +957,11 @@ class AgentTextualApp(App):
             self.screen.add_class("theme-light")
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        if action in {"toggle_theme", "open_pending", "open_models"}:
+        if action in {"toggle_theme", "open_pending", "open_models", "open_chats"}:
             return self._mode == "chat"
 
         if action == "cancel_overlay":
-            return self._mode in {"model_select", "pending_select"}
+            return self._mode in {"model_select", "pending_select", "chat_select"}
 
         return True
 
@@ -688,6 +983,11 @@ class AgentTextualApp(App):
         if self._mode != "chat":
             return
         self._enter_model_select_mode()
+
+    def action_open_chats(self) -> None:
+        if self._mode != "chat":
+            return
+        self._enter_chat_select_mode()
 
     def _start_agent_step(self, text: str) -> None:
         self._set_processing(True)
@@ -723,6 +1023,8 @@ class AgentTextualApp(App):
             input_widget.placeholder = "Search models... Enter selects one match, Ctrl+G cancels"
         elif self._mode == "pending_select":
             input_widget.placeholder = "Search pending edits... Enter approve, Delete/Backspace reject, Ctrl+G cancels"
+        elif self._mode == "chat_select":
+            input_widget.placeholder = "Search chats... Enter loads selected chat, Ctrl+G cancels"
         elif processing:
             input_widget.placeholder = "AI is processing... you can type, then press Enter when done."
         else:
@@ -780,11 +1082,13 @@ class AgentTextualApp(App):
         self._refresh_header()
 
     def _state_text(self) -> str:
+        session_text = self.state.chat_session_id or "no active chat"
         return (
             f"cwd: {self.state.cwd}\n"
             f"provider: {self.state.model_config.provider_label}\n"
             f"model: {self.state.model_config.model}\n"
-            f"api_type: {self.state.model_config.api_type}"
+            f"api_type: {self.state.model_config.api_type}\n"
+            f"chat_session: {session_text}"
         )
 
     def action_input_complete_command(self) -> None:

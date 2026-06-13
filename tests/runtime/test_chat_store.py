@@ -84,7 +84,7 @@ def test_record_final_turn_writes_original_and_working_streams(tmp_path: Path):
 def test_record_final_turn_creates_session_if_missing(tmp_path: Path):
     state = make_state(tmp_path)
 
-    assert state.chat_session_id == ""
+    assert state.chat_session_id is None
 
     turn_index = record_final_turn(state, "question", "answer")
 

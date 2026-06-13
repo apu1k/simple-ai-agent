@@ -101,6 +101,63 @@ Screen {
     padding: 0 0 0 1;
 }
 
+#chat_select {
+    height: 1fr;
+    width: 100%;
+    padding: 1 2;
+}
+
+#chat_header {
+    height: auto;
+    width: 100%;
+    padding: 0 0 1 0;
+    text-style: bold;
+}
+
+#chat_body {
+    layout: horizontal;
+    height: 1fr;
+    width: 100%;
+}
+
+#chat_list_scroll {
+    height: 100%;
+    width: 15%;
+}
+
+#chat_list_pane {
+    height: auto;
+    width: 100%;
+    padding: 0 1 0 0;
+}
+
+#chat_list {
+    height: auto;
+    width: 100%;
+}
+
+#chat_detail_scroll {
+    height: 100%;
+    width: 30%;
+}
+
+#chat_detail {
+    height: auto;
+    width: auto;
+    padding: 0 1;
+}
+
+#chat_history_scroll {
+    height: 100%;
+    width: 55%;
+}
+
+#chat_history {
+    height: auto;
+    width: auto;
+    padding: 0 0 0 1;
+}
+
 #input {
     height: 3;
 }
