@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 # Maximum steps before giving up (prevents infinite loops)
 MAX_STEPS = 10
 MAX_RETRIES = 2
+MAX_EMPTY_RETRIES = 2
 MAX_BATCH_TOOL_CALLS = 5
 FAIL_FAST_BATCH = True
 
@@ -276,14 +277,34 @@ class Agent:
         self.messages.append({"role": "user", "content": user_input})
 
         retry_count = 0
+        empty_retry_count = 0
 
         for _ in range(MAX_STEPS):
-            reply = self.llm.chat(self._messages_with_context())
+            try:
+                reply = self.llm.chat(self._messages_with_context())
+            except Exception as e:
+                err = f"Error: Model request failed: {e}"
+                self._error(err)
+                return err
 
             if not reply:
-                self._error("Empty response from LLM")
+                self._error("Error: Empty response from LLM")
+
+                if empty_retry_count < MAX_EMPTY_RETRIES:
+                    self.messages.append({
+                        "role": "user",
+                        "content": (
+                            "Your previous response was empty. "
+                            "Please continue and provide either a valid tool call JSON "
+                            "or a final answer."
+                        ),
+                    })
+                    empty_retry_count += 1
+                    continue
+
                 return "Error: Empty response from model."
 
+            empty_retry_count = 0
             self._raw(f"RAW MODEL RESPONSE: {reply}")
             parsed = protocol.parse(reply)
 
