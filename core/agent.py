@@ -106,10 +106,23 @@ class Agent:
         )
 
     def _messages_with_context(self) -> list[dict]:
-        """Inject a runtime-context system message after the main system prompt."""
+        """Return messages with runtime context merged into the single leading system message."""
+        if not self.messages:
+            return [{"role": "system", "content": self._runtime_context()}]
+
+        first = self.messages[0]
+        if first.get("role") != "system":
+            return [
+                {"role": "system", "content": self._runtime_context()},
+                *self.messages,
+            ]
+
+        base_content = first.get("content", "")
+        runtime = self._runtime_context()
+        merged_content = f"{base_content}\n\n{runtime}" if base_content else runtime
+
         return [
-            self.messages[0],
-            {"role": "system", "content": self._runtime_context()},
+            {"role": "system", "content": merged_content},
             *self.messages[1:],
         ]
 
