@@ -8,6 +8,8 @@ Implements llm/base.py LLMClient protocol.
 from openai import OpenAI
 from llm.providers import ProviderConfig
 
+REQUEST_TIMEOUT_SECONDS = 180.0
+
 
 class OpenAIChatClient:
     """LLM client using the OpenAI chat completions API."""
@@ -23,5 +25,6 @@ class OpenAIChatClient:
         response = self._client.chat.completions.create(
             model=self._model,
             messages=messages,
+            timeout=REQUEST_TIMEOUT_SECONDS,
         )
         return response.choices[0].message.content

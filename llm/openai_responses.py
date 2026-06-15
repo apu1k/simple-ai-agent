@@ -8,6 +8,8 @@ Implements llm/base.py LLMClient protocol.
 from openai import OpenAI
 from llm.providers import ProviderConfig
 
+REQUEST_TIMEOUT_SECONDS = 180.0
+
 
 class OpenAIResponsesClient:
     """LLM client using the OpenAI Responses API."""
@@ -25,6 +27,7 @@ class OpenAIResponsesClient:
             model=self._model,
             instructions=instructions,
             input=input_messages,
+            timeout=REQUEST_TIMEOUT_SECONDS,
         )
         return response.output_text
 
