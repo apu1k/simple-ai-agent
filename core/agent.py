@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Literal
 
+from config import MAX_AGENT_STEPS, MAX_BATCH_TOOL_CALLS
 from core import protocol
 from core.tool_registry import registry
 
@@ -27,10 +28,9 @@ if TYPE_CHECKING:
 
 
 # Maximum steps before giving up (prevents infinite loops)
-MAX_STEPS = 10
+MAX_STEPS = MAX_AGENT_STEPS
 MAX_RETRIES = 2
 MAX_EMPTY_RETRIES = 2
-MAX_BATCH_TOOL_CALLS = 5
 FAIL_FAST_BATCH = True
 
 
@@ -279,7 +279,17 @@ class Agent:
         retry_count = 0
         empty_retry_count = 0
 
-        for _ in range(MAX_STEPS):
+        for step in range(1, MAX_STEPS + 1):
+            if step == MAX_STEPS - 1:
+                self.messages.append({
+                    "role": "user",
+                    "content": (
+                        f"IMPORTANT: You are on step {step} out of {MAX_STEPS}. "
+                        "You must now produce your final answer. "
+                        "Do not call any more tools. Provide a complete response."
+                    ),
+                })
+
             try:
                 reply = self.llm.chat(self._messages_with_context())
             except Exception as e:

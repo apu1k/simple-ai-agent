@@ -15,3 +15,7 @@ load_dotenv(ENV_FILE)
 
 PROVIDERS_FILE = PROJECT_ROOT / "providers.toml"
 PROVIDERS_EXAMPLE_FILE = PROJECT_ROOT / "providers.example.toml"
+
+# Agent operational limits
+MAX_AGENT_STEPS = 10
+MAX_BATCH_TOOL_CALLS = 10

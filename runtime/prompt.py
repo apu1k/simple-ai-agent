@@ -9,6 +9,7 @@ examples into the prompt that teaches the LLM how to use them.
 """
 
 import json
+from config import MAX_AGENT_STEPS, MAX_BATCH_TOOL_CALLS
 from core.tool_registry import registry
 
 
@@ -152,4 +153,10 @@ Incorrect behavior examples:
 Self-check before responding:
 If the message contains a tool call, the whole message must be valid JSON from first character to last character. If
 the message is normal prose, it must not contain any raw JSON object that resembles a tool call.
+
+Operational constraints:
+- You have a maximum of {MAX_AGENT_STEPS} steps per user message.
+- Each call to the LLM (whether tool calls or a final answer) counts as one step.
+- You can make up to {MAX_BATCH_TOOL_CALLS} tool calls in a single batch response.
+- Plan your actions carefully, use batch tool calls when possible, and produce a final answer before running out of steps.
 """

@@ -1,1 +1,8 @@
-# config — environment loading and path constants
+from config.settings import (
+    PROJECT_ROOT,
+    ENV_FILE,
+    PROVIDERS_FILE,
+    PROVIDERS_EXAMPLE_FILE,
+    MAX_AGENT_STEPS,
+    MAX_BATCH_TOOL_CALLS,
+)
