@@ -70,6 +70,7 @@ class AgentTextualApp(App):
         "\\history",
         "\\reset",
         "\\pwd",
+        "\\cd",
         "\\state",
         "\\theme",
         "\\quit",
@@ -312,7 +313,7 @@ class AgentTextualApp(App):
         if command == "\\help":
             self._append_chat(
                 "System",
-                "Supported Textual commands: \\help, \\models, \\pending, \\chats, \\new_chat, \\history, \\reset, \\pwd, \\state, \\theme, \\quit",
+                "Supported Textual commands: \\help, \\models, \\pending, \\chats, \\new_chat, \\history, \\reset, \\pwd, \\cd, \\state, \\theme, \\quit",
             )
             return
 
@@ -351,6 +352,20 @@ class AgentTextualApp(App):
             self._append_chat("System", str(self.state.cwd))
             return
 
+        if command.startswith("\\cd"):
+            path = text.strip()[3:].strip()
+            if not path:
+                self._append_chat("System", "Usage: \\cd <path>")
+                return
+            from tools.fs.read import cd
+            result = cd(self.state, path)
+            if isinstance(result, str) and result.startswith("Error:"):
+                self._append_chat("Error", result)
+            else:
+                self._append_chat("System", result)
+            self._refresh_state()
+            return
+
         if command == "\\state":
             self._append_chat("System", self._state_text())
             return
@@ -366,7 +381,7 @@ class AgentTextualApp(App):
 
         self._append_chat(
             "System",
-            "Command not yet supported in Textual.",
+            "Unknown command. Type \\help to see available commands.",
         )
 
     def _enter_model_select_mode(self) -> None:
