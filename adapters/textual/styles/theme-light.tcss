@@ -1,118 +1,118 @@
 Screen.theme-light {
-    background: #FAFAF8;
-    color: #1C1C1C;
+    background: #FFFFFF;
+    color: #1A1A1A;
 }
 
 Screen.theme-light #chat {
-    background: #FAFAF8;
-    color: #1C1C1C;
+    background: #FFFFFF;
+    color: #1A1A1A;
 }
 
 Screen.theme-light #model_select {
-    background: #EFF8FF;
-    color: #102A43;
+    background: #FFFFFF;
+    color: #1A1A1A;
 }
 
 Screen.theme-light #model_header {
-    color: #186FAF;
+    color: #000000;
 }
 
 Screen.theme-light #model_tree {
-    background: #EFF8FF;
-    color: #102A43;
+    background: #FFFFFF;
+    color: #1A1A1A;
 }
 
 Screen.theme-light #pending_select {
-    background: #FFF7ED;
-    color: #2A1A10;
+    background: #FFFFFF;
+    color: #1A1A1A;
 }
 
 Screen.theme-light #pending_header {
-    color: #A45A1C;
+    color: #000000;
 }
 
 Screen.theme-light #pending_list_pane {
-    border: round #C47A3A;
+    border: round #555555;
 }
 
 Screen.theme-light #pending_diff_scroll {
-    border: round #C47A3A;
+    border: round #555555;
 }
 
 Screen.theme-light #chat_select {
-    background: #FFF7ED;
-    color: #2A1A10;
+    background: #FFFFFF;
+    color: #1A1A1A;
 }
 
 Screen.theme-light #chat_header {
-    color: #A45A1C;
+    color: #000000;
 }
 
 Screen.theme-light #chat_list_scroll {
-    border: round #C47A3A;
+    border: round #555555;
 }
 
 Screen.theme-light #chat_detail_scroll {
-    border: round #C47A3A;
+    border: round #555555;
 }
 
 Screen.theme-light #chat_history_scroll {
-    border: round #C47A3A;
+    border: round #555555;
 }
 
 Screen.theme-light #chat_list_scroll,
 Screen.theme-light #chat_detail_scroll,
 Screen.theme-light #chat_history_scroll,
 Screen.theme-light #pending_diff_scroll {
-    scrollbar-color: #A45A1C;
-    scrollbar-color-hover: #C47A3A;
-    scrollbar-color-active: #D9904F;
-    scrollbar-corner-color: #FFF7ED;
-    scrollbar-background: #FFF1DD;
+    scrollbar-color: #555555;
+    scrollbar-color-hover: #333333;
+    scrollbar-color-active: #111111;
+    scrollbar-corner-color: #FFFFFF;
+    scrollbar-background: #F0F0F0;
 }
 
 Screen.theme-light.chat-select-mode #input {
-    background: #FFF1DD;
-    color: #2A1A10;
-    border: round #A45A1C;
+    background: #F5F5F5;
+    color: #1A1A1A;
+    border: round #555555;
 }
 
 Screen.theme-light.chat-select-mode #input:focus {
-    border: heavy #C47A3A;
+    border: heavy #333333;
 }
 
 Screen.theme-light.pending-select-mode #input {
-    background: #FFF1DD;
-    color: #2A1A10;
-    border: round #A45A1C;
+    background: #F5F5F5;
+    color: #1A1A1A;
+    border: round #555555;
 }
 
 Screen.theme-light.pending-select-mode #input:focus {
-    border: heavy #C47A3A;
+    border: heavy #333333;
 }
 
 Screen.theme-light #input {
     background: #FFFFFF;
-    color: #1C1C1C;
-    border: round #A45A1C;
+    color: #1A1A1A;
+    border: round #555555;
 }
 
 Screen.theme-light #input:focus {
-    border: heavy #C47A3A;
+    border: heavy #333333;
 }
 
 Screen.theme-light.model-select-mode #input {
-    background: #DCEEFF;
-    color: #102A43;
-    border: round #2680C2;
+    background: #F0F5FA;
+    color: #1A1A1A;
+    border: round #336699;
 }
 
 Screen.theme-light.model-select-mode #input:focus {
-    border: heavy #186FAF;
+    border: heavy #1565A0;
 }
 
 Screen.theme-light #footer_hint {
-    background: #E3D7CA;
-    color: #2A1A10;
+    background: #E8E8E8;
+    color: #1A1A1A;
     text-style: bold;
 }

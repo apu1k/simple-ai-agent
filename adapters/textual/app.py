@@ -510,8 +510,10 @@ class AgentTextualApp(App):
             marker = ">" if edit_id == self._selected_pending_id else " "
             path = str(edit.path)
             line = f"{marker} #{edit.id} [{edit.kind}] {path}\n"
-            style = "bold reverse" if edit_id == self._selected_pending_id else ""
-            text.append(line, style=style)
+            if edit_id == self._selected_pending_id:
+                text.append(line, style="bold reverse")
+            else:
+                text.append(line)
         self.query_one("#pending_list", Static).update(text)
 
     def _render_pending_diff(self) -> None:
@@ -526,7 +528,7 @@ class AgentTextualApp(App):
         )
         diff_text = edit.diff if edit.diff.strip() else "(no diff)"
         try:
-            diff = Syntax(diff_text, "diff", line_numbers=False, word_wrap=False)
+            diff = Syntax(diff_text, "diff", line_numbers=False, word_wrap=False, theme="", background_color="default")
             renderable = Group(metadata, diff)
         except Exception:
             renderable = Group(metadata, Text(diff_text))
@@ -675,8 +677,10 @@ class AgentTextualApp(App):
             title_text = f" {title[:10]}" if title else ""
             line = f"{marker} {session.session_id[:10]} {session.turn_count}t{title_text}\n"
 
-            style = "bold reverse" if selected else ""
-            text.append(line, style=style)
+            if selected:
+                text.append(line, style="bold reverse")
+            else:
+                text.append(line)
         self.query_one("#chat_list", Static).update(text)
         self.call_after_refresh(self._scroll_chat_list_to_selected, selected_index)
 
@@ -1074,7 +1078,11 @@ class AgentTextualApp(App):
 
     def _format_ai_markdown(self, text: str):
         try:
-            return Markdown(text)
+            from textual.reactive import Reactive
+            # Light theme -> no code background (avoids black boxes on white)
+            # Dark theme -> use a dark syntax theme for proper highlighting
+            code_theme = "" if not self._theme_dark else "dracula"
+            return Markdown(text, code_theme=code_theme)
         except Exception:
             return Text(text)
 
