@@ -121,6 +121,51 @@ def test_read_file_error_too_large(tmp_path, monkeypatch):
     assert "too large" in result
 
 
+def test_read_file_line_range_returns_content(tmp_path):
+    state = make_state(tmp_path)
+    (tmp_path / "lines.txt").write_text("line 1\nline 2\nline 3\nline 4\n", encoding="utf-8")
+
+    result = read_file(state, "lines.txt", start_line=2, end_line=3)
+
+    assert result == "line 2\nline 3\n"
+
+
+def test_read_file_line_range_open_end(tmp_path):
+    state = make_state(tmp_path)
+    (tmp_path / "lines.txt").write_text("line 1\nline 2\nline 3\n", encoding="utf-8")
+
+    result = read_file(state, "lines.txt", start_line=2)
+
+    assert result == "line 2\nline 3\n"
+
+
+@pytest.mark.parametrize("start_line,end_line,expected", [
+    (0, 2, "greater than or equal to 1"),
+    (5, 2, "greater than or equal to start_line"),
+    ("abc", 2, "must be an integer"),
+    (1, "abc", "must be an integer"),
+])
+def test_read_file_line_range_invalid_values(tmp_path, start_line, end_line, expected):
+    state = make_state(tmp_path)
+    (tmp_path / "lines.txt").write_text("line 1\nline 2\n", encoding="utf-8")
+
+    result = read_file(state, "lines.txt", start_line=start_line, end_line=end_line)
+
+    assert result.startswith("Error:")
+    assert "Invalid line range" in result
+    assert expected in result
+
+
+def test_read_file_line_range_start_beyond_eof(tmp_path):
+    state = make_state(tmp_path)
+    (tmp_path / "lines.txt").write_text("line 1\nline 2\n", encoding="utf-8")
+
+    result = read_file(state, "lines.txt", start_line=10, end_line=12)
+
+    assert result.startswith("Error:")
+    assert "beyond end of file" in result
+
+
 # ---------------------------------------------------------------------------
 # show_file
 # ---------------------------------------------------------------------------

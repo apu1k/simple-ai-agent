@@ -116,13 +116,18 @@ def cd(state, path: str) -> str:
 @tool(
     description=(
         "Read a UTF-8 text file and return its contents to the model for analysis. "
-        "Use this when you need to inspect, reason about, summarize, or modify file contents."
+        "Use this when you need to inspect, reason about, summarize, or modify file contents. "
+        "Optionally provide start_line/end_line to read only a specific line range."
     ),
-    params={"path": "File path to read. Relative and absolute paths are allowed."},
+    params={
+        "path": "File path to read. Relative and absolute paths are allowed.",
+        "start_line": "Optional 1-based start line.",
+        "end_line": "Optional 1-based inclusive end line.",
+    },
     requires_state=True,
     example={"action": "read_file", "input": {"path": "main.py"}},
 )
-def read_file(state, path: str) -> str:
+def read_file(state, path: str, start_line=None, end_line=None) -> str:
     file_path = _s.resolve_path(state, path)
 
     try:
@@ -130,12 +135,22 @@ def read_file(state, path: str) -> str:
         if error:
             return error
 
-        if file_path.stat().st_size > _s.MAX_FILE_SIZE_BYTES:
-            return f"Error: File is too large to read: {file_path}"
+        start_line, end_line, complete = _s.normalize_line_range(start_line, end_line)
 
-        with file_path.open("r", encoding="utf-8") as f:
-            return f.read()
+        if complete:
+            if file_path.stat().st_size > _s.MAX_FILE_SIZE_BYTES:
+                return f"Error: File is too large to read: {file_path}"
 
+            with file_path.open("r", encoding="utf-8") as f:
+                return f.read()
+
+        content, _actual_end, read_error = _s.read_line_range_for_display(file_path, start_line, end_line)
+        if read_error:
+            return read_error
+        return content
+
+    except ValueError as e:
+        return f"Error: Invalid line range: {e}"
     except UnicodeDecodeError:
         return f"Error: File is not valid UTF-8: {file_path}"
     except PermissionError:
