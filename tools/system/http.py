@@ -63,6 +63,22 @@ def _is_safe_hostname(hostname: str) -> str | None:
     return None
 
 
+def _validate_header(name: str, value: str) -> str | None:
+    if "\r" in name or "\n" in name or "\r" in value or "\n" in value:
+        return "Error: Header names/values must not contain CR or LF characters."
+    if name.strip().lower() in BLOCKED_HEADERS:
+        return f"Error: Header '{name}' is not allowed."
+    return None
+
+
+def _build_no_redirect_opener() -> urllib.request.OpenerDirector:
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    return urllib.request.build_opener(_NoRedirect)
+
+
 @tool(
     description=(
         "Fetch a URL via HTTP GET. "
@@ -80,22 +96,6 @@ def _is_safe_hostname(hostname: str) -> str | None:
         "input": {"url": "https://example.com", "include_body": True, "headers": "{}"},
     },
 )
-def _validate_header(name: str, value: str) -> str | None:
-    if "\r" in name or "\n" in name or "\r" in value or "\n" in value:
-        return "Error: Header names/values must not contain CR or LF characters."
-    if name.strip().lower() in BLOCKED_HEADERS:
-        return f"Error: Header '{name}' is not allowed."
-    return None
-
-
-def _build_no_redirect_opener() -> urllib.request.OpenerDirector:
-    class _NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            return None
-
-    return urllib.request.build_opener(_NoRedirect)
-
-
 def http_get(state, url: str, include_body: bool = False, headers: str | dict = "{}") -> str:
     parsed = urlparse(url)
     if parsed.scheme not in PROTOCOL_WHITELIST:
@@ -145,8 +145,11 @@ def http_get(state, url: str, include_body: bool = False, headers: str | dict = 
     except urllib.error.HTTPError as e:
         if 300 <= int(getattr(e, "code", 0)) < 400:
             location = ""
-            if isinstance(getattr(e, "headers", None), HTTPMessage):
-                location = e.headers.get("Location", "")
+            hdrs = getattr(e, "headers", None)
+            if isinstance(hdrs, HTTPMessage):
+                location = hdrs.get("Location", "")
+            elif isinstance(hdrs, dict):
+                location = hdrs.get("Location", "")
             return f"Error: Redirects are not allowed. HTTP {e.code}. Location: {location}"
         return f"Error: HTTP {e.code} for {url}: {e.reason}"
     except urllib.error.URLError as e:

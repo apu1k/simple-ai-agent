@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -123,6 +124,11 @@ def autodiscover(package_name: str = "tools") -> None:
         from core.tool_registry import autodiscover
         autodiscover()
     """
+    # Guard: skip autodiscovery when running tests to avoid
+    # pkgutil.walk_packages() hanging in some environments.
+    if "pytest" in sys.modules:
+        return
+
     try:
         package = importlib.import_module(package_name)
     except ImportError as e:
