@@ -17,7 +17,7 @@ from typing import Literal
 from config.settings import PROVIDERS_EXAMPLE_FILE, PROVIDERS_FILE
 
 
-ApiType = Literal["chat_completions", "responses"]
+ApiType = Literal["chat_completions", "responses", "completions"]
 
 
 @dataclass(frozen=True)
@@ -53,15 +53,31 @@ def create_llm_client(provider: ProviderConfig, model: str):
         api_key_envs=provider.api_key_envs,
     )
 
-    if provider.api_type == "chat_completions":
+    # IMPORTANT: branch on effective.api_type (the normalized runtime config),
+    # not the original provider object.
+    if effective.api_type == "chat_completions":
         from llm.openai_chat import OpenAIChatClient
         return OpenAIChatClient(effective)
 
-    if provider.api_type == "responses":
+    if effective.api_type == "responses":
         from llm.openai_responses import OpenAIResponsesClient
         return OpenAIResponsesClient(effective)
 
-    raise ValueError(f"Unsupported api_type: '{provider.api_type}'")
+    if effective.api_type == "completions":
+        from llm.openai_completions import OpenAICompletionsClient
+        return OpenAICompletionsClient(effective)
+
+    raise ValueError(f"Unsupported api_type: '{effective.api_type}'")
+
+
+# Debug helper - remove after testing
+def _debug_provider_config():
+    """Print loaded provider configs for debugging."""
+    import sys
+    print("=== LOADED PROVIDERS ===", file=sys.stderr)
+    for key, p in PROVIDERS.items():
+        print(f"  {key}: api_type={p.api_type}, model={p.default_model}", file=sys.stderr)
+    print("========================", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +211,7 @@ def _build_provider(data: dict, index: int) -> ProviderConfig:
     key = _required_str(data, "key", index)
     label = _required_str(data, "label", index)
     api_type_raw = _required_str(data, "api_type", index)
-    if api_type_raw not in {"chat_completions", "responses"}:
+    if api_type_raw not in {"chat_completions", "responses", "completions"}:
         raise ValueError(f"Provider #{index} has invalid api_type: '{api_type_raw}'")
     api_type: ApiType = api_type_raw  # type: ignore
 

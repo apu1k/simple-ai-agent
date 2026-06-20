@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Callable, Literal
 from config import MAX_AGENT_STEPS, MAX_BATCH_TOOL_CALLS
 from core import protocol
 from core.tool_registry import registry
+from llm.base import LLMResponse, NativeToolOutput
 
 if TYPE_CHECKING:
     from llm.base import LLMClient
@@ -88,6 +89,32 @@ class Agent:
             f"provider={self.state.model_config.provider_label}, "
             f"model={self.state.model_config.model}"
         )
+        
+        # Check if LLM supports native tool calling
+        self._use_native_tools = getattr(self.llm, 'supports_native_tools', False)
+        self._debug(f"NATIVE TOOLS: {self._use_native_tools}")
+        
+        # Detect API type for tool format
+        self._api_type = getattr(self.llm, 'api_type', 'chat_completions')
+        self._debug(f"API TYPE: {self._api_type}")
+        self._debug(f"STATE API TYPE: {self.state.model_config.api_type}")
+        self._debug(f"STATE PROVIDER KEY: {self.state.model_config.provider_key}")
+        self._debug(f"LLM CLIENT CLASS: {self.llm.__class__.__name__}")
+        self._debug(f"LLM CLIENT MODULE: {self.llm.__class__.__module__}")
+
+        # Prebuild both tool-schema variants once to avoid runtime shape drift.
+        self._tools_by_api_type: dict[str, list[dict]] = {}
+        if self._use_native_tools:
+            from llm.schema import build_tools_list  # Lazy import
+            self._tools_by_api_type = {
+                "chat_completions": build_tools_list(self.registry, api_type="chat_completions"),
+                "responses": build_tools_list(self.registry, api_type="responses"),
+            }
+            self._debug(
+                "PREBUILT TOOLS: "
+                f"chat_completions={len(self._tools_by_api_type['chat_completions'])}, "
+                f"responses={len(self._tools_by_api_type['responses'])}"
+            )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -127,11 +154,65 @@ class Agent:
             *self.messages[1:],
         ]
 
+    def _assert_tools_shape(self, api_type: str, tools: list[dict] | None) -> None:
+        """Fail fast when tool payload shape does not match target API."""
+        if not tools:
+            return
+
+        first = tools[0] if tools else {}
+        first_keys = sorted(first.keys()) if isinstance(first, dict) else []
+
+        if api_type == "chat_completions":
+            invalid = [
+                t for t in tools
+                if not (isinstance(t, dict) and t.get("type") == "function" and isinstance(t.get("function"), dict))
+            ]
+            if invalid:
+                raise ValueError(
+                    "Tool schema mismatch for chat_completions: expected each tool to contain "
+                    "type='function' and nested 'function' object. "
+                    f"first_tool_keys={first_keys}"
+                )
+            return
+
+        if api_type == "responses":
+            invalid = [
+                t for t in tools
+                if not (
+                    isinstance(t, dict)
+                    and t.get("type") == "function"
+                    and isinstance(t.get("name"), str)
+                    and "function" not in t
+                )
+            ]
+            if invalid:
+                raise ValueError(
+                    "Tool schema mismatch for responses: expected each tool to contain "
+                    "type='function' and top-level 'name' (without nested 'function'). "
+                    f"first_tool_keys={first_keys}"
+                )
+            return
+
+        raise ValueError(f"Unsupported api_type for tool assertions: {api_type}")
+
     def _append_tool_result(self, action: str, result: str) -> None:
         self.messages.append({
             "role": "user",
             "content": f"TOOL RESULT ({action}): {result}",
         })
+
+    def _is_effectively_empty(self, parsed: protocol.ParsedResponse, raw_reply: str | None) -> bool:
+        """Protocol-aware empty check.
+
+        A response is not empty if:
+        - it contains at least one tool call, or
+        - it is a final response with non-empty text.
+        """
+        if parsed.kind == "tool" and bool(parsed.tool_calls):
+            return False
+        if parsed.kind == "final" and bool(parsed.final):
+            return False
+        return True
 
     def _append_tool_batch_result(self, result: str) -> None:
         self.messages.append({
@@ -278,6 +359,7 @@ class Agent:
 
         retry_count = 0
         empty_retry_count = 0
+        pending_native_tool_calls = None
 
         for step in range(1, MAX_STEPS + 1):
             if step == MAX_STEPS - 1:
@@ -290,15 +372,110 @@ class Agent:
                     ),
                 })
 
+            # Detect configuration/runtime mismatches early
+            if self.state.model_config.api_type != self._api_type:
+                err = (
+                    "Configuration mismatch: state api_type and llm client api_type differ. "
+                    f"state.api_type={self.state.model_config.api_type}, "
+                    f"llm.api_type={self._api_type}, "
+                    f"provider={self.state.model_config.provider_key}, "
+                    f"model={self.state.model_config.model}"
+                )
+                self._error(err)
+                return f"Error: {err}"
+
+            # Select prebuilt tools deterministically by active client API type.
+            tools = None
+            tool_choice = None
+            if self._use_native_tools:
+                if self._api_type not in self._tools_by_api_type:
+                    err = (
+                        "Unsupported llm.api_type for tool selection: "
+                        f"{self._api_type}. Available={list(self._tools_by_api_type.keys())}"
+                    )
+                    self._error(err)
+                    return f"Error: {err}"
+
+                tools = self._tools_by_api_type[self._api_type]
+                self._assert_tools_shape(self._api_type, tools)
+                tool_choice = "auto"
+
+                first_keys = sorted(tools[0].keys()) if tools else []
+                self._debug(
+                    "TOOL DISPATCH: "
+                    f"provider={self.state.model_config.provider_key}, "
+                    f"state.api_type={self.state.model_config.api_type}, "
+                    f"llm.api_type={self._api_type}, "
+                    f"first_tool_keys={first_keys}"
+                )
+                self._debug(f"TOOLS FORMAT ({self._api_type}): {tools[:1] if tools else []}")
+            
             try:
-                reply = self.llm.chat(self._messages_with_context())
+                # For stateful native tool APIs (e.g., Responses), continue with
+                # structured function_call_output submission instead of text replay.
+                if (
+                    pending_native_tool_calls
+                    and getattr(self.llm, 'supports_native_tool_outputs', False)
+                ):
+                    tool_outputs: list[NativeToolOutput] = []
+                    for r, tc in pending_native_tool_calls:
+                        if r.status == "success":
+                            out = r.observation or ""
+                        elif r.status == "failed":
+                            out = r.error or r.observation or "Tool failed."
+                        else:
+                            out = r.observation or "Skipped due to earlier failure in fail-fast batch."
+                        tool_outputs.append(NativeToolOutput(call_id=tc.id, output=out))
+
+                    reply = self.llm.submit_tool_outputs(tool_outputs)
+                    pending_native_tool_calls = None
+                else:
+                    reply = self.llm.chat(
+                        self._messages_with_context(),
+                        tools=tools,
+                        tool_choice=tool_choice
+                    )
             except Exception as e:
                 err = f"Error: Model request failed: {e}"
                 self._error(err)
                 return err
-
-            if not reply:
-                self._error("Error: Empty response from LLM")
+            
+            # Handle LLMResponse with native tool calls
+            parsed: protocol.ParsedResponse
+            native_tool_calls = None
+            if isinstance(reply, LLMResponse):
+                if reply.tool_calls:
+                    native_tool_calls = reply.tool_calls
+                    # Convert native tool calls to protocol format
+                    parsed = protocol.ParsedResponse(
+                        kind="tool",
+                        tool_calls=[
+                            protocol.ToolCall(tc.name, tc.arguments)
+                            for tc in reply.tool_calls
+                        ]
+                    )
+                    # Use content for logging/raw callback
+                    reply = reply.content or ""
+                else:
+                    # No tool calls - treat content as final
+                    reply = reply.content or ""
+                    parsed = protocol.parse(reply)
+            else:
+                # String response - use JSON parser (fallback mode)
+                parsed = protocol.parse(reply)
+            
+            # Check for truly empty response (text-only emptiness is valid when tool calls are present)
+            if self._is_effectively_empty(parsed, reply if isinstance(reply, str) else None):
+                self._error(
+                    "Error: Empty response from LLM | "
+                    f"provider={self.state.model_config.provider_key} "
+                    f"model={self.state.model_config.model} "
+                    f"state.api_type={self.state.model_config.api_type} "
+                    f"llm.api_type={self._api_type} "
+                    f"parsed.kind={parsed.kind} "
+                    f"tool_call_count={len(parsed.tool_calls)} "
+                    f"raw_reply_len={len(reply) if isinstance(reply, str) else 0}"
+                )
 
                 if empty_retry_count < MAX_EMPTY_RETRIES:
                     self.messages.append({
@@ -316,7 +493,6 @@ class Agent:
 
             empty_retry_count = 0
             self._raw(f"RAW MODEL RESPONSE: {reply}")
-            parsed = protocol.parse(reply)
 
             # ---- Invalid response ----------------------------------------
             if not parsed.is_valid:
@@ -392,6 +568,15 @@ class Agent:
                             f"TOOL CALL [{r.index}/{r.total}]: "
                             f"{r.action}({r.tool_input}) -> SKIPPED"
                         )
+
+                # For stateful native-tool clients, continue via structured
+                # tool outputs (function_call_output) instead of text TOOL RESULT.
+                if (
+                    native_tool_calls
+                    and getattr(self.llm, 'supports_native_tool_outputs', False)
+                ):
+                    pending_native_tool_calls = list(zip(records, native_tool_calls, strict=False))
+                    continue
 
                 # Backward compatibility: keep legacy per-tool TOOL RESULT shape
                 # for single-call responses.

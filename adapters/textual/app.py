@@ -859,13 +859,10 @@ class AgentTextualApp(App):
         provider = PROVIDERS.get(provider_key) if provider_key else None
         if provider is not None and model:
             try:
-                config, llm = build_model_config_and_client(provider, model)
-                self.state.model_config = config
-                self.llm = llm
-                if self.agent is not None:
-                    self.agent.llm = llm
-            except Exception:
-                pass
+                self._rebuild_runtime_for_provider_model(provider, model)
+            except Exception as e:
+                self._append_chat("Error", f"Failed to restore provider/model from chat state: {e}")
+                self._append_log("error", f"chat restore failed for provider={provider_key}, model={model}: {e}")
 
         self._messages.clear()
         for turn in turns:
@@ -1005,6 +1002,24 @@ class AgentTextualApp(App):
             f"{len(self._visible_model_matches)} matches. Narrow search to one model or select a tree item."
         )
 
+    def _rebuild_runtime_for_provider_model(self, provider, model: str) -> None:
+        """Atomically rebuild model config, llm client, and agent for a provider/model."""
+        config, llm = build_model_config_and_client(provider, model)
+
+        # Replace runtime bundle atomically: state config + llm + fresh agent.
+        self.state.model_config = config
+        self.llm = llm
+        self.agent = create_agent(
+            state=self.state,
+            llm=self.llm,
+            on_debug=self._on_debug,
+            on_tool=self._on_tool,
+            on_raw=self._on_raw,
+            on_error=self._on_error,
+            on_display=self._on_display,
+        )
+        self._refresh_state()
+
     def _switch_model(self, provider_key: str, model: str) -> None:
         provider = PROVIDERS.get(provider_key)
         if provider is None:
@@ -1012,21 +1027,15 @@ class AgentTextualApp(App):
             return
 
         try:
-            config, llm = build_model_config_and_client(provider, model)
+            self._rebuild_runtime_for_provider_model(provider, model)
         except Exception as e:
             self._set_model_header(f"Model switch failed: {e}")
             return
 
-        self.state.model_config = config
-        self.llm = llm
-        if self.agent is not None:
-            self.agent.llm = llm
-        self._refresh_state()
-
         self._exit_model_select_mode()
         self._append_chat(
             "System",
-            f"Model changed to {config.provider_label} / {config.model}.",
+            f"Model changed to {self.state.model_config.provider_label} / {self.state.model_config.model}.",
         )
 
     def action_toggle_theme(self) -> None:

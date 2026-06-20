@@ -28,7 +28,8 @@ def _select_default_model_config():
     if not PROVIDERS:
         raise ValueError("No providers configured.")
 
-    provider = next(iter(PROVIDERS.values()))
+    # Prefer OpenAI for default startup if configured; fallback to first provider.
+    provider = PROVIDERS.get("openai") or next(iter(PROVIDERS.values()))
     model = provider.default_model
 
     if not model:

@@ -6,11 +6,18 @@ Builds the LLM system prompt dynamically from the tool registry.
 After autodiscover() has run, registry.all() contains every registered tool.
 build_system_prompt() formats their names, descriptions, parameters, and
 examples into the prompt that teaches the LLM how to use them.
+
+For native tool calling, the prompt omits JSON syntax instructions since
+tools are passed via the API instead.
 """
 
 import json
 from config import MAX_AGENT_STEPS, MAX_BATCH_TOOL_CALLS
 from core.tool_registry import registry
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from runtime.state import AgentState
 
 
 def _format_tool_signature(name: str, spec) -> str:
@@ -36,12 +43,24 @@ def _build_tools_section() -> str:
     return "\n".join(lines)
 
 
-def build_system_prompt() -> str:
-    tools_section = _build_tools_section()
+def _runtime_context(state: "AgentState") -> str:
+    """Build runtime context section of the system prompt."""
+    return (
+        "Current local agent runtime state:\n"
+        f"- current working directory: {state.cwd}\n"
+        f"- selected provider: {state.model_config.provider_label}\n"
+        f"- selected model: {state.model_config.model}\n\n"
+        "Important:\n"
+        "- You are controlling a local agent runtime through tools.\n"
+        "- If the user asks where you are in the filesystem, use the current working directory.\n"
+        "- If the user asks for the current path, directory, or location, call pwd().\n"
+        "- Do not answer such questions as if you were only a remote AI model.\n"
+    )
 
+
+def _tool_syntax_instructions() -> str:
+    """Build JSON tool-call syntax instructions for parser mode."""
     return f"""
-You are an AI agent connected to a local Python runtime.
-
 You have two response modes:
 
 1. Tool call mode
@@ -110,11 +129,34 @@ Tool calling rules:
 - Order dependent calls carefully.
 - After receiving tool result(s), decide the next step.
 - Do not pretend to have performed a filesystem action without using the tool.
+"""
 
-Available tools:
 
-{tools_section}
-
+def build_system_prompt(state: "AgentState" = None, use_native_tools: bool = False) -> str:
+    """Build the system prompt.
+    
+    Args:
+        state: Runtime state for context injection (optional).
+        use_native_tools: If True, omit JSON syntax instructions
+                         (tools are passed via API instead).
+    """
+    tools_section = _build_tools_section()
+    
+    parts = []
+    
+    # Runtime context (if state provided)
+    if state is not None:
+        parts.append(_runtime_context(state))
+    
+    # Tool syntax instructions ONLY for JSON parser mode
+    if not use_native_tools:
+        parts.append(_tool_syntax_instructions())
+    
+    # Available tools section (always include)
+    parts.append(f"Available tools:\n\n{tools_section}")
+    
+    # Common instructions (always include)
+    parts.append(f"""
 Filesystem behavior:
 - You are connected to a local runtime with a current working directory.
 - Relative paths are resolved against the current working directory.
@@ -127,36 +169,14 @@ Filesystem behavior:
 
 General rules:
 - Use only the listed tools.
-- Use raw JSON only for tool calls.
+- Use raw JSON only for tool calls (when not using native tool calling).
 - Use normal text only for final answers.
-
-Tool-call formatting rule:
-When using a tool, the assistant message must contain only the raw tool-call JSON object. No prose, no explanation, no
-acknowledgement, no Markdown, no text before or after the JSON. Never mix a tool call with normal text in the same
-message.
-
-Normal-answer rule:
-When not using a tool, do not include raw tool-call JSON objects in the response, even as examples. If examples are
-needed, describe them abstractly or use non-executable placeholders.
-
-Correct behavior examples:
-- If the user asks to read a file, respond only with the tool-call JSON object and no surrounding text.
-- After the tool result is received, answer normally if no further tool call is required.
-- If explaining tool-call rules, do not write a real JSON object containing action/input or tool_calls.
-
-Incorrect behavior examples:
-- Writing natural language before or after a tool call.
-- Wrapping a tool call in Markdown/code fences.
-- Showing a real tool-call JSON object as an example inside a normal answer.
-- Combining a tool call and a summary in the same message.
-
-Self-check before responding:
-If the message contains a tool call, the whole message must be valid JSON from first character to last character. If
-the message is normal prose, it must not contain any raw JSON object that resembles a tool call.
 
 Operational constraints:
 - You have a maximum of {MAX_AGENT_STEPS} steps per user message.
 - Each call to the LLM (whether tool calls or a final answer) counts as one step.
 - You can make up to {MAX_BATCH_TOOL_CALLS} tool calls in a single batch response.
 - Plan your actions carefully, use batch tool calls when possible, and produce a final answer before running out of steps.
-"""
+""")
+    
+    return "\n\n".join(parts)
