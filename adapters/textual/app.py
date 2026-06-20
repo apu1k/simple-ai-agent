@@ -527,11 +527,36 @@ class AgentTextualApp(App):
             style="bold",
         )
         diff_text = edit.diff if edit.diff.strip() else "(no diff)"
-        try:
-            diff = Syntax(diff_text, "diff", line_numbers=False, word_wrap=False, theme="", background_color="default")
-            renderable = Group(metadata, diff)
-        except Exception:
-            renderable = Group(metadata, Text(diff_text))
+        diff_render = Text(no_wrap=False, overflow="fold")
+
+        if self._theme_dark:
+            add_style = "#7BC47F"
+            del_style = "#E08A8A"
+            hunk_style = "#E3A35C"
+            file_style = "#66B8FF"
+            meta_style = "#B8AFA7"
+        else:
+            add_style = "#2E7D32"
+            del_style = "#B23A48"
+            hunk_style = "#8A5A32"
+            file_style = "#1565A0"
+            meta_style = "#666666"
+
+        for line in diff_text.splitlines(keepends=True):
+            if line.startswith("+++") or line.startswith("---"):
+                diff_render.append(line, style=file_style)
+            elif line.startswith("@@"):
+                diff_render.append(line, style=hunk_style)
+            elif line.startswith("+"):
+                diff_render.append(line, style=add_style)
+            elif line.startswith("-"):
+                diff_render.append(line, style=del_style)
+            elif line.startswith("diff ") or line.startswith("index "):
+                diff_render.append(line, style=meta_style)
+            else:
+                diff_render.append(line)
+
+        renderable = Group(metadata, diff_render)
         self.query_one("#pending_diff", Static).update(renderable)
         self.query_one("#pending_diff_scroll", VerticalScroll).scroll_home(animate=False)
 
