@@ -23,8 +23,46 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, VerticalScroll
+from textual.events import Paste
 from textual.suggester import SuggestFromList
 from textual.widgets import Footer, Input, Static, Tree
+
+
+class ClipboardInput(Input):
+    """Input with reliable paste — uses terminal's Paste event when available."""
+
+    def on_paste(self, event: Paste) -> None:
+        """Handle terminal-provided paste (right-click or terminal paste event)."""
+        event.stop()  # Prevent Input.on_paste from also handling it (double-paste)
+        if event.text:
+            text = " ".join(event.text.split())
+            current = self.value
+            cp = self.cursor_position
+            self.value = current[:cp] + text + current[cp:]
+
+    def action_paste(self) -> None:
+        """Fallback when terminal doesn't send Paste event (Ctrl+V).
+
+        Uses PowerShell Get-Clipboard as the most reliable Windows API.
+        """
+        try:
+            import subprocess
+
+            r = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "$OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-Clipboard -Raw"],
+                capture_output=True,
+                timeout=5,
+            )
+            text = r.stdout.decode("utf-8", errors="replace").strip() if r.stdout else ""
+            if text:
+                text = " ".join(text.split())
+                current = self.value
+                cp = self.cursor_position
+                self.value = current[:cp] + text + current[cp:]
+        except Exception:
+            pass
+
 
 from llm.providers import PROVIDERS, list_provider_models
 from runtime.bootstrap import build_model_config_and_client, create_agent
@@ -131,7 +169,7 @@ class AgentTextualApp(App):
                     yield Static("", id="chat_detail")
                 with VerticalScroll(id="chat_history_scroll"):
                     yield Static("", id="chat_history")
-        yield Input(
+        yield ClipboardInput(
             placeholder="Type a message and press Enter...",
             suggester=SuggestFromList(self.COMMANDS, case_sensitive=True),
             id="input",
@@ -1217,17 +1255,7 @@ class AgentTextualApp(App):
                     return ""
         return prefix
 
-    def action_input_paste(self) -> None:
-        input_widget = self.query_one("#input", Input)
-        if self.focused is not input_widget:
-            return
 
-        # Browser / Textual Serve may intercept Ctrl+V before app-level actions.
-        # If this action is reached, ask the Input widget to handle paste.
-        try:
-            input_widget.action_paste()
-        except Exception:
-            pass
 
     def action_input_delete_word_left(self) -> None:
         input_widget = self.query_one("#input", Input)
