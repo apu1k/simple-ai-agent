@@ -81,17 +81,34 @@ class OpenAIChatClient:
         
         # Check for native tool calls
         if message.tool_calls:
-            return LLMResponse(
-                content=message.content,
-                tool_calls=[
+            tool_calls = []
+            for tc in message.tool_calls:
+                raw_args = tc.function.arguments
+                if isinstance(raw_args, str):
+                    raw_args = raw_args.strip()
+                    arguments = json.loads(raw_args) if raw_args else {}
+                elif isinstance(raw_args, dict):
+                    arguments = raw_args
+                elif raw_args is None:
+                    arguments = {}
+                else:
+                    raise TypeError(f"Invalid tool arguments type: {type(raw_args).__name__}")
+                    
+                if not isinstance(arguments, dict):
+                    raise TypeError("Tool arguments must decode to a JSON object")
+                    
+                tool_calls.append(
                     NativeToolCall(
                         id=tc.id,
                         name=tc.function.name,
-                        arguments=json.loads(tc.function.arguments)
+                        arguments=arguments,
                     )
-                    for tc in message.tool_calls
-                ]
+                )
+                
+            return LLMResponse(
+                content=message.content,
+                tool_calls=tool_calls,
             )
-        
+
         # No tool calls - return content as string (backward compat)
         return message.content or ""

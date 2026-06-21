@@ -4,6 +4,7 @@ tests/core/test_agent_batch.py
 Coverage for batched tool-call execution in core/agent.py.
 """
 
+import json
 from dataclasses import dataclass
 
 from core.agent import Agent
@@ -11,6 +12,54 @@ from tools._base import ToolResult, DisplayItem
 from core.tool_registry import ToolRegistry, ToolSpec
 from editing.store import EditStore
 from llm.base import LLMResponse, NativeToolCall
+from dataclasses import dataclass, field
+
+
+@dataclass
+class _DummyModelConfig:
+    provider_label: str = "OpenAI"
+    provider_key: str = "openai"
+    model: str = "gpt-4o-mini"
+    api_type: str = "chat_completions"
+
+
+@dataclass
+class _DummyState:
+    cwd: str = "."
+    model_config: _DummyModelConfig = field(default_factory=_DummyModelConfig)
+
+
+class _FakeLLMNativeOnce:
+    """
+    First call returns native tool call.
+    Second call returns final text.
+    """
+
+    supports_native_tools = True
+    supports_native_tool_outputs = False
+    api_type = "chat_completions"
+
+    def __init__(self, args):
+        self._args = args
+        self._n = 0
+
+    def chat(self, messages, tools=None, tool_choice=None):
+        self._n += 1
+        if self._n == 1:
+            return LLMResponse(
+                content="",
+                tool_calls=[
+                    NativeToolCall(
+                        id="call_1",
+                        name="t_capture",
+                        arguments=self._args,
+                    )
+                ],
+            )
+        return "done"
+
+    def submit_tool_outputs(self, tool_outputs):
+        raise NotImplementedError
 
 
 @dataclass
@@ -332,3 +381,100 @@ def test_batch_report_includes_display_summary_for_toolresult():
     assert "displayed_calls=2" in report
     assert "displayed_items=2" in report
     assert "showed to user" in report
+
+
+def _build_registry_capture(captured):
+    from core.tool_registry import ToolRegistry, ToolSpec
+
+    reg = ToolRegistry()
+
+    def t_capture(state, **kwargs):
+        captured.append(kwargs)
+        return "ok"
+
+    reg.register(
+        ToolSpec(
+            name="t_capture",
+            description="capture kwargs",
+            function=t_capture,
+            parameters={"type": "object", "properties": {}, "required": []},
+            requires_state=True,
+        )
+    )
+    return reg
+
+
+def test_agent_normalizes_native_tool_args_dict():
+    captured = []
+    reg = _build_registry_capture(captured)
+    llm = _FakeLLMNativeOnce({"path": "x.py", "edits": [{"find": "a", "replace": "b"}]})
+
+    agent = Agent(
+        system_prompt="test",
+        state=_DummyState(),
+        llm=llm,
+        tool_registry=reg,
+    )
+
+    out = agent.step("go")
+    assert out == "done"
+    assert len(captured) == 1
+    assert captured[0]["path"] == "x.py"
+    assert captured[0]["edits"] == [{"find": "a", "replace": "b"}]
+
+
+def test_agent_normalizes_native_tool_args_json_string():
+    captured = []
+    reg = _build_registry_capture(captured)
+    llm = _FakeLLMNativeOnce(json.dumps({"path": "x.py", "edits": [{"find": "a", "replace": "b"}]}))
+
+    agent = Agent(
+        system_prompt="test",
+        state=_DummyState(),
+        llm=llm,
+        tool_registry=reg,
+    )
+
+    out = agent.step("go")
+    assert out == "done"
+    assert len(captured) == 1
+    assert captured[0]["path"] == "x.py"
+    assert captured[0]["edits"] == [{"find": "a", "replace": "b"}]
+
+
+def test_agent_normalizes_native_tool_args_none_to_empty_dict():
+    captured = []
+    reg = _build_registry_capture(captured)
+    llm = _FakeLLMNativeOnce(None)
+
+    agent = Agent(
+        system_prompt="test",
+        state=_DummyState(),
+        llm=llm,
+        tool_registry=reg,
+    )
+
+    out = agent.step("go")
+    assert out == "done"
+    assert len(captured) == 1
+    assert captured[0] == {}
+
+
+def test_agent_rejects_native_tool_args_non_object_json():
+    captured = []
+    reg = _build_registry_capture(captured)
+    llm = _FakeLLMNativeOnce("[1,2,3]")
+
+    agent = Agent(
+        system_prompt="test",
+        state=_DummyState(),
+        llm=llm,
+        tool_registry=reg,
+    )
+
+    import pytest
+
+    with pytest.raises(TypeError, match="must be a JSON object"):
+        agent.step("go")
+
+    assert captured == []

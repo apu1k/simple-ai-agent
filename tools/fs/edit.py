@@ -12,6 +12,8 @@ The bug in the original code:
 Fixed here by passing `state` correctly.
 """
 
+import json
+
 from tools._base import tool
 from tools.fs._shared import resolve_path
 from editing.model import FileEdit
@@ -36,6 +38,18 @@ from editing.model import FileEdit
     },
 )
 def propose_file_edit(state, path: str, edits: list) -> str:
+    if isinstance(edits, str):
+        s = edits.strip()
+        if not s:
+            return "Error: 'edits' must be a non-empty list of edit objects."
+        try:
+            edits = json.loads(s)
+        except Exception as e:
+            return f"Error: 'edits' must be a list of edit objects (invalid JSON string): {e}"
+    
+    if not isinstance(edits, list):
+        return "Erorr: 'edits' must be a list of edit objects."
+    
     # FIX: pass state (not state.cwd) so resolve_path can access state.cwd
     resolved_path = resolve_path(state, path)
 

@@ -14,6 +14,8 @@ The IO adapter is injected by runtime/loop.py.
 
 from __future__ import annotations
 
+import json
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Literal
 
@@ -446,14 +448,37 @@ class Agent:
             if isinstance(reply, LLMResponse):
                 if reply.tool_calls:
                     native_tool_calls = reply.tool_calls
-                    # Convert native tool calls to protocol format
+
+                    normalized_calls: list[protocol.ToolCall] = []
+                    for tc in reply.tool_calls:
+                        raw_args = tc.arguments
+
+                        if isinstance(raw_args, str):
+                            s = raw_args.strip()
+                            args = json.loads(s) if s else {}
+                        elif isinstance(raw_args, dict):
+                            args = raw_args
+                        elif raw_args is None:
+                            args = {}
+                        else:
+                            raise TypeError(
+                                f"Invalid native tool arguments type for '{tc.name}': "
+                                f"{type(raw_args).__name__}"
+                            )
+
+                        if not isinstance(args, dict):
+                            raise TypeError(
+                                f"Native tool arguments for '{tc.name}' must be a JSON object, "
+                                f"got {type(args).__name__}"
+                            )
+
+                        normalized_calls.append(protocol.ToolCall(tc.name, args))
+
                     parsed = protocol.ParsedResponse(
                         kind="tool",
-                        tool_calls=[
-                            protocol.ToolCall(tc.name, tc.arguments)
-                            for tc in reply.tool_calls
-                        ]
+                        tool_calls=normalized_calls,
                     )
+
                     # Use content for logging/raw callback
                     reply = reply.content or ""
                 else:
