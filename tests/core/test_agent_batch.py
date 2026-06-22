@@ -119,6 +119,7 @@ class _FakeLLMResponses:
     def __init__(self):
         self.chat_calls = 0
         self.submit_calls = 0
+        self.reset_calls = 0
 
     def chat(self, messages, tools=None, tool_choice=None):
         self.chat_calls += 1
@@ -132,6 +133,9 @@ class _FakeLLMResponses:
     def submit_tool_outputs(self, tool_outputs):
         self.submit_calls += 1
         return "final-after-submit"
+
+    def reset_conversation(self):
+        self.reset_calls += 1
 
 
 class _FakeLLMChatNoNative:
@@ -574,3 +578,52 @@ def test_pending_native_tool_outputs_persist_across_steps():
     assert out2 == "final-after-submit"
     assert llm.submit_calls == 2
     assert agent._pending_native_tool_calls is None
+
+
+def test_native_responses_tool_request_and_result_are_recorded_in_local_memory():
+    reg = ToolRegistry()
+
+    def t_ok_native():
+        return "ok-native"
+
+    _register_tool(reg, "t_ok_native", t_ok_native)
+
+    state = _DummyState()
+    state.model_config.api_type = "responses"
+    llm = _FakeLLMResponses()
+    agent = Agent(system_prompt="test", state=state, llm=llm, tool_registry=reg)
+
+    out = agent.step("go")
+
+    assert out == "final-after-submit"
+    contents = [m["content"] for m in agent.messages]
+    assert any("NATIVE TOOL CALL REQUEST:" in c for c in contents)
+    assert any("id=call_resp_1" in c and "name=t_ok_native" in c for c in contents)
+    assert any(c.startswith("TOOL RESULT (t_ok_native): ok-native") for c in contents)
+
+
+def test_set_llm_can_refresh_system_prompt():
+    reg = ToolRegistry()
+    state = _DummyState()
+    agent = Agent(system_prompt="old prompt", state=state, llm=_FakeLLMChatNoNative(), tool_registry=reg)
+
+    state.model_config.api_type = "responses"
+    agent.set_llm(_FakeLLMResponses(), system_prompt="new prompt")
+
+    assert agent.messages[0] == {"role": "system", "content": "new prompt"}
+    assert agent._api_type == "responses"
+
+
+def test_reset_clears_pending_native_calls_and_resets_llm_conversation():
+    reg = ToolRegistry()
+    state = _DummyState()
+    state.model_config.api_type = "responses"
+    llm = _FakeLLMResponses()
+    agent = Agent(system_prompt="old", state=state, llm=llm, tool_registry=reg)
+    agent._pending_native_tool_calls = [(object(), object())]
+
+    agent.reset("new")
+
+    assert agent.messages == [{"role": "system", "content": "new"}]
+    assert agent._pending_native_tool_calls is None
+    assert llm.reset_calls == 1

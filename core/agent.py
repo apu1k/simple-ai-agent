@@ -140,10 +140,21 @@ class Agent:
                 f"responses={len(self._tools_by_api_type['responses'])}"
             )
 
-    def set_llm(self, llm: "LLMClient") -> None:
-        """Swap LLM client and refresh all llm-dependent runtime caches."""
+    def set_llm(self, llm: "LLMClient", system_prompt: str | None = None) -> None:
+        """Swap LLM client and refresh all llm-dependent runtime caches.
+
+        If the provider/model switch changes native-tool capability, callers
+        should pass a freshly-built system prompt so tool-use instructions stay
+        aligned with the active client.
+        """
         self.llm = llm
         self._configure_llm_runtime()
+
+        if system_prompt is not None:
+            if self.messages and self.messages[0].get("role") == "system":
+                self.messages[0]["content"] = system_prompt
+            else:
+                self.messages.insert(0, {"role": "system", "content": system_prompt})
 
     def _runtime_context(self) -> str:
         return (
@@ -244,6 +255,37 @@ class Agent:
             "role": "user",
             "content": f"TOOL RESULT (batch): {result}",
         })
+
+    def _format_native_tool_call_summary(self, native_tool_calls: list) -> str:
+        """Return a local-memory summary of native tool requests.
+
+        Provider-native tool calls are otherwise represented by provider-side
+        structured state only. Keeping a compact textual audit record in
+        self.messages prevents local conversation memory from losing what the
+        agent asked tools to do.
+        """
+        lines = ["NATIVE TOOL CALL REQUEST:"]
+        for tc in native_tool_calls:
+            try:
+                args = json.dumps(tc.arguments, ensure_ascii=False, sort_keys=True)
+            except TypeError:
+                args = str(tc.arguments)
+            lines.append(f"- id={tc.id} name={tc.name} arguments={args}")
+        return "\n".join(lines)
+
+    def _append_tool_records_for_local_memory(self, records: list[BatchToolRecord]) -> None:
+        """Append executed tool results to local conversation memory.
+
+        Native-tool APIs may receive these results through structured provider
+        protocols, but self.messages is still the agent's local transcript and
+        must include tool observations for later turns, debugging, and restore
+        paths that replay local history.
+        """
+        if len(records) == 1:
+            r = records[0]
+            self._append_tool_result(r.action, r.observation or r.error or "")
+        else:
+            self._append_tool_batch_result(self._format_batch_tool_report(records))
 
     def _process_tool_result(self, raw_result) -> tuple[str, int]:
         """
@@ -582,7 +624,13 @@ class Agent:
             # ---- Tool call -----------------------------------------------
             if parsed.kind == "tool":
                 self._debug(f"AVAILABLE TOOLS: {self.registry.names()}")
-                self.messages.append({"role": "assistant", "content": reply})
+                if native_tool_calls:
+                    self.messages.append({
+                        "role": "assistant",
+                        "content": self._format_native_tool_call_summary(native_tool_calls),
+                    })
+                else:
+                    self.messages.append({"role": "assistant", "content": reply})
 
                 calls = parsed.tool_calls
                 if not calls:
@@ -619,23 +667,21 @@ class Agent:
                         )
 
                 # For stateful native-tool clients, continue via structured
-                # tool outputs (function_call_output) instead of text TOOL RESULT.
+                # tool outputs (function_call_output). Still record tool results
+                # in local memory so later turns and debugging have a complete
+                # transcript of what happened.
                 if (
                     native_tool_calls
                     and getattr(self.llm, 'supports_native_tool_outputs', False)
                 ):
+                    self._append_tool_records_for_local_memory(records)
                     pending_native_tool_calls = list(zip(records, native_tool_calls, strict=False))
                     self._pending_native_tool_calls = pending_native_tool_calls
                     continue
 
                 # Backward compatibility: keep legacy per-tool TOOL RESULT shape
-                # for single-call responses.
-                if len(records) == 1:
-                    r = records[0]
-                    self._append_tool_result(r.action, r.observation or "")
-                else:
-                    report = self._format_batch_tool_report(records)
-                    self._append_tool_batch_result(report)
+                # for non-stateful tool continuation.
+                self._append_tool_records_for_local_memory(records)
                 continue
 
             # ---- Final answer --------------------------------------------
@@ -651,6 +697,11 @@ class Agent:
     def reset(self, system_prompt: str) -> None:
         """Reset conversation history, keeping the current state."""
         self.messages = [{"role": "system", "content": system_prompt}]
+        self._pending_native_tool_calls = None
+
+        reset_conversation = getattr(self.llm, "reset_conversation", None)
+        if callable(reset_conversation):
+            reset_conversation()
 
     def update_callbacks(
         self,

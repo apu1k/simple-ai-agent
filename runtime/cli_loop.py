@@ -66,7 +66,13 @@ def _make_on_model_switch() -> callable:
         model = choose_model(provider)
         config, llm = build_model_config_and_client(provider, model)
         state.model_config = config
-        agent.set_llm(llm)
+        agent.set_llm(
+            llm,
+            system_prompt=build_system_prompt(
+                state,
+                use_native_tools=getattr(llm, 'supports_native_tools', False),
+            ),
+        )
     return on_model_switch
 
 

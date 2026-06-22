@@ -19,7 +19,7 @@ from editing.store import EditStore
 from runtime.chat_store import ChatStore
 
 
-ApiType = Literal["chat_completions", "responses"]
+ApiType = Literal["chat_completions", "responses", "completions"]
 
 
 @dataclass

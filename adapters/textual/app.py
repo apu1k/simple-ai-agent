@@ -1020,7 +1020,13 @@ class AgentTextualApp(App):
                 on_display=self._on_display,
             )
         else:
-            self.agent.set_llm(self.llm)
+            self.agent.set_llm(
+                self.llm,
+                system_prompt=build_system_prompt(
+                    self.state,
+                    use_native_tools=getattr(self.llm, 'supports_native_tools', False),
+                ),
+            )
         self._refresh_state()
 
     def _switch_model(self, provider_key: str, model: str) -> None:

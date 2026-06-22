@@ -42,6 +42,10 @@ class OpenAIResponsesClient:
         """Return the API type for this client."""
         return "responses"
 
+    def reset_conversation(self) -> None:
+        """Clear stateful Responses API continuation state."""
+        self._last_response_id = None
+
     def chat(
         self,
         messages: list[dict],
@@ -61,13 +65,23 @@ class OpenAIResponsesClient:
         """
         instructions, input_messages = self._split_messages(messages)
         
-        # Build request kwargs
+        # Build request kwargs.
+        #
+        # Responses API is stateful when previous_response_id is supplied.
+        # On the first call, send the full local transcript. On later calls,
+        # continue the stored response chain and send only the latest message
+        # delta. This preserves native tool-call/tool-output context across
+        # normal follow-up turns instead of relying on local text replay.
         kwargs = {
             "model": self._model,
             "instructions": instructions,
-            "input": input_messages,
             "timeout": REQUEST_TIMEOUT_SECONDS,
         }
+        if self._last_response_id:
+            kwargs["previous_response_id"] = self._last_response_id
+            kwargs["input"] = input_messages[-1:] if input_messages else []
+        else:
+            kwargs["input"] = input_messages
         
         # Add native tool parameters if provided
         if tools is not None:
