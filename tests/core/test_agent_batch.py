@@ -111,6 +111,38 @@ class FakeNativeLLM:
         return r
 
 
+class _FakeLLMResponses:
+    supports_native_tools = True
+    supports_native_tool_outputs = True
+    api_type = "responses"
+
+    def __init__(self):
+        self.chat_calls = 0
+        self.submit_calls = 0
+
+    def chat(self, messages, tools=None, tool_choice=None):
+        self.chat_calls += 1
+        if self.chat_calls == 1:
+            return LLMResponse(
+                content=None,
+                tool_calls=[NativeToolCall(id="call_resp_1", name="t_ok_native", arguments={})],
+            )
+        return "final-after-submit"
+
+    def submit_tool_outputs(self, tool_outputs):
+        self.submit_calls += 1
+        return "final-after-submit"
+
+
+class _FakeLLMChatNoNative:
+    supports_native_tools = False
+    supports_native_tool_outputs = False
+    api_type = "chat_completions"
+
+    def chat(self, messages, tools=None, tool_choice=None):
+        return "done"
+
+
 def _make_agent(replies: list[str], tool_registry: ToolRegistry) -> Agent:
     state = FakeState(cwd=".", model_config=FakeModelConfig(), edit_store=EditStore())
     return Agent(system_prompt="sys", state=state, llm=FakeLLM(replies), tool_registry=tool_registry)
@@ -478,3 +510,67 @@ def test_agent_rejects_native_tool_args_non_object_json():
         agent.step("go")
 
     assert captured == []
+
+
+def test_set_llm_refreshes_runtime_caches_and_api_type():
+    reg = ToolRegistry()
+
+    def t_ok_native():
+        return "ok"
+
+    _register_tool(reg, "t_ok_native", t_ok_native)
+
+    state = _DummyState()
+    llm_initial = _FakeLLMChatNoNative()
+    agent = Agent(system_prompt="test", state=state, llm=llm_initial, tool_registry=reg)
+
+    assert agent._use_native_tools is False
+    assert agent._api_type == "chat_completions"
+
+    # Simulate model/provider switch to responses native-tool client
+    state.model_config.api_type = "responses"
+    llm_next = _FakeLLMResponses()
+    agent.set_llm(llm_next)
+
+    assert agent._use_native_tools is True
+    assert agent._api_type == "responses"
+    assert "responses" in agent._tools_by_api_type
+    assert "chat_completions" in agent._tools_by_api_type
+
+
+def test_pending_native_tool_outputs_persist_across_steps():
+    reg = ToolRegistry()
+
+    def t_ok_native():
+        return "ok-native"
+
+    _register_tool(reg, "t_ok_native", t_ok_native)
+
+    state = _DummyState()
+    state.model_config.api_type = "responses"
+    llm = _FakeLLMResponses()
+    agent = Agent(system_prompt="test", state=state, llm=llm, tool_registry=reg)
+
+    # First step should execute tool call and finalize via submit_tool_outputs.
+    out1 = agent.step("go")
+    assert out1 == "final-after-submit"
+    assert llm.submit_calls == 1
+    assert agent._pending_native_tool_calls is None
+
+    # Manually seed pending calls and ensure next step resumes via submit path.
+    call = NativeToolCall(id="call_resp_1", name="t_ok_native", arguments={})
+    from core.agent import BatchToolRecord
+    rec = BatchToolRecord(
+        index=1,
+        total=1,
+        action="t_ok_native",
+        tool_input={},
+        status="success",
+        observation="ok-native",
+    )
+    agent._pending_native_tool_calls = [(rec, call)]
+
+    out2 = agent.step("continue")
+    assert out2 == "final-after-submit"
+    assert llm.submit_calls == 2
+    assert agent._pending_native_tool_calls is None

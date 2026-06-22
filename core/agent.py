@@ -106,6 +106,28 @@ class Agent:
 
         # Prebuild both tool-schema variants once to avoid runtime shape drift.
         self._tools_by_api_type: dict[str, list[dict]] = {}
+        self._pending_native_tool_calls = None
+        self._configure_llm_runtime()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _configure_llm_runtime(self) -> None:
+        """Refresh llm-dependent runtime caches.
+
+        Must be called whenever self.llm changes (e.g. model/provider switch).
+        """
+        self._use_native_tools = getattr(self.llm, 'supports_native_tools', False)
+        self._api_type = getattr(self.llm, 'api_type', 'chat_completions')
+        self._debug(f"NATIVE TOOLS: {self._use_native_tools}")
+        self._debug(f"API TYPE: {self._api_type}")
+        self._debug(f"STATE API TYPE: {self.state.model_config.api_type}")
+        self._debug(f"STATE PROVIDER KEY: {self.state.model_config.provider_key}")
+        self._debug(f"LLM CLIENT CLASS: {self.llm.__class__.__name__}")
+        self._debug(f"LLM CLIENT MODULE: {self.llm.__class__.__module__}")
+
+        self._tools_by_api_type = {}
         if self._use_native_tools:
             from llm.schema import build_tools_list  # Lazy import
             self._tools_by_api_type = {
@@ -118,9 +140,10 @@ class Agent:
                 f"responses={len(self._tools_by_api_type['responses'])}"
             )
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
+    def set_llm(self, llm: "LLMClient") -> None:
+        """Swap LLM client and refresh all llm-dependent runtime caches."""
+        self.llm = llm
+        self._configure_llm_runtime()
 
     def _runtime_context(self) -> str:
         return (
@@ -361,7 +384,7 @@ class Agent:
 
         retry_count = 0
         empty_retry_count = 0
-        pending_native_tool_calls = None
+        pending_native_tool_calls = self._pending_native_tool_calls
 
         for step in range(1, MAX_STEPS + 1):
             if step == MAX_STEPS - 1:
@@ -431,6 +454,7 @@ class Agent:
 
                     reply = self.llm.submit_tool_outputs(tool_outputs)
                     pending_native_tool_calls = None
+                    self._pending_native_tool_calls = None
                 else:
                     reply = self.llm.chat(
                         self._messages_with_context(),
@@ -601,6 +625,7 @@ class Agent:
                     and getattr(self.llm, 'supports_native_tool_outputs', False)
                 ):
                     pending_native_tool_calls = list(zip(records, native_tool_calls, strict=False))
+                    self._pending_native_tool_calls = pending_native_tool_calls
                     continue
 
                 # Backward compatibility: keep legacy per-tool TOOL RESULT shape
@@ -615,6 +640,7 @@ class Agent:
 
             # ---- Final answer --------------------------------------------
             if parsed.kind == "final":
+                self._pending_native_tool_calls = None
                 self.messages.append({"role": "assistant", "content": reply})
                 return parsed.final
 

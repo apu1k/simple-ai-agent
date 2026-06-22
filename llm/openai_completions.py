@@ -9,6 +9,7 @@ Endpoint: /v1/completions (NOT /v1/chat/completions)
 """
 
 from openai import OpenAI
+from llm.base import LLMResponse
 from llm.providers import ProviderConfig
 
 REQUEST_TIMEOUT_SECONDS = 180.0

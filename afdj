@@ -1,0 +1,56 @@
+[33mfb35c60[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Fix(tool-calling): normalize native tool arguments across chat/agent/edit paths
+[33m2b2b31b[m feat(native-tools): complete native tool-calling implementation and stabilize empty-response handling
+[33ma4d0333[m fix(ui): reliable ctrl+v and right-click paste in Textual fontend
+[33m7ebf4ad[m fix(ui): improve pending diff readability in light/dark themes
+[33mc3b9835[m feat(read): enhance read_file to support line range reading
+[33mb27e988[m Fix http redirect location handling and stabilize pytest/tool behavior
+[33mb30927f[m Add shell/http tools with security hardening and tests
+[33mf815f44[m Fix light theme: replace warm colors with neutral black/white and fix markdown rendering
+[33m3fb49e2[m feat(textual): add \cd command and improve unknown command message
+[33m5fbfb9f[m feat(core, config): centralize agent limits and add step warning
+[33mafb2c8f[m fix(agent): retry on empty model responses and surface request failures as errors
+[33m3d18df1[m fix(llm): increase request timeout to 180s
+[33m37e944a[m fix(agent): ensure single leading system message by merging runtime context
+[33m5eca81b[m textual: add full \chats history UI and refine navigation/layout; runtime: lazy chat session creation
+[33me450852[m history: add persistent chat seesions backbone with original/working streams, \\new_chat/\\history commands, and tests
+[33mc76f2bc[m Merge branch 'main' of https://github.com/apu1k/simple-ai-agent
+[33mdd7c687[m feat(texutal): add command auto-completion
+[33m1bca6f9[m Delete textual.log
+[33m71bdf3d[m feat(textual): add browser-safe shortcuts and footer updates
+[33m245a6d9[m docs: improve README and developer reference
+[33m388969c[m add header
+[33m5c67e3b[m add pending mode
+[33m424faa9[m feat(textual): add searchable model selection mode
+[33m7aad808[m refactor: enhance input handling and command suggestion in Textual app
+[33mfc6cfc8[m refactor: enhance chat message handling and improve UI responsiveness
+[33m03eef5a[m for textual: add basic chatting add typing while the Agent is processing add scrolling add themes add commands add command suggestions
+[33m77da496[m preperation for textual implementation
+[33md6081d7[m preperation for textual implementation
+[33md98b355[m align protocol/docs and ignore site-packages in fs tool traversal
+[33mf00c069[m support multi-tool calls per turn with fail-fast execution
+[33m0676bec[m added command for showing git-syle diff for a proposed edit \pending [diff] <id>
+[33m5718723[m added a file creation tool and a developers reference
+[33mf5d1a5f[m refactor: modular architecture with autodiscovery
+[33m562e27c[m refactor: modular architecture with autodiscovery
+[33m495e8d8[m added basic pending file edit system
+[33m161f222[m improved description of show_file and show_files
+[33m74ce7c6[m Added tool: ast analysis tool for Python files
+[33mcd22e71[m Update project docs and provider configuration files Add configurable TOML provider setup
+[33m1510968[m Add unit tests for file tools and parser functionality
+[33mfd383cc[m added tools: show_file and show_files
+[33mb6c7f44[m Enhanced user interface design and increased reliability for AI tool execution
+[33m90e6bae[m Use Rich for console logging
+[33m1a2eba5[m Add debug mode toggle
+[33medbb700[m Improve ls output and model filtering
+[33me7fec94[m Add local CLI state commands
+[33m69a5121[m Merge branch 'main' of https://github.com/apu1k/simple-ai-agent
+[33mbf36b2a[m Separate tool call JSON from final answers
+[33mc1877b2[m Update .env.example
+[33mf4f369e[m Generate system prompt from tool registry and update README
+[33m388cd6d[m Add hybrid provider model selection
+[33mfbcdb34[m Add filesystem search tools
+[33mf7e73ff[m Add filesystem navigation tools
+[33md31124c[m Introduce AgentState and state-aware tools
+[33m8210e1d[m Refactor agent initialization and improve error handling; update prompts and file reading logic - changed the language from german to english
+[33mb3b0898[m readme
+[33m5493644[m initial commit

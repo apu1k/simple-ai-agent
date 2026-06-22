@@ -66,7 +66,7 @@ def _make_on_model_switch() -> callable:
         model = choose_model(provider)
         config, llm = build_model_config_and_client(provider, model)
         state.model_config = config
-        agent.llm = llm
+        agent.set_llm(llm)
     return on_model_switch
 
 

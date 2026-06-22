@@ -1009,15 +1009,18 @@ class AgentTextualApp(App):
         # Replace runtime bundle atomically: state config + llm + fresh agent.
         self.state.model_config = config
         self.llm = llm
-        self.agent = create_agent(
-            state=self.state,
-            llm=self.llm,
-            on_debug=self._on_debug,
-            on_tool=self._on_tool,
-            on_raw=self._on_raw,
-            on_error=self._on_error,
-            on_display=self._on_display,
-        )
+        if self.agent is None:
+            self.agent = create_agent(
+                state=self.state,
+                llm=self.llm,
+                on_debug=self._on_debug,
+                on_tool=self._on_tool,
+                on_raw=self._on_raw,
+                on_error=self._on_error,
+                on_display=self._on_display,
+            )
+        else:
+            self.agent.set_llm(self.llm)
         self._refresh_state()
 
     def _switch_model(self, provider_key: str, model: str) -> None:
