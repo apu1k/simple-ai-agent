@@ -46,10 +46,16 @@ def propose_file_edit(state, path: str, edits: list) -> str:
             edits = json.loads(s)
         except Exception as e:
             return f"Error: 'edits' must be a list of edit objects (invalid JSON string): {e}"
-    
+
+    if isinstance(edits, dict):
+        edits = [edits]
+
     if not isinstance(edits, list):
         return "Error: 'edits' must be a list of edit objects."
-    
+
+    if not edits:
+        return "Error: 'edits' list is empty. Must provide at least one edit."
+
     # FIX: pass state (not state.cwd) so resolve_path can access state.cwd
     resolved_path = resolve_path(state, path)
 
@@ -72,6 +78,8 @@ def propose_file_edit(state, path: str, edits: list) -> str:
             return f"Error: Edit #{i + 1} 'find' must be a string."
         if not isinstance(replace, str):
             return f"Error: Edit #{i + 1} 'replace' must be a string."
+        if not find:
+            return f"Error: Edit #{i + 1} 'find' cannot be empty."
 
         parsed_edits.append(FileEdit(find=find, replace=replace))
 

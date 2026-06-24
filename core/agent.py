@@ -676,6 +676,12 @@ class Agent:
                 self._debug(f"AVAILABLE TOOLS: {self.registry.names()}")
                 if native_tool_calls and self._api_type == "chat_completions":
                     self._append_chat_completions_native_tool_call(reply, native_tool_calls)
+                elif native_tool_calls and getattr(self.llm, 'supports_native_tool_outputs', False):
+                    # Stateful native-tool APIs such as Responses keep the
+                    # function-call request in provider state. Do not add a
+                    # textual NATIVE TOOL CALL REQUEST summary to local chat
+                    # memory; it can pollute future turns and restored chats.
+                    pass
                 elif native_tool_calls:
                     self.messages.append({
                         "role": "assistant",
@@ -732,7 +738,9 @@ class Agent:
                     native_tool_calls
                     and getattr(self.llm, 'supports_native_tool_outputs', False)
                 ):
-                    self._append_tool_records_for_local_memory(records)
+                    # Continue stateful native tool loops through structured
+                    # function_call_output submission only. Avoid adding legacy
+                    # TOOL RESULT text to local memory for native Responses.
                     pending_native_tool_calls = list(zip(records, native_tool_calls, strict=False))
                     self._pending_native_tool_calls = pending_native_tool_calls
                     continue

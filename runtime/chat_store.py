@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from config.settings import PROJECT_ROOT
+from core.tool_artifacts import is_internal_tool_artifact
 
 if TYPE_CHECKING:
     from runtime.state import AgentState
@@ -241,6 +242,9 @@ def start_new_chat(state: "AgentState", title: str = "") -> str:
 
 def record_final_turn(state: "AgentState", user_text: str, assistant_text: str) -> int:
     """Record a completed user/assistant turn for the active session."""
+    if is_internal_tool_artifact(assistant_text):
+        assistant_text = ""
+
     session_id = ensure_chat_session(state)
     return state.chat_store.append_turn(
         session_id=session_id,

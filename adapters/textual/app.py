@@ -64,6 +64,7 @@ class ClipboardInput(Input):
             pass
 
 
+from core.tool_artifacts import is_internal_tool_artifact
 from llm.providers import PROVIDERS, list_provider_models
 from runtime.bootstrap import build_model_config_and_client, create_agent
 from runtime.chat_store import record_final_turn, start_new_chat
@@ -1133,8 +1134,7 @@ class AgentTextualApp(App):
 
     @staticmethod
     def _is_internal_tool_summary(text: str) -> bool:
-        stripped = (text or "").strip()
-        return stripped.startswith("NATIVE TOOL CALL REQUEST:")
+        return is_internal_tool_artifact(text)
 
     def _append_chat(self, who: str, text: str) -> None:
         if who == "AI" and self._is_internal_tool_summary(text):
@@ -1339,13 +1339,13 @@ class AgentTextualApp(App):
             callback(*args)
 
     def _on_debug(self, message: str) -> None:
-        print(f"[debug] {message}", flush=True)
+        return
 
     def _on_tool(self, message: str) -> None:
-        print(f"[tool] {message}", flush=True)
+        return
 
     def _on_raw(self, message: str) -> None:
-        print(f"[raw] {message}", flush=True)
+        return
 
     def _on_error(self, message: str) -> None:
         print(f"[error] {message}", flush=True)
