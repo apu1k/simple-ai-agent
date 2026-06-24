@@ -287,6 +287,56 @@ class Agent:
         else:
             self._append_tool_batch_result(self._format_batch_tool_report(records))
 
+    def _append_chat_completions_native_tool_call(self, content: str, native_tool_calls: list) -> None:
+        """Append native Chat Completions tool calls in OpenAI message format.
+
+        Chat Completions continues tool loops through the message transcript:
+        assistant.tool_calls followed by role='tool' messages with matching
+        tool_call_id values. A textual summary is not sufficient here.
+        """
+        tool_calls = []
+        for tc in native_tool_calls:
+            try:
+                args = json.dumps(tc.arguments or {}, ensure_ascii=False, sort_keys=True)
+            except TypeError:
+                args = json.dumps(str(tc.arguments), ensure_ascii=False)
+
+            tool_calls.append({
+                "id": tc.id,
+                "type": "function",
+                "function": {
+                    "name": tc.name,
+                    "arguments": args,
+                },
+            })
+
+        self.messages.append({
+            "role": "assistant",
+            "content": content or None,
+            "tool_calls": tool_calls,
+        })
+
+    def _append_chat_completions_tool_results(
+        self,
+        records: list[BatchToolRecord],
+        native_tool_calls: list,
+    ) -> None:
+        """Append native Chat Completions tool results as role='tool' messages."""
+        for r, tc in zip(records, native_tool_calls, strict=False):
+            if r.status == "success":
+                content = r.observation or ""
+            elif r.status == "failed":
+                content = r.error or r.observation or "Tool failed."
+            else:
+                content = r.observation or "Skipped due to earlier failure in fail-fast batch."
+
+            self.messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "name": tc.name,
+                "content": content,
+            })
+
     def _process_tool_result(self, raw_result) -> tuple[str, int]:
         """
         Extract a text observation from a tool result.
@@ -624,7 +674,9 @@ class Agent:
             # ---- Tool call -----------------------------------------------
             if parsed.kind == "tool":
                 self._debug(f"AVAILABLE TOOLS: {self.registry.names()}")
-                if native_tool_calls:
+                if native_tool_calls and self._api_type == "chat_completions":
+                    self._append_chat_completions_native_tool_call(reply, native_tool_calls)
+                elif native_tool_calls:
                     self.messages.append({
                         "role": "assistant",
                         "content": self._format_native_tool_call_summary(native_tool_calls),
@@ -665,6 +717,12 @@ class Agent:
                             f"TOOL CALL [{r.index}/{r.total}]: "
                             f"{r.action}({r.tool_input}) -> SKIPPED"
                         )
+
+                # Chat Completions native tools continue through structured
+                # assistant.tool_calls + role='tool' transcript messages.
+                if native_tool_calls and self._api_type == "chat_completions":
+                    self._append_chat_completions_tool_results(records, native_tool_calls)
+                    continue
 
                 # For stateful native-tool clients, continue via structured
                 # tool outputs (function_call_output). Still record tool results

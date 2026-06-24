@@ -175,12 +175,27 @@ class OpenAIResponsesClient:
 
     @staticmethod
     def _split_messages(messages: list[dict]) -> tuple[str, list[dict]]:
-        """Separate system messages (→ instructions) from user/assistant messages."""
+        """Separate system messages from Responses-compatible input messages."""
         instructions = []
         input_messages = []
+
         for msg in messages:
-            if msg.get("role") == "system":
-                instructions.append(msg.get("content", ""))
-            else:
-                input_messages.append({"role": msg["role"], "content": msg.get("content", "")})
+            role = msg.get("role")
+            content = msg.get("content", "") or ""
+
+            if role == "system":
+                instructions.append(content)
+                continue
+
+            if role in {"user", "assistant"}:
+                input_messages.append({"role": role, "content": content})
+                continue
+
+            if role == "tool":
+                name = msg.get("name", "tool")
+                input_messages.append({
+                    "role": "user",
+                    "content": f"TOOL RESULT ({name}): {content}",
+                })
+
         return "\n\n".join(instructions), input_messages

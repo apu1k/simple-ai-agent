@@ -1131,7 +1131,14 @@ class AgentTextualApp(App):
             input_widget.placeholder = "Type a message and press Enter..."
         input_widget.focus()
 
+    @staticmethod
+    def _is_internal_tool_summary(text: str) -> bool:
+        stripped = (text or "").strip()
+        return stripped.startswith("NATIVE TOOL CALL REQUEST:")
+
     def _append_chat(self, who: str, text: str) -> None:
+        if who == "AI" and self._is_internal_tool_summary(text):
+            return
         self._messages.append((who, text))
         self._render_chat()
 

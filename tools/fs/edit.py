@@ -48,7 +48,7 @@ def propose_file_edit(state, path: str, edits: list) -> str:
             return f"Error: 'edits' must be a list of edit objects (invalid JSON string): {e}"
     
     if not isinstance(edits, list):
-        return "Erorr: 'edits' must be a list of edit objects."
+        return "Error: 'edits' must be a list of edit objects."
     
     # FIX: pass state (not state.cwd) so resolve_path can access state.cwd
     resolved_path = resolve_path(state, path)
