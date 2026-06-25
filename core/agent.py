@@ -619,13 +619,28 @@ class Agent:
                 )
 
                 if empty_retry_count < MAX_EMPTY_RETRIES:
+                    if self._use_native_tools:
+                        retry_instruction = (
+                            "Your previous response was empty. "
+                            "Return exactly one of the following:\n"
+                            "1. A non-empty final answer, or\n"
+                            "2. A valid native tool call.\n\n"
+                            "Do not return an empty message."
+                        )
+                    else:
+                        retry_instruction = (
+                            "Your previous response was empty. "
+                            "Return exactly one of the following:\n"
+                            "1. A non-empty final answer, or\n"
+                            "2. Exactly one valid raw JSON tool call like "
+                            '{"action": "tool_name", "input": {...}}.\n\n'
+                            "Do not wrap JSON in Markdown. "
+                            "Do not return an empty message."
+                        )
+
                     self.messages.append({
                         "role": "user",
-                        "content": (
-                            "Your previous response was empty. "
-                            "Please continue and provide either a valid tool call JSON "
-                            "or a final answer."
-                        ),
+                        "content": retry_instruction,
                     })
                     empty_retry_count += 1
                     continue

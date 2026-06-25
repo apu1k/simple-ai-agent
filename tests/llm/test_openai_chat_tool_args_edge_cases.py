@@ -142,3 +142,114 @@ def test_provider_parity_for_native_dict_arguments(monkeypatch):
 
     assert chat_out.tool_calls[0].name == resp_out.tool_calls[0].name == "propose_file_edit"
     assert chat_out.tool_calls[0].arguments == resp_out.tool_calls[0].arguments
+
+
+def _mk_empty_choices_response():
+    return SimpleNamespace(choices=[])
+
+
+def _mk_missing_message_response():
+    choice = SimpleNamespace(message=None, finish_reason="stop")
+    return SimpleNamespace(id="chatcmpl_1", model="test-model", choices=[choice])
+
+
+def _mk_empty_message_response(content=None, tool_calls=None, finish_reason="stop"):
+    message = SimpleNamespace(role="assistant", content=content, tool_calls=tool_calls)
+    choice = SimpleNamespace(message=message, finish_reason=finish_reason)
+    return SimpleNamespace(id="chatcmpl_1", model="test-model", choices=[choice])
+
+
+class _CountingFakeCompletions:
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = 0
+
+    def create(self, **kwargs):
+        self.calls += 1
+        if len(self._responses) == 1:
+            return self._responses[0]
+        return self._responses.pop(0)
+
+
+class _CountingFakeChatClient:
+    def __init__(self, responses):
+        self._completions = _CountingFakeCompletions(responses)
+        self.chat = SimpleNamespace(completions=self._completions)
+
+    @property
+    def calls(self):
+        return self._completions.calls
+
+
+def test_openai_chat_empty_choices_returns_empty_string_after_retry(monkeypatch):
+    fake = _CountingFakeChatClient([_mk_empty_choices_response()])
+    llm = OpenAIChatClient(_mk_provider())
+    monkeypatch.setattr(llm, "_client", fake)
+
+    out = llm.chat(messages=_dummy_messages(), tools=_dummy_tools())
+
+    assert out == ""
+    assert fake.calls == 2
+
+
+def test_openai_chat_missing_message_returns_empty_string_after_retry(monkeypatch):
+    fake = _CountingFakeChatClient([_mk_missing_message_response()])
+    llm = OpenAIChatClient(_mk_provider())
+    monkeypatch.setattr(llm, "_client", fake)
+
+    out = llm.chat(messages=_dummy_messages(), tools=_dummy_tools())
+
+    assert out == ""
+    assert fake.calls == 2
+
+
+def test_openai_chat_empty_content_and_no_tool_calls_returns_empty_string_after_retry(monkeypatch):
+    fake = _CountingFakeChatClient([
+        _mk_empty_message_response(content=None, tool_calls=None),
+    ])
+    llm = OpenAIChatClient(_mk_provider())
+    monkeypatch.setattr(llm, "_client", fake)
+
+    out = llm.chat(messages=_dummy_messages(), tools=_dummy_tools())
+
+    assert out == ""
+    assert fake.calls == 2
+
+
+def test_openai_chat_whitespace_content_retries_then_returns_whitespace(monkeypatch):
+    fake = _CountingFakeChatClient([
+        _mk_empty_message_response(content="   ", tool_calls=None),
+    ])
+    llm = OpenAIChatClient(_mk_provider())
+    monkeypatch.setattr(llm, "_client", fake)
+
+    out = llm.chat(messages=_dummy_messages(), tools=_dummy_tools())
+
+    assert out == "   "
+    assert fake.calls == 2
+
+
+def test_openai_chat_empty_then_success_returns_success(monkeypatch):
+    fake = _CountingFakeChatClient([
+        _mk_empty_choices_response(),
+        _mk_empty_message_response(content="final answer", tool_calls=None),
+    ])
+    llm = OpenAIChatClient(_mk_provider())
+    monkeypatch.setattr(llm, "_client", fake)
+
+    out = llm.chat(messages=_dummy_messages(), tools=_dummy_tools())
+
+    assert out == "final answer"
+    assert fake.calls == 2
+
+
+def test_openai_chat_invalid_json_arguments_error_contains_context(monkeypatch):
+    llm = _mk_chat_llm(monkeypatch, "{bad json")
+
+    with pytest.raises(ValueError) as exc:
+        llm.chat(messages=_dummy_messages(), tools=_dummy_tools())
+
+    msg = str(exc.value)
+    assert "Invalid JSON arguments" in msg
+    assert "propose_file_edit" in msg
+    assert "call_1" in msg
