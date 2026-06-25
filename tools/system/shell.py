@@ -5,6 +5,7 @@ Safe shell command execution tool.
 Uses subprocess.run(..., shell=False) so shell metacharacters are impossible.
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -34,6 +35,34 @@ COMMANDS_WITH_SUBCOMMANDS = {
     "git": frozenset(["status", "diff", "log", "show"]),
 }
 
+ARGS_ERROR = "Error: 'args' must be a list of strings or a JSON-encoded list of strings."
+
+
+def _normalize_args(args) -> list[str] | str:
+    """Return normalized args, or an error string.
+
+    The tool schema expects args as a native JSON array/list of strings.
+    Some models occasionally pass a JSON-encoded list string instead, e.g.
+    '["status", "--short"]'. Accept that compatibility form, but do
+    not split arbitrary shell-like strings because execution intentionally uses
+    shell=False.
+    """
+    if args is None:
+        return []
+
+    if isinstance(args, list) and all(isinstance(a, str) for a in args):
+        return args
+
+    if isinstance(args, str):
+        try:
+            decoded = json.loads(args)
+        except json.JSONDecodeError:
+            return ARGS_ERROR
+        if isinstance(decoded, list) and all(isinstance(a, str) for a in decoded):
+            return decoded
+
+    return ARGS_ERROR
+
 
 @tool(
     description=(
@@ -43,7 +72,7 @@ COMMANDS_WITH_SUBCOMMANDS = {
     ),
     params={
         "command": "The command to run (e.g. 'git', 'ruff', 'pytest').",
-        "args": "Arguments to pass as a list of strings.",
+        "args": "Arguments to pass as a list of strings. A JSON-encoded list string is also accepted for compatibility.",
         "timeout": "Maximum execution time in seconds (1-30). Defaults to 30.",
     },
     requires_state=True,
@@ -53,14 +82,13 @@ COMMANDS_WITH_SUBCOMMANDS = {
     },
 )
 def run_shell_command(state, command: str, args: list[str] = None, timeout: int = 30) -> str:
-    if args is None:
-        args = []
-
     if not isinstance(command, str) or not command.strip():
         return "Error: 'command' must be a non-empty string."
 
-    if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
-        return "Error: 'args' must be a list of strings."
+    normalized_args = _normalize_args(args)
+    if isinstance(normalized_args, str):
+        return normalized_args
+    args = normalized_args
 
     cmd_base = command.strip()
 

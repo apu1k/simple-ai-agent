@@ -14,16 +14,35 @@ def test_shell_rejects_empty_command(tmp_path):
     assert out == "Error: 'command' must be a non-empty string."
 
 
-def test_shell_rejects_non_list_args(tmp_path):
+def test_shell_rejects_plain_string_args(tmp_path):
     state = _State(tmp_path)
     out = run_shell_command(state, "python", args="-V")
-    assert out == "Error: 'args' must be a list of strings."
+    assert out == "Error: 'args' must be a list of strings or a JSON-encoded list of strings."
 
 
 def test_shell_rejects_non_string_arg_item(tmp_path):
     state = _State(tmp_path)
     out = run_shell_command(state, "python", args=["-V", 1])
-    assert out == "Error: 'args' must be a list of strings."
+    assert out == "Error: 'args' must be a list of strings or a JSON-encoded list of strings."
+
+
+def test_shell_accepts_json_encoded_list_args(tmp_path):
+    state = _State(tmp_path)
+    out = run_shell_command(state, "python", args='["-V"]', timeout=5)
+    assert "Command: python -V" in out
+    assert "Return code: 0" in out
+
+
+def test_shell_rejects_json_encoded_non_list_args(tmp_path):
+    state = _State(tmp_path)
+    out = run_shell_command(state, "python", args='"-V"')
+    assert out == "Error: 'args' must be a list of strings or a JSON-encoded list of strings."
+
+
+def test_shell_rejects_json_encoded_list_with_non_string_item(tmp_path):
+    state = _State(tmp_path)
+    out = run_shell_command(state, "python", args='["-V", 1]')
+    assert out == "Error: 'args' must be a list of strings or a JSON-encoded list of strings."
 
 
 def test_shell_rejects_non_whitelisted_command(tmp_path):
