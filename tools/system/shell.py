@@ -38,6 +38,34 @@ COMMANDS_WITH_SUBCOMMANDS = {
 ARGS_ERROR = "Error: 'args' must be a list of strings or a JSON-encoded list of strings."
 
 
+def _build_shell_tool_description() -> str:
+    """Build the shell tool description from the active command whitelist.
+
+    The whitelist is OS-dependent, so generate this at module import time from
+    the same constants used by validation. This keeps the model-facing tool
+    description in sync with the actual allowed commands.
+    """
+    system_name = "Windows" if os.name == "nt" else "Linux/macOS"
+    standalone = ", ".join(sorted(STANDALONE_COMMANDS)) or "none"
+
+    subcommand_parts = []
+    for command, subcommands in sorted(COMMANDS_WITH_SUBCOMMANDS.items()):
+        allowed_subcommands = ", ".join(sorted(subcommands)) or "none"
+        subcommand_parts.append(f"{command}: {allowed_subcommands}")
+    subcommands_text = "; ".join(subcommand_parts) or "none"
+
+    return (
+        f"Execute a safe, whitelisted shell command on {system_name}. "
+        f"Allowed standalone commands: {standalone}. "
+        f"Allowed command subcommands: {subcommands_text}. "
+        "Runs in the current working directory with no shell parsing. "
+        "Arguments must be passed as a list of strings. "
+        "A JSON-encoded list string is also accepted for compatibility. "
+        f"Output is limited to {MAX_OUTPUT_BYTES} bytes. "
+        f"Timeout must be 1-{MAX_TIMEOUT} seconds."
+    )
+
+
 def _normalize_args(args) -> list[str] | str:
     """Return normalized args, or an error string.
 
@@ -65,11 +93,7 @@ def _normalize_args(args) -> list[str] | str:
 
 
 @tool(
-    description=(
-        "Execute a safe, whitelisted shell command. "
-        "Runs in the current working directory with no shell parsing. "
-        "Output is limited to 50KB. Commands are validated against a strict whitelist."
-    ),
+    description=_build_shell_tool_description(),
     params={
         "command": "The command to run (e.g. 'git', 'ruff', 'pytest').",
         "args": "Arguments to pass as a list of strings. A JSON-encoded list string is also accepted for compatibility.",
@@ -116,22 +140,39 @@ def run_shell_command(state, command: str, args: list[str] = None, timeout: int 
         return "Error: Timeout must be an integer."
 
     # 3. Execute
-    full_command = [cmd_base] + args
+    display_command = [cmd_base] + args
 
     executable = shutil.which(cmd_base)
     if executable is None:
         return f"Error: Command '{cmd_base}' not found in PATH."
 
+    run_command = [executable] + args
+
+    # Prevent interactive prompts and pagers from hanging the tool.
+    env = os.environ.copy()
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")
+    env.setdefault("GIT_ASKPASS", "")
+    env.setdefault("SSH_ASKPASS", "")
+    env.setdefault("PAGER", "")
+    env.setdefault("GIT_PAGER", "")
+
+    if cmd_base == "git":
+        # Git may invoke a pager for commands like log/show. --no-pager keeps
+        # output connected directly to stdout/stderr and avoids interactive hangs.
+        run_command = [executable, "--no-pager"] + args
+
     try:
         result = subprocess.run(
-            full_command,
+            run_command,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=False,
             timeout=timeout,
             cwd=str(state.cwd),
+            env=env,
         )
     except subprocess.TimeoutExpired:
-        return f"Error: Command '{' '.join(full_command)}' timed out after {timeout}s."
+        return f"Error: Command '{' '.join(display_command)}' timed out after {timeout}s."
     except FileNotFoundError:
         return f"Error: Command '{cmd_base}' not found in PATH."
     except PermissionError:
@@ -166,7 +207,7 @@ def run_shell_command(state, command: str, args: list[str] = None, timeout: int 
 
     # 5. Format result
     lines = [
-        f"Command: {' '.join(full_command)}",
+        f"Command: {' '.join(display_command)}",
         f"Return code: {result.returncode}",
     ]
     if returned_output:
