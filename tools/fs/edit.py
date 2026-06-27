@@ -15,7 +15,7 @@ Fixed here by passing `state` correctly.
 import json
 
 from tools._base import tool
-from tools.fs._shared import resolve_path
+from tools.fs._shared import parse_bool, resolve_path
 from editing.model import FileEdit
 
 
@@ -79,7 +79,10 @@ def propose_file_edit(state, path: str, edits: list) -> str:
         if not isinstance(replace, str):
             return f"Error: Edit #{i + 1} 'replace' must be a string."
         if not find:
-            return f"Error: Edit #{i + 1} 'find' cannot be empty."
+            return (
+                f"Error: Edit #{i + 1} 'find' cannot be empty. "
+                "Use propose_file_replace to replace the entire file, including empty files."
+            )
 
         parsed_edits.append(FileEdit(find=find, replace=replace))
 
@@ -92,6 +95,73 @@ def propose_file_edit(state, path: str, edits: list) -> str:
 
     return (
         f"Pending edit #{pending_edit.id} created for {resolved_path}\n\n"
+        f"Diff:\n{diff}\n\n"
+        f"Run \\approve {pending_edit.id} to apply or \\reject {pending_edit.id} to discard."
+    )
+
+
+@tool(
+    description=(
+        "Propose replacing the entire content of a file without directly modifying it. "
+        "This is useful for empty files, notes, generated files, or complete rewrites. "
+        "The replacement is added to pending edits and must be approved with \\approve <id>."
+    ),
+    params={
+        "path": "Path to the file whose complete content should be replaced.",
+        "content": "The new complete UTF-8 content for the file.",
+        "create_if_missing": (
+            "If true, propose creating the file when it does not exist. "
+            "Defaults to false."
+        ),
+    },
+    requires_state=True,
+    example={
+        "action": "propose_file_replace",
+        "input": {
+            "path": "notes.md",
+            "content": "Hello, these are my notes:\n1. make more\n",
+            "create_if_missing": False,
+        },
+    },
+)
+def propose_file_replace(
+    state,
+    path: str,
+    content: str = "",
+    create_if_missing: bool = False,
+) -> str:
+    resolved_path = resolve_path(state, path)
+
+    if content is None:
+        content = ""
+
+    if not isinstance(content, str):
+        return "Error: 'content' must be a string."
+
+    try:
+        should_create = parse_bool(create_if_missing, default=False)
+    except ValueError as e:
+        return f"Error: {e}"
+
+    try:
+        pending_edit, diff = state.edit_store.propose_replace(
+            resolved_path,
+            content,
+            create_if_missing=should_create,
+        )
+    except ValueError as e:
+        return f"Error: {e}"
+    except UnicodeDecodeError:
+        return f"Error: File is not valid UTF-8: {resolved_path}"
+    except PermissionError:
+        return f"Error: Permission denied: {resolved_path}"
+    except Exception as e:
+        return f"Error: Failed to propose file replacement: {e}"
+
+    action = "creation" if pending_edit.kind == "create" else "replacement"
+
+    return (
+        f"Pending file {action} #{pending_edit.id} created for {resolved_path}\n\n"
         f"Diff:\n{diff}\n\n"
         f"Run \\approve {pending_edit.id} to apply or \\reject {pending_edit.id} to discard."
     )
