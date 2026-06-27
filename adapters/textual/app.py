@@ -634,7 +634,10 @@ class AgentTextualApp(App):
             return
         try:
             message = self.state.edit_store.approve(edit.id)
+            cwd_message = self._ensure_existing_cwd()
             self._append_chat("System", message)
+            if cwd_message:
+                self._append_chat("System", cwd_message)
         except (KeyError, ValueError) as e:
             self._append_chat("Error", str(e))
         self._render_pending_view()
@@ -1191,6 +1194,32 @@ class AgentTextualApp(App):
 
     def _refresh_state(self) -> None:
         self._refresh_header()
+
+    def _ensure_existing_cwd(self) -> str | None:
+        """Move state.cwd to the nearest existing parent if it was deleted."""
+        cwd = self.state.cwd
+
+        try:
+            if cwd.exists() and cwd.is_dir():
+                return None
+        except OSError:
+            pass
+
+        original = cwd
+        while True:
+            parent = cwd.parent
+            if parent == cwd:
+                break
+
+            cwd = parent
+            try:
+                if cwd.exists() and cwd.is_dir():
+                    self.state.cwd = cwd
+                    return f"Current directory was removed. Moved up to: {cwd}"
+            except OSError:
+                continue
+
+        return f"Warning: current directory was removed and no existing parent could be found: {original}"
 
     def _state_text(self) -> str:
         session_text = self.state.chat_session_id or "no active chat"

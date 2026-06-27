@@ -183,8 +183,13 @@ def _handle_pending(state: "AgentState", argument: str) -> None:
         if not pending:
             display.show_command_message("No pending edits.", title="Pending Edits", border_style="yellow")
             return
-        lines = [f"#{e.id} | {e.status} | {e.path}" for e in pending.values()]
-        display.show_command_message("\n".join(lines), title="Pending Edits", border_style="cyan")
+        lines = []
+        for e in pending.values():
+            if e.destination_path is not None:
+                lines.append(f"#{e.id} | {e.status} | {e.kind} | {e.path} -> {e.destination_path}")
+            else:
+                lines.append(f"#{e.id} | {e.status} | {e.kind} | {e.path}")
+        display.show_command_message("\n".join(lines), title="Pending Changes", border_style="cyan")
         return
 
     # \pending <id>
@@ -211,6 +216,7 @@ def _handle_pending(state: "AgentState", argument: str) -> None:
         path=str(edit.path),
         status=edit.status,
         diff_text=edit.diff,
+        kind=edit.kind,
     )
 
 

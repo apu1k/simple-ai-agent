@@ -121,10 +121,10 @@ def show_command_message(message: str, title="Info", border_style="white") -> No
     console.print(Panel(Text(str(message)), title=str(title), border_style=border_style, expand=False))
 
 
-def show_pending_diff(edit_id: int, path: str, status: str, diff_text: str) -> None:
-    title = f"Edit #{edit_id} [{status}]"
+def show_pending_diff(edit_id: int, path: str, status: str, diff_text: str, kind: str = "edit") -> None:
+    title = f"{kind.title()} #{edit_id} [{status}]"
     subtitle = path
-    content = diff_text if diff_text.strip() else "(no diff)"
+    content = diff_text if diff_text.strip() else "(no diff / preview)"
 
     try:
         renderable = Syntax(
