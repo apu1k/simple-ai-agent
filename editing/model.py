@@ -18,13 +18,14 @@ class FileEdit:
 
 
 EditStatus = Literal["pending", "applied", "rejected"]
-EditKind = Literal["edit", "create"]
+EditKind = Literal["edit", "create", "move", "delete", "copy"]
 
 
 @dataclass
 class PendingEdit:
     """
-    A proposed file change that requires user approval before it is written.
+    A proposed file change or filesystem operation that requires user approval
+    before it is written/applied.
 
     Lifecycle:
         pending  →  applied   (user ran \\approve <id>)
@@ -38,3 +39,9 @@ class PendingEdit:
     edits: list[FileEdit]
     status: EditStatus = "pending"
     kind: EditKind = "edit"
+
+    # Used by pending filesystem operations such as move/copy/delete.
+    destination_path: Path | None = None
+    recursive: bool = False
+    force: bool = False
+    is_directory: bool = False

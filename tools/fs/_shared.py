@@ -42,6 +42,7 @@ MAX_DISPLAY_TOTAL_BYTES = 500_000        # show_files (total across all files)
 MAX_DISPLAY_FILES = 30
 MAX_DISPLAY_LINES = 2_000
 MAX_ANALYZE_FILES = 30
+MAX_OPERATION_PREVIEW_ENTRIES = 100
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +59,36 @@ def resolve_path(state, path=".") -> Path:
 
 def should_skip_path(path: Path) -> bool:
     return any(part in IGNORED_DIRS for part in path.parts)
+
+
+def parse_bool(value, default: bool = False) -> bool:
+    """
+    Safely parse bool-like tool input.
+
+    Important because bool("false") is True in Python.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "n", "off", ""}:
+            return False
+    raise ValueError(f"Invalid boolean value: {value!r}")
+
+
+def is_inside_cwd(state, path: Path) -> bool:
+    """Return True if path is inside state.cwd."""
+    try:
+        path.resolve().relative_to(state.cwd.resolve())
+        return True
+    except ValueError:
+        return False
 
 
 # ---------------------------------------------------------------------------
