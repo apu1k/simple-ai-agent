@@ -35,7 +35,7 @@ def _is_safe_hostname(hostname: str) -> str | None:
         try:
             ip_addr = socket.gethostbyname(hostname)
             if ip_addr.startswith("127.") or ip_addr.startswith("10.") or ip_addr.startswith("192.168.") or ip_addr.startswith("169.254."):
-                return f"Error: Blocked access to local/private network."
+                return "Error: Blocked access to local/private network."
         except socket.gaierror:
             return None
         return None

@@ -17,7 +17,6 @@ from typing import Any, Callable, Literal
 
 from rich.console import Group
 from rich.markdown import Markdown
-from rich.syntax import Syntax
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
@@ -26,6 +25,12 @@ from textual.containers import Container, VerticalScroll
 from textual.events import Paste
 from textual.suggester import SuggestFromList
 from textual.widgets import Footer, Input, Static, Tree
+
+from core.tool_artifacts import is_internal_tool_artifact
+from llm.providers import PROVIDERS, list_provider_models
+from runtime.bootstrap import build_model_config_and_client, create_agent
+from runtime.chat_store import record_final_turn, start_new_chat
+from runtime.prompt import build_system_prompt
 
 
 class ClipboardInput(Input):
@@ -62,13 +67,6 @@ class ClipboardInput(Input):
                 self.value = current[:cp] + text + current[cp:]
         except Exception:
             pass
-
-
-from core.tool_artifacts import is_internal_tool_artifact
-from llm.providers import PROVIDERS, list_provider_models
-from runtime.bootstrap import build_model_config_and_client, create_agent
-from runtime.chat_store import record_final_turn, start_new_chat
-from runtime.prompt import build_system_prompt
 
 
 
@@ -1169,7 +1167,6 @@ class AgentTextualApp(App):
 
     def _format_ai_markdown(self, text: str):
         try:
-            from textual.reactive import Reactive
             # Light theme -> no code background (avoids black boxes on white)
             # Dark theme -> use a dark syntax theme for proper highlighting
             code_theme = "" if not self._theme_dark else "dracula"

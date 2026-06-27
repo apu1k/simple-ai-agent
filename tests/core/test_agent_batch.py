@@ -12,7 +12,7 @@ from tools._base import ToolResult, DisplayItem
 from core.tool_registry import ToolRegistry, ToolSpec
 from editing.store import EditStore
 from llm.base import LLMResponse, NativeToolCall
-from dataclasses import dataclass, field
+from dataclasses import field
 
 
 @dataclass

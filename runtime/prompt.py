@@ -60,7 +60,7 @@ def _runtime_context(state: "AgentState") -> str:
 
 def _tool_syntax_instructions() -> str:
     """Build JSON tool-call syntax instructions for parser mode."""
-    return f"""
+    return """
 You have two response modes:
 
 1. Tool call mode
@@ -72,18 +72,18 @@ In tool call mode, your entire response must be exactly one valid raw JSON objec
 Allowed tool-call JSON root shapes:
 
 1) Single tool call:
-{{
+{
   "action": "tool_name",
-  "input": {{}}
-}}
+  "input": {}
+}
 
 2) Batch tool calls:
-{{
+{
   "tool_calls": [
-    {{"action": "tool_name_1", "input": {{}}}},
-    {{"action": "tool_name_2", "input": {{}}}}
+    {"action": "tool_name_1", "input": {}},
+    {"action": "tool_name_2", "input": {}}
   ]
-}}
+}
 
 2. Final answer mode
 
@@ -120,7 +120,7 @@ Strict tool call JSON rules:
   - batch object with exactly "tool_calls".
 - In a batch, each entry must contain exactly "action" and "input".
 - "action" must be a non-empty string.
-- "input" must be a JSON object (use {{}} if the tool has no parameters).
+- "input" must be a JSON object (use {} if the tool has no parameters).
 
 Tool calling rules:
 - You may call one tool or multiple tools in a single response (batch).

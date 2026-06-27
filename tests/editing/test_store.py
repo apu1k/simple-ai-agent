@@ -5,7 +5,6 @@ Tests for editing/store.py — the pending edit lifecycle.
 """
 
 import pytest
-from pathlib import Path
 from editing.model import FileEdit
 from editing.store import EditStore, _apply_exact_edit
 

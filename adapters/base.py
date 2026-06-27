@@ -7,7 +7,6 @@ Swap the entire UI (CLI → voice → web) by implementing this protocol
 and passing the new adapter to runtime/loop.py.
 """
 
-from contextlib import contextmanager
 from typing import Iterator, Protocol, runtime_checkable
 
 

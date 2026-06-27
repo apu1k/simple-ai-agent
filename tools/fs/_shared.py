@@ -18,7 +18,6 @@ Provides:
   - read_line_range_for_display()
 """
 
-import json
 from pathlib import Path
 
 from tools._base import DisplayItem

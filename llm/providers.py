@@ -11,7 +11,6 @@ To add a new provider type:
 import os
 import tomllib
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
 from config.settings import PROVIDERS_EXAMPLE_FILE, PROVIDERS_FILE
