@@ -4,6 +4,9 @@ tests/tools/fs/test_read.py
 Tests for tools/fs/read.py: pwd, ls, cd, read_file, show_file, show_files.
 """
 
+import sys
+import types
+
 import pytest
 from dataclasses import dataclass
 from pathlib import Path
@@ -164,6 +167,172 @@ def test_read_file_line_range_start_beyond_eof(tmp_path):
 
     assert result.startswith("Error:")
     assert "beyond end of file" in result
+
+
+def test_read_file_pdf_returns_markdown_with_page_separators(tmp_path, monkeypatch):
+    state = make_state(tmp_path)
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"%PDF fake")
+
+    class FakeDoc:
+        needs_pass = False
+        is_encrypted = False
+        page_count = 2
+
+        def close(self):
+            pass
+
+    fake_fitz = types.SimpleNamespace(open=lambda path: FakeDoc())
+
+    def fake_to_markdown(path, pages=None):
+        if pages == [0]:
+            return "# Page One\ncontent one"
+        if pages == [1]:
+            return "## Page Two\ncontent two"
+        return ""
+
+    fake_pymupdf4llm = types.SimpleNamespace(to_markdown=fake_to_markdown)
+
+    monkeypatch.setitem(sys.modules, "fitz", fake_fitz)
+    monkeypatch.setitem(sys.modules, "pymupdf4llm", fake_pymupdf4llm)
+
+    result = read_file(state, "doc.pdf")
+
+    assert "[PDF extracted as Markdown: doc.pdf]" in result
+    assert "[Total extracted Markdown lines:" in result
+    assert "--- Page 1 ---" in result
+    assert "# Page One" in result
+    assert "content one" in result
+    assert "--- Page 2 ---" in result
+    assert "## Page Two" in result
+    assert "content two" in result
+
+
+def test_read_file_pdf_line_range_returns_selected_markdown_lines(tmp_path, monkeypatch):
+    state = make_state(tmp_path)
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"%PDF fake")
+
+    class FakeDoc:
+        needs_pass = False
+        is_encrypted = False
+        page_count = 1
+
+        def close(self):
+            pass
+
+    fake_fitz = types.SimpleNamespace(open=lambda path: FakeDoc())
+    fake_pymupdf4llm = types.SimpleNamespace(
+        to_markdown=lambda path, pages=None: "alpha\nbravo\ncharlie\ndelta"
+    )
+
+    monkeypatch.setitem(sys.modules, "fitz", fake_fitz)
+    monkeypatch.setitem(sys.modules, "pymupdf4llm", fake_pymupdf4llm)
+
+    result = read_file(state, "doc.pdf", start_line=4, end_line=5)
+
+    assert "[PDF extracted as Markdown: doc.pdf]" in result
+    assert "[Showing extracted Markdown lines 4-5 of 6]" in result
+    assert "bravo\ncharlie" in result
+    assert "alpha" not in result
+    assert "delta" not in result
+
+
+def test_read_file_pdf_line_range_start_beyond_extracted_markdown(tmp_path, monkeypatch):
+    state = make_state(tmp_path)
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"%PDF fake")
+
+    class FakeDoc:
+        needs_pass = False
+        is_encrypted = False
+        page_count = 1
+
+        def close(self):
+            pass
+
+    fake_fitz = types.SimpleNamespace(open=lambda path: FakeDoc())
+    fake_pymupdf4llm = types.SimpleNamespace(
+        to_markdown=lambda path, pages=None: "only one line"
+    )
+
+    monkeypatch.setitem(sys.modules, "fitz", fake_fitz)
+    monkeypatch.setitem(sys.modules, "pymupdf4llm", fake_pymupdf4llm)
+
+    result = read_file(state, "doc.pdf", start_line=99, end_line=100)
+
+    assert result.startswith("Error:")
+    assert "beyond end of extracted PDF Markdown" in result
+
+
+def test_read_file_pdf_encrypted_returns_clear_error(tmp_path, monkeypatch):
+    state = make_state(tmp_path)
+    pdf = tmp_path / "locked.pdf"
+    pdf.write_bytes(b"%PDF fake")
+
+    class FakeDoc:
+        needs_pass = True
+        is_encrypted = True
+        page_count = 1
+
+        def close(self):
+            pass
+
+    fake_fitz = types.SimpleNamespace(open=lambda path: FakeDoc())
+    fake_pymupdf4llm = types.SimpleNamespace(
+        to_markdown=lambda path, pages=None: "should not be called"
+    )
+
+    monkeypatch.setitem(sys.modules, "fitz", fake_fitz)
+    monkeypatch.setitem(sys.modules, "pymupdf4llm", fake_pymupdf4llm)
+
+    result = read_file(state, "locked.pdf")
+
+    assert result.startswith("Error:")
+    assert "encrypted/password-protected PDF" in result
+    assert "not currently supported" in result
+
+
+def test_read_file_pdf_scanned_or_image_only_returns_clear_error(tmp_path, monkeypatch):
+    state = make_state(tmp_path)
+    pdf = tmp_path / "scan.pdf"
+    pdf.write_bytes(b"%PDF fake")
+
+    class FakeDoc:
+        needs_pass = False
+        is_encrypted = False
+        page_count = 2
+
+        def close(self):
+            pass
+
+    fake_fitz = types.SimpleNamespace(open=lambda path: FakeDoc())
+    fake_pymupdf4llm = types.SimpleNamespace(
+        to_markdown=lambda path, pages=None: ""
+    )
+
+    monkeypatch.setitem(sys.modules, "fitz", fake_fitz)
+    monkeypatch.setitem(sys.modules, "pymupdf4llm", fake_pymupdf4llm)
+
+    result = read_file(state, "scan.pdf")
+
+    assert result.startswith("Error:")
+    assert "No extractable text" in result
+    assert "OCR is not currently enabled" in result
+
+
+def test_read_file_pdf_missing_dependency_returns_clear_error(tmp_path, monkeypatch):
+    state = make_state(tmp_path)
+    pdf = tmp_path / "doc.pdf"
+    pdf.write_bytes(b"%PDF fake")
+
+    monkeypatch.setitem(sys.modules, "pymupdf4llm", None)
+
+    result = read_file(state, "doc.pdf")
+
+    assert result.startswith("Error:")
+    assert "pymupdf4llm" in result
+    assert "pip install pymupdf4llm" in result
 
 
 # ---------------------------------------------------------------------------

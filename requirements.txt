@@ -4,3 +4,4 @@ rich
 prompt_toolkit
 textual
 textual-dev
+pymupdf4llm
