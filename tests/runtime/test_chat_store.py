@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from runtime.chat_store import ChatStore, ensure_chat_session, record_final_turn, start_new_chat
 from runtime.state import AgentState, ModelConfig
 
@@ -173,3 +175,17 @@ def test_ensure_chat_session_reuses_existing_session(tmp_path: Path):
 
     records = read_jsonl(state.chat_store.sessions_path)
     assert len(records) == 1
+
+
+def test_append_turn_rejects_unhandled_tool_call_markup(tmp_path: Path):
+    store = ChatStore(root=tmp_path)
+    session_id = store.new_session(title="test")
+
+    with pytest.raises(RuntimeError) as exc:
+        store.append_turn(
+            session_id=session_id,
+            user_text="please call a tool",
+            assistant_text='<tool_call>{"recipient_name":"functions.pwd","parameters":{}}</tool_call>',
+        )
+
+    assert "Unhandled <tool_call> markup" in str(exc.value)

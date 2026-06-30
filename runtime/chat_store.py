@@ -34,6 +34,23 @@ ORIGINAL_TURNS_FILE = "turns_original.jsonl"
 WORKING_TURNS_FILE = "turns_working.jsonl"
 
 
+def _assert_no_unhandled_tool_call_markup(text: str) -> None:
+    """
+    Textual <tool_call> blocks are allowed, but they must be consumed by
+    core.protocol/core.agent before final assistant text is stored.
+    """
+    if not isinstance(text, str):
+        return
+
+    lowered = text.lower()
+    if "<tool_call>" in lowered or "</tool_call>" in lowered:
+        raise RuntimeError(
+            "Unhandled <tool_call> markup reached assistant_final. "
+            "Textual tool calls must be parsed, executed, and stripped before "
+            "chat history is persisted."
+        )
+
+
 @dataclass(frozen=True)
 class ChatSessionSummary:
     """Small serializable summary for history listings."""
@@ -90,6 +107,8 @@ class ChatStore:
         """
         if not session_id:
             raise ValueError("session_id must not be empty")
+
+        _assert_no_unhandled_tool_call_markup(assistant_text)
 
         with self._lock:
             turn_index = self._next_turn_index_unlocked(session_id)

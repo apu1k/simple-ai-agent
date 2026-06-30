@@ -207,3 +207,152 @@ def test_none_is_invalid():
     r = parse(None)
     assert r.is_valid is False
     assert r.kind == "invalid"
+
+
+# ---------------------------------------------------------------------------
+# OpenAI/ChatGPT-style textual <tool_call> markup
+# ---------------------------------------------------------------------------
+
+def test_textual_tool_call_is_parsed_and_stripped():
+    text = """I will read it now.
+
+<tool_call>
+{"recipient_name":"functions.read_file","parameters":{"path":"README.md"}}
+</tool_call>
+"""
+
+    r = parse(text)
+
+    assert r.is_valid is True
+    assert r.kind == "tool"
+    assert r.consumed_tool_call_markup is True
+    assert r.assistant_text == "I will read it now."
+    assert len(r.tool_calls) == 1
+    assert r.tool_calls[0].action == "read_file"
+    assert r.tool_calls[0].tool_input == {"path": "README.md"}
+
+
+def test_textual_tool_call_without_functions_prefix():
+    text = """<tool_call>
+{"recipient_name":"read_file","parameters":{"path":"README.md"}}
+</tool_call>
+"""
+
+    r = parse(text)
+
+    assert r.is_valid is True
+    assert r.kind == "tool"
+    assert r.tool_calls[0].action == "read_file"
+    assert r.tool_calls[0].tool_input == {"path": "README.md"}
+
+
+def test_multiple_textual_tool_calls_are_parsed():
+    text = """I will inspect both files.
+
+<tool_call>
+{"recipient_name":"functions.read_file","parameters":{"path":"a.py"}}
+</tool_call>
+
+<tool_call>
+{"recipient_name":"functions.read_file","parameters":{"path":"b.py"}}
+</tool_call>
+"""
+
+    r = parse(text)
+
+    assert r.is_valid is True
+    assert r.kind == "tool"
+    assert r.consumed_tool_call_markup is True
+    assert r.assistant_text == "I will inspect both files."
+    assert len(r.tool_calls) == 2
+    assert r.tool_calls[0].action == "read_file"
+    assert r.tool_calls[0].tool_input == {"path": "a.py"}
+    assert r.tool_calls[1].action == "read_file"
+    assert r.tool_calls[1].tool_input == {"path": "b.py"}
+
+
+def test_textual_tool_call_coerces_stringified_json_parameters():
+    text = """<tool_call>
+{"recipient_name":"functions.propose_file_edit","parameters":{"path":"x.py","edits":"[]"}}
+</tool_call>
+"""
+
+    r = parse(text)
+
+    assert r.is_valid is True
+    assert r.kind == "tool"
+    assert r.tool_calls[0].action == "propose_file_edit"
+    assert r.tool_calls[0].tool_input == {
+        "path": "x.py",
+        "edits": [],
+    }
+
+
+def test_textual_tool_call_accepts_stringified_parameters_object():
+    text = """<tool_call>
+{"recipient_name":"functions.read_file","parameters":"{\\"path\\": \\"README.md\\"}"}
+</tool_call>
+"""
+
+    r = parse(text)
+
+    assert r.is_valid is True
+    assert r.kind == "tool"
+    assert r.tool_calls[0].action == "read_file"
+    assert r.tool_calls[0].tool_input == {"path": "README.md"}
+
+
+def test_invalid_textual_tool_call_json_is_invalid():
+    text = """<tool_call>
+{"recipient_name":"functions.read_file","parameters":{"path":"README.md"}
+</tool_call>
+"""
+
+    r = parse(text)
+
+    assert r.is_valid is False
+    assert r.kind == "invalid"
+    assert r.error is not None
+    assert "Invalid <tool_call> JSON" in r.error
+
+
+def test_textual_tool_call_parameters_must_be_object():
+    text = """<tool_call>
+{"recipient_name":"functions.read_file","parameters":["README.md"]}
+</tool_call>
+"""
+
+    r = parse(text)
+
+    assert r.is_valid is False
+    assert r.kind == "invalid"
+    assert r.error is not None
+    assert "parameters" in r.error
+
+
+def test_incomplete_textual_tool_call_is_invalid():
+    text = """I will read it now.
+
+<tool_call>
+{"recipient_name":"functions.read_file","parameters":{"path":"README.md"}}
+"""
+
+    r = parse(text)
+
+    assert r.is_valid is False
+    assert r.kind == "invalid"
+    assert r.error is not None
+    assert "Incomplete or malformed <tool_call> block" in r.error
+
+
+def test_orphan_textual_tool_call_closing_tag_is_invalid():
+    text = """I am done.
+</tool_call>
+"""
+
+    r = parse(text)
+
+    assert r.is_valid is False
+    assert r.kind == "invalid"
+    assert r.error is not None
+    assert "Incomplete or malformed <tool_call> block" in r.error

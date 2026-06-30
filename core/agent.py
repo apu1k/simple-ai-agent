@@ -702,6 +702,15 @@ class Agent:
                         "role": "assistant",
                         "content": self._format_native_tool_call_summary(native_tool_calls),
                     })
+                elif parsed.consumed_tool_call_markup:
+                    # Textual <tool_call>...</tool_call> markup was consumed by
+                    # core.protocol. Append only the visible assistant text,
+                    # never the raw markup.
+                    if parsed.assistant_text.strip():
+                        self.messages.append({
+                            "role": "assistant",
+                            "content": parsed.assistant_text.strip(),
+                        })
                 else:
                     self.messages.append({"role": "assistant", "content": reply})
 
