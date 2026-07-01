@@ -5,7 +5,6 @@ import re
 from pathlib import Path
 
 
-MAX_SEARCH_FILE_SIZE_BYTES = 2_000_000
 SEARCHABLE_SUFFIXES = {".json", ".jsonl", ".txt", ".md"}
 
 
@@ -27,25 +26,22 @@ class JsonChatStore:
                 continue
 
             try:
-                if path.stat().st_size > MAX_SEARCH_FILE_SIZE_BYTES:
-                    continue
-                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                with path.open("r", encoding="utf-8", errors="replace") as handle:
+                    for line_number, line in enumerate(handle, start=1):
+                        score = _match_score(query, query_tokens, line)
+                        if score <= 0:
+                            continue
+
+                        results.append(
+                            {
+                                "path": str(path),
+                                "line": line_number,
+                                "content": line.strip(),
+                                "score": score,
+                            }
+                        )
             except OSError:
                 continue
-
-            for line_number, line in enumerate(lines, start=1):
-                score = _match_score(query, query_tokens, line)
-                if score <= 0:
-                    continue
-
-                results.append(
-                    {
-                        "path": str(path),
-                        "line": line_number,
-                        "content": line.strip(),
-                        "score": score,
-                    }
-                )
 
         results.sort(key=lambda item: item["score"], reverse=True)
         return results[:max_results]
