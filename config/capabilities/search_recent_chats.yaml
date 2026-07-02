@@ -1,0 +1,23 @@
+id: search.recent_chats
+name: Search Recent Chats
+capability_type: search
+description: >
+  Searches local previous chat history for relevant messages, decisions,
+  preferences, project discussions, and facts mentioned by the user.
+handler: tools.knowledge.capabilities.local.SearchRecentChatsCapability
+tags:
+  - chats
+  - chat
+  - conversation
+  - history
+  - memory
+  - decisions
+examples:
+  - What did we decide about the knowledge engine?
+  - Search my recent chats for Qdrant.
+  - Did I mention my preferred project structure?
+required_permissions:
+  - chats.read
+sensitivity: personal
+allow_network: false
+expected_confidence: 0.7

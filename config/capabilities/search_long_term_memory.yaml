@@ -1,0 +1,22 @@
+id: search.long_term_memory
+name: Search Long-Term Memory
+capability_type: search
+description: >
+  Searches the agent's explicit long-term memory store for important saved facts,
+  preferences, personal notes, and durable information.
+handler: tools.knowledge.capabilities.local.SearchLongTermMemoryCapability
+tags:
+  - memory
+  - facts
+  - preferences
+  - personal
+  - notes
+examples:
+  - What do you remember about me?
+  - Search your memory for my coding preferences.
+  - Find saved facts about this project.
+required_permissions:
+  - memory.read
+sensitivity: personal
+allow_network: false
+expected_confidence: 0.75

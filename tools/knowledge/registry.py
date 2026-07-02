@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
+from typing import Any
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover - optional dependency fallback
+    yaml = None
 
 from tools.knowledge.models import (
     CapabilityCandidate,
     CapabilityDefinition,
     KnowledgeSearchRequest,
 )
+
+
+DEFAULT_CAPABILITIES_DIR = Path("config") / "capabilities"
 
 
 DEFAULT_CAPABILITIES = [
@@ -24,6 +35,7 @@ DEFAULT_CAPABILITIES = [
             "Search my recent chats for Qdrant.",
             "Did I mention my preferred project structure?",
         ],
+        required_permissions=["chats.read"],
         sensitivity="personal",
         expected_confidence=0.7,
     ),
@@ -41,6 +53,7 @@ DEFAULT_CAPABILITIES = [
             "Search your memory for my coding preferences.",
             "Find saved facts about this project.",
         ],
+        required_permissions=["memory.read"],
         sensitivity="personal",
         expected_confidence=0.75,
     ),
@@ -49,7 +62,7 @@ DEFAULT_CAPABILITIES = [
 
 class CapabilityRegistry:
     def __init__(self, capabilities: list[CapabilityDefinition] | None = None):
-        self.capabilities = capabilities or DEFAULT_CAPABILITIES
+        self.capabilities = capabilities or load_capability_definitions()
 
     def search(
         self,
@@ -101,6 +114,66 @@ class CapabilityRegistry:
 
         candidates.sort(key=lambda candidate: candidate.score, reverse=True)
         return candidates[:top_k]
+
+
+def load_capability_definitions(
+    capabilities_dir: Path = DEFAULT_CAPABILITIES_DIR,
+) -> list[CapabilityDefinition]:
+    loaded: list[CapabilityDefinition] = []
+
+    if capabilities_dir.exists() and capabilities_dir.is_dir():
+        for path in sorted(capabilities_dir.glob("*.yaml")):
+            try:
+                loaded.append(_load_capability_file(path))
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                continue
+
+    return loaded or DEFAULT_CAPABILITIES
+
+
+def _load_capability_file(path: Path) -> CapabilityDefinition:
+    raw = path.read_text(encoding="utf-8")
+    if yaml is not None:
+        data = yaml.safe_load(raw)
+    else:
+        data = json.loads(raw)
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Capability file must contain an object: {path}")
+
+    return CapabilityDefinition(
+        id=_required_str(data, "id", path),
+        name=_required_str(data, "name", path),
+        description=_required_str(data, "description", path),
+        handler=_required_str(data, "handler", path),
+        capability_type=data.get("capability_type", "search"),
+        tags=_string_list(data.get("tags", [])),
+        examples=_string_list(data.get("examples", [])),
+        required_permissions=_string_list(data.get("required_permissions", [])),
+        sensitivity=str(data.get("sensitivity", "local")),
+        allow_network=bool(data.get("allow_network", False)),
+        expected_latency_ms=_optional_int(data.get("expected_latency_ms")),
+        expected_confidence=float(data.get("expected_confidence", 0.5)),
+    )
+
+
+def _required_str(data: dict[str, Any], key: str, path: Path) -> str:
+    value = data.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Capability file missing required string field {key!r}: {path}")
+    return value.strip()
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    return int(value)
 
 
 def _matches_source_filter(
