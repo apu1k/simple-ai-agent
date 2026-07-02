@@ -23,6 +23,7 @@ class SearchRecentChatsCapability:
                     "path": hit["path"],
                     "line": hit["line"],
                     "score": hit.get("score"),
+                    **hit.get("metadata", {}),
                 },
             )
             for hit in hits
