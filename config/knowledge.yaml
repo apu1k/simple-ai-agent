@@ -21,7 +21,10 @@ qdrant:
   # Router index for selecting capability definitions from config/capabilities/*.yaml.
   capability_collection: agent_capability_router
 
-  # Default embedding settings for future local BGE-M3 integration.
+  # Default embedding settings. The hashing backend is deterministic and
+  # dependency-free for tests/dev. Later we can switch to a fully local model
+  # backend such as BGE-M3 without changing the Qdrant pipeline.
+  embedding_backend: hashing
   vector_size: 1024
   distance: Cosine
 

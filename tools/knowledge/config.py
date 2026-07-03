@@ -40,6 +40,7 @@ class QdrantConfig:
     url: str = "http://localhost:6333"
     timeout_seconds: float = 10.0
     capability_collection: str = "agent_capability_router"
+    embedding_backend: str = "hashing"
     vector_size: int = 1024
     distance: str = "Cosine"
     data_collections: dict[str, QdrantDataCollectionConfig] = field(default_factory=dict)
@@ -83,6 +84,7 @@ def _parse_qdrant_config(data: Any) -> QdrantConfig:
         capability_collection=str(
             data.get("capability_collection", "agent_capability_router")
         ),
+        embedding_backend=str(data.get("embedding_backend", "hashing")),
         vector_size=int(data.get("vector_size", 1024)),
         distance=str(data.get("distance", "Cosine")),
         data_collections=_parse_data_collections(data.get("data_collections", {})),
