@@ -13,6 +13,7 @@ Phase 2 goals:
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Literal
 
 from rich.console import Group
@@ -124,6 +125,7 @@ class AgentTextualApp(App):
 
         self._messages: list[tuple[str, str]] = []
         self._models_by_provider: dict[str, list[str]] = {}
+        self._model_provider_status: dict[str, str] = {}
         self._model_tree_loaded = False
         self._model_tree_loading = False
         self._model_search = ""
@@ -438,12 +440,16 @@ class AgentTextualApp(App):
         input_widget.placeholder = "Search models... Enter selects one match, Ctrl+G cancels"
         input_widget.focus()
 
-        if self._model_tree_loaded:
+        if self._models_by_provider:
+            # Show the cached model list immediately for fast selection, then
+            # start a background refresh below. This lets a provider that failed
+            # previously recover on the next \models open without making the
+            # user wait on an empty/loading tree.
             self._render_model_tree()
-            return
+        else:
+            self._set_model_header("Loading provider model lists...")
+            self._show_model_loading_tree()
 
-        self._set_model_header("Loading provider model lists...")
-        self._show_model_loading_tree()
         if not self._model_tree_loading:
             self._model_tree_loading = True
             self._load_models_worker()
@@ -895,28 +901,102 @@ class AgentTextualApp(App):
         root.add_leaf("Loading models...")
         root.expand()
 
+    def _models_with_default(self, provider_key: str, models: list[str]) -> list[str]:
+        provider = PROVIDERS[provider_key]
+        unique_models = list(dict.fromkeys(models))
+        if provider.default_model:
+            unique_models = [provider.default_model] + [
+                model for model in unique_models if model != provider.default_model
+            ]
+        return unique_models
+
+    def _start_model_loading_incremental(self) -> None:
+        # Preserve any cached model lists so reopening \models is instant.
+        # Provider API results fill in as each parallel refresh completes.
+        had_cached_models = bool(self._models_by_provider)
+        previous_models = self._models_by_provider
+        self._models_by_provider = {
+            key: self._models_with_default(key, previous_models.get(key, []))
+            for key in PROVIDERS
+        }
+        self._model_provider_status = {
+            key: "skipped" if not provider.supports_model_listing else "loading"
+            for key, provider in PROVIDERS.items()
+        }
+        self._model_tree_loaded = had_cached_models
+        self._model_tree_loading = True
+
+        if self._mode == "model_select":
+            self._render_model_tree()
+
     @work(thread=True, exclusive=True)
     def _load_models_worker(self) -> None:
-        models_by_provider: dict[str, list[str]] = {}
+        self._from_any_thread(self._start_model_loading_incremental)
 
-        for key, provider in PROVIDERS.items():
-            models: list[str] = []
-            try:
-                models = list_provider_models(provider)
-            except Exception as e:
-                print(f"[model-listing] {provider.label}: {e}", flush=True)
+        fetchable = {
+            key: provider
+            for key, provider in PROVIDERS.items()
+            if provider.supports_model_listing
+        }
 
-            unique_models = list(dict.fromkeys(models))
-            if provider.default_model:
-                unique_models = [provider.default_model] + [
-                    model for model in unique_models if model != provider.default_model
-                ]
-            models_by_provider[key] = unique_models
+        if not fetchable:
+            self._from_any_thread(self._finish_model_loading)
+            return
 
-        self._from_any_thread(self._finish_model_loading, models_by_provider)
+        def fetch_one(key: str) -> tuple[str, list[str]]:
+            provider = fetchable[key]
+            models = list_provider_models(provider, timeout=6.0, max_retries=0)
+            return key, models
 
-    def _finish_model_loading(self, models_by_provider: dict[str, list[str]]) -> None:
-        self._models_by_provider = models_by_provider
+        max_workers = min(len(fetchable), 8)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_key = {
+                executor.submit(fetch_one, key): key
+                for key in fetchable
+            }
+
+            for future in as_completed(future_to_key):
+                key = future_to_key[future]
+                provider = PROVIDERS[key]
+                try:
+                    finished_key, models = future.result()
+                except Exception as e:
+                    print(f"[model-listing] {provider.label}: {e}", flush=True)
+                    finished_key = key
+                    models = []
+
+                self._from_any_thread(
+                    self._update_provider_models_incremental,
+                    finished_key,
+                    models,
+                )
+
+        self._from_any_thread(self._finish_model_loading)
+
+    def _update_provider_models_incremental(self, provider_key: str, models: list[str]) -> None:
+        if provider_key not in PROVIDERS:
+            return
+
+        if models:
+            self._models_by_provider[provider_key] = self._models_with_default(provider_key, models)
+        else:
+            # list_provider_models currently returns [] for both errors and real
+            # empty lists. Keep any cached successful list on refresh failure; on
+            # first load this still leaves the configured default_model visible.
+            self._models_by_provider[provider_key] = self._models_with_default(
+                provider_key,
+                self._models_by_provider.get(provider_key, []),
+            )
+
+        self._model_provider_status[provider_key] = "loaded"
+        if self._mode == "model_select":
+            self._render_model_tree()
+
+    def _finish_model_loading(self) -> None:
+        for key, status in list(self._model_provider_status.items()):
+            if status == "loading":
+                self._model_provider_status[key] = "unavailable"
+
         self._model_tree_loaded = True
         self._model_tree_loading = False
         if self._mode == "model_select":
@@ -948,11 +1028,25 @@ class AgentTextualApp(App):
             if query and not filtered_models:
                 continue
 
-            provider_node = root.add(f"{provider.label} [{key}]")
+            status = self._model_provider_status.get(key, "loaded" if self._model_tree_loaded else "loading")
+            status_suffix = ""
+            if status == "loading":
+                status_suffix = " — loading..."
+            elif status == "unavailable":
+                status_suffix = " — unavailable"
+            elif status == "skipped":
+                status_suffix = " — listing disabled"
+
+            provider_node = root.add(f"{provider.label} [{key}]{status_suffix}")
             provider_node.expand()
 
             if not filtered_models:
-                provider_node.add_leaf("No models available; configure default_model")
+                if status == "loading":
+                    provider_node.add_leaf("Loading models...")
+                elif status == "unavailable":
+                    provider_node.add_leaf("Could not fetch models; enter model ID manually or configure default_model")
+                else:
+                    provider_node.add_leaf("No models available; configure default_model")
                 continue
 
             for model in filtered_models:
@@ -967,13 +1061,29 @@ class AgentTextualApp(App):
             root.add_leaf("No models match your search.")
             self._set_model_header("No matching models. Change the search text or press Ctrl+G to cancel.")
         elif query:
+            loading_count = sum(
+                1 for status in self._model_provider_status.values()
+                if status == "loading"
+            )
+            loading_suffix = f" {loading_count} provider(s) still loading." if loading_count else ""
             self._set_model_header(
                 f"{len(visible_matches)} matching model(s). Narrow to one and press Enter, or select a tree item."
+                f"{loading_suffix}"
             )
         else:
-            self._set_model_header(
-                "Select a model from the tree. Type to search; Enter selects one match; Ctrl+G cancels."
+            loading_count = sum(
+                1 for status in self._model_provider_status.values()
+                if status == "loading"
             )
+            if loading_count:
+                self._set_model_header(
+                    f"Model lists are loading in parallel; {loading_count} provider(s) still pending. "
+                    "Type to search; Enter selects one match; Ctrl+G cancels."
+                )
+            else:
+                self._set_model_header(
+                    "Select a model from the tree. Type to search; Enter selects one match; Ctrl+G cancels."
+                )
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         if self._mode != "model_select":

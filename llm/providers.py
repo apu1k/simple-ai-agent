@@ -83,15 +83,26 @@ def _debug_provider_config():
 # Model listing and selection (interactive CLI)
 # ---------------------------------------------------------------------------
 
-def list_provider_models(provider: ProviderConfig) -> list[str]:
+def list_provider_models(
+    provider: ProviderConfig,
+    *,
+    timeout: float = 6.0,
+    max_retries: int = 0,
+) -> list[str]:
     if not provider.supports_model_listing:
         return []
     try:
         from openai import OpenAI
+
+        kwargs = {
+            "api_key": provider.api_key,
+            "timeout": timeout,
+            "max_retries": max_retries,
+        }
         if provider.base_url:
-            client = OpenAI(api_key=provider.api_key, base_url=provider.base_url)
-        else:
-            client = OpenAI(api_key=provider.api_key)
+            kwargs["base_url"] = provider.base_url
+
+        client = OpenAI(**kwargs)
         return sorted(m.id for m in client.models.list().data)
     except Exception as e:
         print(f"Warning: Could not fetch models for {provider.label}: {e}")
