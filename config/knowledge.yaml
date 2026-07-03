@@ -1,0 +1,39 @@
+# Knowledge-engine configuration.
+#
+# Qdrant has two different roles here:
+# 1. router indexes: small vector indexes used to choose which capability/source to ask.
+# 2. data collections: normal vector databases containing evidence such as chats,
+#    memories, project files, PDFs, or other indexed documents.
+#
+# This default config is fully local. It uses qdrant-client local persistence
+# under runtime/knowledge/qdrant and does not require Qdrant Cloud or an API key.
+
+qdrant:
+  enabled: false
+
+  # local = embedded/local qdrant-client storage at local_path, no HTTP service.
+  # http = connect to a locally running Qdrant server via url.
+  mode: local
+  local_path: runtime/knowledge/qdrant
+  url: http://localhost:6333
+  timeout_seconds: 10.0
+
+  # Router index for selecting capability definitions from config/capabilities/*.yaml.
+  capability_collection: agent_capability_router
+
+  # Default embedding settings for future local BGE-M3 integration.
+  vector_size: 1024
+  distance: Cosine
+
+  # Ordinary Qdrant data collections. Capabilities may search these after routing.
+  data_collections:
+    chat_history:
+      collection: agent_chat_history
+      description: Complete persisted chat history turns and conversation snippets.
+      sensitivity: personal
+      source_type: chats
+    long_term_memory:
+      collection: agent_long_term_memory
+      description: Explicit durable memory entries saved by the agent.
+      sensitivity: personal
+      source_type: memory

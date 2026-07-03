@@ -6,3 +6,4 @@ textual
 textual-dev
 pymupdf4llm
 PyYAML
+qdrant-client
