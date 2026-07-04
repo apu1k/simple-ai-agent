@@ -10,11 +10,16 @@ try:
 except ImportError:  # pragma: no cover - optional dependency fallback
     yaml = None
 
+from tools.knowledge.config import QdrantConfig, load_knowledge_config
+from tools.knowledge.embeddings import create_embedding_model
+from tools.knowledge.embeddings.base import EmbeddingModel
+from tools.knowledge.indexes.capability_router import search_capability_router
 from tools.knowledge.models import (
     CapabilityCandidate,
     CapabilityDefinition,
     KnowledgeSearchRequest,
 )
+from tools.knowledge.stores.qdrant import create_qdrant_client
 
 
 DEFAULT_CAPABILITIES_DIR = Path("config") / "capabilities"
@@ -61,10 +66,67 @@ DEFAULT_CAPABILITIES = [
 
 
 class CapabilityRegistry:
-    def __init__(self, capabilities: list[CapabilityDefinition] | None = None):
+    def __init__(
+        self,
+        capabilities: list[CapabilityDefinition] | None = None,
+        qdrant_config: QdrantConfig | None = None,
+        qdrant_client: Any | None = None,
+        embedding_model: EmbeddingModel | None = None,
+    ):
         self.capabilities = capabilities or load_capability_definitions()
+        self.qdrant_config = qdrant_config or load_knowledge_config().qdrant
+        self._qdrant_client = qdrant_client
+        self._embedding_model = embedding_model
+        self._qdrant_failed = False
 
     def search(
+        self,
+        request: KnowledgeSearchRequest,
+        top_k: int = 5,
+    ) -> list[CapabilityCandidate]:
+        if self.qdrant_config.enabled and not self._qdrant_failed:
+            qdrant_candidates = self._search_qdrant(request, top_k=top_k)
+            if qdrant_candidates:
+                return qdrant_candidates
+
+        return self._search_keyword(request, top_k=top_k)
+
+    def _search_qdrant(
+        self,
+        request: KnowledgeSearchRequest,
+        top_k: int,
+    ) -> list[CapabilityCandidate]:
+        try:
+            client = self._get_qdrant_client()
+            embedding_model = self._get_embedding_model()
+            return search_capability_router(
+                client=client,
+                config=self.qdrant_config,
+                query=request.query,
+                capabilities=self.capabilities,
+                embedding_model=embedding_model,
+                top_k=top_k,
+                allow_network=request.allow_network,
+                sources=request.sources,
+            )
+        except Exception:
+            # Router search is an optimization. If local Qdrant is missing, the
+            # collection has not been indexed yet, or any backend error occurs,
+            # keep the knowledge tool usable by falling back to keyword routing.
+            self._qdrant_failed = True
+            return []
+
+    def _get_qdrant_client(self) -> Any:
+        if self._qdrant_client is None:
+            self._qdrant_client = create_qdrant_client(self.qdrant_config)
+        return self._qdrant_client
+
+    def _get_embedding_model(self) -> EmbeddingModel:
+        if self._embedding_model is None:
+            self._embedding_model = create_embedding_model(self.qdrant_config)
+        return self._embedding_model
+
+    def _search_keyword(
         self,
         request: KnowledgeSearchRequest,
         top_k: int = 5,
