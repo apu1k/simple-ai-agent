@@ -38,7 +38,10 @@ def iter_chat_history_records(root: Path) -> Iterable[dict[str, Any]]:
                         continue
 
                     content = str(parsed["display_content"]).strip()
-                    search_text = str(parsed["searchable_content"]).strip()
+                    # Embed only the readable conversation text, not the raw JSONL
+                    # record. The raw record contains metadata such as cwd/model/state
+                    # that is useful for provenance but harmful noise for semantic search.
+                    search_text = content
                     if not content or not search_text:
                         continue
 

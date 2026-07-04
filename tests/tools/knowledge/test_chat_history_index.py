@@ -94,6 +94,8 @@ def test_iter_chat_history_records_returns_readable_evidence_records(tmp_path):
     assert record["content"].startswith("User: Should Qdrant")
     assert "Assistant: Yes" in record["content"]
     assert "complete chat history" in record["embedding_text"]
+    assert record["embedding_text"] == record["content"]
+    assert '"state"' not in record["embedding_text"]
     assert record["metadata"]["session_id"] == "session-1"
 
 
