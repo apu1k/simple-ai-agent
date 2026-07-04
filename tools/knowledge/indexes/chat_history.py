@@ -14,6 +14,8 @@ from tools.knowledge.stores.qdrant import QdrantUnavailableError
 CHAT_HISTORY_SCHEMA_VERSION = 1
 DEFAULT_CHAT_HISTORY_SOURCE_KEY = "chat_history"
 BATCH_SIZE = 128
+CHAT_TURN_FILE_PREFIX = "turns_"
+CHAT_TURN_FILE_SUFFIX = ".jsonl"
 
 
 def iter_chat_history_records(root: Path) -> Iterable[dict[str, Any]]:
@@ -25,13 +27,16 @@ def iter_chat_history_records(root: Path) -> Iterable[dict[str, Any]]:
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
-        if path.suffix.lower() not in SEARCHABLE_SUFFIXES:
+        if not _is_chat_turn_file(path):
             continue
 
         try:
             with path.open("r", encoding="utf-8", errors="replace") as handle:
                 for line_number, line in enumerate(handle, start=1):
                     parsed = _parse_chat_line(line)
+                    if not _is_chat_turn_record(parsed):
+                        continue
+
                     content = str(parsed["display_content"]).strip()
                     search_text = str(parsed["searchable_content"]).strip()
                     if not content or not search_text:
@@ -270,6 +275,20 @@ def _point_score(point: Any) -> float:
 def _batches(items: list[dict[str, Any]], batch_size: int) -> Iterable[list[dict[str, Any]]]:
     for index in range(0, len(items), batch_size):
         yield items[index : index + batch_size]
+
+
+def _is_chat_turn_file(path: Path) -> bool:
+    name = path.name.lower()
+    return name.startswith(CHAT_TURN_FILE_PREFIX) and name.endswith(CHAT_TURN_FILE_SUFFIX)
+
+
+def _is_chat_turn_record(parsed: dict[str, Any]) -> bool:
+    metadata = parsed.get("metadata", {})
+    if not isinstance(metadata, dict):
+        return True
+
+    record_type = metadata.get("type")
+    return record_type in {None, "turn"}
 
 
 def _normalize_for_dedup(content: str) -> str:

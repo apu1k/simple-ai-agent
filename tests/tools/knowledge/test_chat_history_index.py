@@ -97,6 +97,34 @@ def test_iter_chat_history_records_returns_readable_evidence_records(tmp_path):
     assert record["metadata"]["session_id"] == "session-1"
 
 
+def test_iter_chat_history_records_ignores_session_metadata_files(tmp_path):
+    chat_dir = tmp_path / ".agent_chat_history"
+    chat_dir.mkdir(parents=True, exist_ok=True)
+    (chat_dir / "sessions.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "session_created",
+                "session_id": "session-1",
+                "content": json.dumps(
+                    {
+                        "type": "session_created",
+                        "title": "not a real chat turn",
+                    }
+                ),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    turns_path = write_chat_turn(chat_dir, filename="turns_original.jsonl")
+
+    records = list(iter_chat_history_records(chat_dir))
+
+    assert len(records) == 1
+    assert records[0]["path"] == str(turns_path)
+    assert records[0]["metadata"]["type"] == "turn"
+
+
 def test_build_chat_history_points_uses_evidence_collection_payload(tmp_path):
     chat_dir = tmp_path / ".agent_chat_history"
     path = write_chat_turn(chat_dir)
