@@ -1,0 +1,276 @@
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Any, Iterable
+from uuid import NAMESPACE_URL, uuid5
+
+from tools.knowledge.config import QdrantConfig, QdrantDataCollectionConfig
+from tools.knowledge.embeddings.base import EmbeddingModel
+from tools.knowledge.models import EvidenceItem
+from tools.knowledge.stores.local import SEARCHABLE_SUFFIXES, _parse_chat_line
+from tools.knowledge.stores.qdrant import QdrantUnavailableError
+
+CHAT_HISTORY_SCHEMA_VERSION = 1
+DEFAULT_CHAT_HISTORY_SOURCE_KEY = "chat_history"
+BATCH_SIZE = 128
+
+
+def iter_chat_history_records(root: Path) -> Iterable[dict[str, Any]]:
+    """Yield parsed chat-history records suitable for evidence indexing."""
+    if not root.exists() or not root.is_dir():
+        return
+
+    seen_content: set[str] = set()
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in SEARCHABLE_SUFFIXES:
+            continue
+
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as handle:
+                for line_number, line in enumerate(handle, start=1):
+                    parsed = _parse_chat_line(line)
+                    content = str(parsed["display_content"]).strip()
+                    search_text = str(parsed["searchable_content"]).strip()
+                    if not content or not search_text:
+                        continue
+
+                    dedupe_key = _normalize_for_dedup(content)
+                    if dedupe_key in seen_content:
+                        continue
+                    seen_content.add(dedupe_key)
+
+                    yield {
+                        "path": str(path),
+                        "line": line_number,
+                        "title": f"{path}:{line_number}",
+                        "content": content,
+                        "embedding_text": search_text,
+                        "metadata": parsed["metadata"],
+                    }
+        except OSError:
+            continue
+
+
+def chat_history_point_id(path: str, line: int) -> str:
+    """Return a stable Qdrant-compatible UUID for one chat-history record."""
+    return str(uuid5(NAMESPACE_URL, f"ai-agent:knowledge:chat-history:{path}:{line}"))
+
+
+def chat_history_payload(
+    record: dict[str, Any],
+    collection: QdrantDataCollectionConfig,
+) -> dict[str, Any]:
+    """Return payload metadata for a normal chat-history evidence collection."""
+    return {
+        "schema_version": CHAT_HISTORY_SCHEMA_VERSION,
+        "index_kind": "evidence_collection",
+        "source_key": collection.key,
+        "source_type": collection.source_type,
+        "collection": collection.collection,
+        "type": "chat_match",
+        "source": "chat_history",
+        "title": record["title"],
+        "path": record["path"],
+        "line": record["line"],
+        "content": record["content"],
+        "metadata": record.get("metadata", {}),
+    }
+
+
+def build_chat_history_points(
+    root: Path,
+    collection: QdrantDataCollectionConfig,
+    embedding_model: EmbeddingModel,
+) -> list[dict[str, Any]]:
+    """Build vector points for the chat-history evidence collection."""
+    points: list[dict[str, Any]] = []
+    for record in iter_chat_history_records(root):
+        points.append(
+            {
+                "id": chat_history_point_id(record["path"], int(record["line"])),
+                "vector": embedding_model.embed_text(record["embedding_text"]),
+                "payload": chat_history_payload(record, collection),
+            }
+        )
+    return points
+
+
+def ensure_evidence_collection(
+    client: Any,
+    collection_name: str,
+    vector_size: int,
+    distance: str,
+) -> None:
+    """Create a normal evidence collection if it is missing."""
+    try:
+        from qdrant_client import models
+    except ImportError as exc:  # pragma: no cover - depends on local env
+        raise QdrantUnavailableError(
+            "qdrant-client is required to create Qdrant collections."
+        ) from exc
+
+    collection_exists = getattr(client, "collection_exists", None)
+    if collection_exists is not None and collection_exists(collection_name):
+        return
+
+    if collection_exists is None:
+        try:
+            client.get_collection(collection_name)
+            return
+        except Exception:
+            pass
+
+    client.create_collection(
+        collection_name=collection_name,
+        vectors_config=models.VectorParams(
+            size=vector_size,
+            distance=_qdrant_distance(models, distance),
+        ),
+    )
+
+
+def index_chat_history_collection(
+    client: Any,
+    config: QdrantConfig,
+    root: Path,
+    embedding_model: EmbeddingModel,
+    source_key: str = DEFAULT_CHAT_HISTORY_SOURCE_KEY,
+) -> int:
+    """Index local chat history into its normal Qdrant evidence collection."""
+    collection = config.data_collections.get(source_key)
+    if collection is None:
+        raise ValueError(f"Missing Qdrant data collection config: {source_key}")
+
+    ensure_evidence_collection(
+        client=client,
+        collection_name=collection.collection,
+        vector_size=config.vector_size,
+        distance=config.distance,
+    )
+
+    points = build_chat_history_points(root, collection, embedding_model)
+    for batch in _batches(points, BATCH_SIZE):
+        client.upsert(
+            collection_name=collection.collection,
+            points=[_to_qdrant_point(point) for point in batch],
+        )
+    return len(points)
+
+
+def search_chat_history_collection(
+    client: Any,
+    config: QdrantConfig,
+    query: str,
+    embedding_model: EmbeddingModel,
+    limit: int = 10,
+    source_key: str = DEFAULT_CHAT_HISTORY_SOURCE_KEY,
+) -> list[EvidenceItem]:
+    """Search the chat-history evidence collection and return evidence items."""
+    collection = config.data_collections.get(source_key)
+    if collection is None:
+        raise ValueError(f"Missing Qdrant data collection config: {source_key}")
+
+    raw_results = _query_points(
+        client=client,
+        collection_name=collection.collection,
+        query_vector=embedding_model.embed_text(query),
+        limit=max(1, int(limit)),
+    )
+
+    items: list[EvidenceItem] = []
+    for point in raw_results:
+        payload = _point_payload(point)
+        if payload.get("index_kind") != "evidence_collection":
+            continue
+        if payload.get("source_key") != source_key:
+            continue
+
+        metadata = dict(payload.get("metadata", {}))
+        metadata.update(
+            {
+                "path": payload.get("path"),
+                "line": payload.get("line"),
+                "score": _point_score(point),
+                "source_key": payload.get("source_key"),
+                "source_type": payload.get("source_type"),
+            }
+        )
+        items.append(
+            EvidenceItem(
+                type=str(payload.get("type", "chat_match")),
+                source=str(payload.get("source", "chat_history")),
+                title=payload.get("title"),
+                content=str(payload.get("content", "")),
+                confidence=round(max(0.0, min(_point_score(point), 1.0)), 4),
+                metadata=metadata,
+            )
+        )
+
+    return items
+
+
+def _qdrant_distance(models: Any, distance: str) -> Any:
+    normalized = distance.strip().lower()
+    if normalized == "dot":
+        return models.Distance.DOT
+    if normalized in {"euclid", "euclidean"}:
+        return models.Distance.EUCLID
+    return models.Distance.COSINE
+
+
+def _to_qdrant_point(point: dict[str, Any]) -> Any:
+    try:
+        from qdrant_client.models import PointStruct
+    except ImportError:
+        return point
+
+    return PointStruct(
+        id=point["id"],
+        vector=point["vector"],
+        payload=point["payload"],
+    )
+
+
+def _query_points(
+    client: Any,
+    collection_name: str,
+    query_vector: list[float],
+    limit: int,
+) -> list[Any]:
+    query_points = getattr(client, "query_points", None)
+    if query_points is not None:
+        result = query_points(
+            collection_name=collection_name,
+            query=query_vector,
+            limit=limit,
+            with_payload=True,
+        )
+        return list(getattr(result, "points", result))
+
+    raise QdrantUnavailableError("Qdrant client does not provide query_points().")
+
+
+def _point_payload(point: Any) -> dict[str, Any]:
+    if isinstance(point, dict):
+        payload = point.get("payload", {})
+    else:
+        payload = getattr(point, "payload", {})
+    return payload if isinstance(payload, dict) else {}
+
+
+def _point_score(point: Any) -> float:
+    if isinstance(point, dict):
+        return float(point.get("score", 0.0))
+    return float(getattr(point, "score", 0.0))
+
+
+def _batches(items: list[dict[str, Any]], batch_size: int) -> Iterable[list[dict[str, Any]]]:
+    for index in range(0, len(items), batch_size):
+        yield items[index : index + batch_size]
+
+
+def _normalize_for_dedup(content: str) -> str:
+    return re.sub(r"\s+", " ", content).strip().lower()
