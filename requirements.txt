@@ -7,3 +7,4 @@ textual-dev
 pymupdf4llm
 PyYAML
 qdrant-client
+sentence-transformers

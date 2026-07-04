@@ -22,9 +22,20 @@ qdrant:
   capability_collection: agent_capability_router
 
   # Default embedding settings. The hashing backend is deterministic and
-  # dependency-free for tests/dev. Later we can switch to a fully local model
-  # backend such as BGE-M3 without changing the Qdrant pipeline.
+  # dependency-free for tests/dev. For real local semantic search, switch to:
+  #
+  # embedding_backend: sentence_transformers
+  # embedding_model: C:/models/bge-small-en-v1.5
+  # embedding_device: cpu
+  # embedding_local_files_only: true
+  # vector_size: 384
+  #
+  # Keep embedding_local_files_only=true to avoid accidental model downloads.
   embedding_backend: hashing
+  embedding_model: ""
+  embedding_device: cpu
+  embedding_local_files_only: true
+  embedding_batch_size: 32
   vector_size: 1024
   distance: Cosine
 

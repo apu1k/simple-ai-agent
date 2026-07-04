@@ -15,8 +15,12 @@ def test_load_knowledge_config_with_local_qdrant_router_and_data_collections(tmp
                 "  url: http://localhost:6333",
                 "  timeout_seconds: 3.5",
                 "  capability_collection: test_capability_router",
-                "  embedding_backend: hashing",
-                "  vector_size: 1024",
+                "  embedding_backend: sentence_transformers",
+                "  embedding_model: C:/models/bge-small-en-v1.5",
+                "  embedding_device: cpu",
+                "  embedding_local_files_only: true",
+                "  embedding_batch_size: 16",
+                "  vector_size: 384",
                 "  distance: Cosine",
                 "  data_collections:",
                 "    chat_history:",
@@ -37,8 +41,12 @@ def test_load_knowledge_config_with_local_qdrant_router_and_data_collections(tmp
     assert config.qdrant.url == "http://localhost:6333"
     assert config.qdrant.timeout_seconds == 3.5
     assert config.qdrant.capability_collection == "test_capability_router"
-    assert config.qdrant.embedding_backend == "hashing"
-    assert config.qdrant.vector_size == 1024
+    assert config.qdrant.embedding_backend == "sentence_transformers"
+    assert config.qdrant.embedding_model == "C:/models/bge-small-en-v1.5"
+    assert config.qdrant.embedding_device == "cpu"
+    assert config.qdrant.embedding_local_files_only is True
+    assert config.qdrant.embedding_batch_size == 16
+    assert config.qdrant.vector_size == 384
     assert config.qdrant.distance == "Cosine"
     assert config.qdrant.data_collections["chat_history"].collection == "test_chat_history"
     assert config.qdrant.data_collections["chat_history"].source_type == "chats"

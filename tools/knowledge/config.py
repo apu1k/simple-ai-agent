@@ -41,6 +41,10 @@ class QdrantConfig:
     timeout_seconds: float = 10.0
     capability_collection: str = "agent_capability_router"
     embedding_backend: str = "hashing"
+    embedding_model: str = ""
+    embedding_device: str = "cpu"
+    embedding_local_files_only: bool = True
+    embedding_batch_size: int = 32
     vector_size: int = 1024
     distance: str = "Cosine"
     data_collections: dict[str, QdrantDataCollectionConfig] = field(default_factory=dict)
@@ -85,6 +89,10 @@ def _parse_qdrant_config(data: Any) -> QdrantConfig:
             data.get("capability_collection", "agent_capability_router")
         ),
         embedding_backend=str(data.get("embedding_backend", "hashing")),
+        embedding_model=str(data.get("embedding_model", "")),
+        embedding_device=str(data.get("embedding_device", "cpu")),
+        embedding_local_files_only=bool(data.get("embedding_local_files_only", True)),
+        embedding_batch_size=int(data.get("embedding_batch_size", 32)),
         vector_size=int(data.get("vector_size", 1024)),
         distance=str(data.get("distance", "Cosine")),
         data_collections=_parse_data_collections(data.get("data_collections", {})),
