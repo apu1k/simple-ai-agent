@@ -3,7 +3,7 @@ from __future__ import annotations
 from uuid import NAMESPACE_URL, uuid5
 
 from tools.knowledge.config import QdrantDataCollectionConfig
-from tools.knowledge.indexes import capability_embedding_text
+from tools.knowledge.indexes.capability_text import capability_embedding_text
 from tools.knowledge.models import CapabilityDefinition
 
 

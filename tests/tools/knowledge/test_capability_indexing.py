@@ -133,3 +133,42 @@ def test_index_script_writes_json_preview(tmp_path):
     data = json.loads(output_path.read_text(encoding="utf-8"))
     assert data[0]["id"] == "search.example"
     assert "Capability: Search Example" in data[0]["embedding_text"]
+
+
+def test_index_script_write_qdrant_is_opt_in(tmp_path, monkeypatch):
+    module = load_index_script_module()
+    capabilities_dir = tmp_path / "capabilities"
+    capabilities_dir.mkdir()
+    output_path = tmp_path / "capabilities.json"
+    (capabilities_dir / "search_example.yaml").write_text(
+        "\n".join(
+            [
+                "id: search.example",
+                "name: Search Example",
+                "description: Searches example data.",
+                "handler: tests.example.SearchExampleCapability",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    called = False
+
+    def fail_if_called(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("Qdrant should not be used without --write-qdrant")
+
+    monkeypatch.setattr(module, "create_qdrant_client", fail_if_called)
+
+    return_code = module.main(
+        [
+            "--capabilities-dir",
+            str(capabilities_dir),
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert return_code == 0
+    assert called is False
