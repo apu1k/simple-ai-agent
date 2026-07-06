@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 from uuid import NAMESPACE_URL, uuid5
 
 from tools.knowledge.config import QdrantConfig, QdrantDataCollectionConfig
@@ -94,16 +94,26 @@ def build_chat_history_points(
     embedding_model: EmbeddingModel,
 ) -> list[dict[str, Any]]:
     """Build vector points for the chat-history evidence collection."""
-    points: list[dict[str, Any]] = []
-    for record in iter_chat_history_records(root):
-        points.append(
-            {
-                "id": chat_history_point_id(record["path"], int(record["line"])),
-                "vector": embedding_model.embed_text(record["embedding_text"]),
-                "payload": chat_history_payload(record, collection),
-            }
-        )
-    return points
+    records = list(iter_chat_history_records(root))
+    return _build_chat_history_points_for_records(records, collection, embedding_model)
+
+
+def _build_chat_history_points_for_records(
+    records: list[dict[str, Any]],
+    collection: QdrantDataCollectionConfig,
+    embedding_model: EmbeddingModel,
+) -> list[dict[str, Any]]:
+    vectors = embedding_model.embed_texts(
+        [str(record["embedding_text"]) for record in records]
+    )
+    return [
+        {
+            "id": chat_history_point_id(record["path"], int(record["line"])),
+            "vector": vector,
+            "payload": chat_history_payload(record, collection),
+        }
+        for record, vector in zip(records, vectors, strict=True)
+    ]
 
 
 def ensure_evidence_collection(
@@ -146,6 +156,7 @@ def index_chat_history_collection(
     root: Path,
     embedding_model: EmbeddingModel,
     source_key: str = DEFAULT_CHAT_HISTORY_SOURCE_KEY,
+    progress: Callable[[int], None] | None = None,
 ) -> int:
     """Index local chat history into its normal Qdrant evidence collection."""
     collection = config.data_collections.get(source_key)
@@ -159,13 +170,23 @@ def index_chat_history_collection(
         distance=config.distance,
     )
 
-    points = build_chat_history_points(root, collection, embedding_model)
-    for batch in _batches(points, BATCH_SIZE):
+    count = 0
+    for record_batch in _batches(list(iter_chat_history_records(root)), BATCH_SIZE):
+        points = _build_chat_history_points_for_records(
+            record_batch,
+            collection,
+            embedding_model,
+        )
+        if not points:
+            continue
         client.upsert(
             collection_name=collection.collection,
-            points=[_to_qdrant_point(point) for point in batch],
+            points=[_to_qdrant_point(point) for point in points],
         )
-    return len(points)
+        count += len(points)
+        if progress is not None:
+            progress(count)
+    return count
 
 
 def search_chat_history_collection(

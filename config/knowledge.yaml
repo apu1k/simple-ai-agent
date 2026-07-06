@@ -9,7 +9,7 @@
 # under runtime/knowledge/qdrant and does not require Qdrant Cloud or an API key.
 
 qdrant:
-  enabled: false
+  enabled: true
 
   # local = embedded/local qdrant-client storage at local_path, no HTTP service.
   # http = connect to a locally running Qdrant server via url.
@@ -21,21 +21,15 @@ qdrant:
   # Router index for selecting capability definitions from config/capabilities/*.yaml.
   capability_collection: agent_capability_router
 
-  # Default embedding settings. The hashing backend is deterministic and
-  # dependency-free for tests/dev. For real local semantic search, switch to:
-  #
-  # embedding_backend: sentence_transformers
-  # embedding_model: C:/models/bge-small-en-v1.5
-  # embedding_device: cpu
-  # embedding_local_files_only: true
-  # vector_size: 384
-  #
-  # Keep embedding_local_files_only=true to avoid accidental model downloads.
-  embedding_backend: hashing
-  embedding_model: ""
+  # Default embedding settings. BGE-M3 is installed locally and used with
+  # embedding_local_files_only=true to avoid accidental model downloads.
+  # BGE-M3 produces 1024-dimensional vectors and is a good multilingual
+  # German/English retrieval model for chats, memories, docs, and capability routing.
+  embedding_backend: sentence_transformers
+  embedding_model: C:/models/bge-m3
   embedding_device: cpu
   embedding_local_files_only: true
-  embedding_batch_size: 32
+  embedding_batch_size: 16
   vector_size: 1024
   distance: Cosine
 

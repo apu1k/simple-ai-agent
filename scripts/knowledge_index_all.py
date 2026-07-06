@@ -59,23 +59,45 @@ def write_all_indexes(
 
     capabilities = load_capability_definitions(capabilities_dir)
     ensure_capability_router_collection(client, config)
+    print("Indexing capability router...", file=sys.stderr, flush=True)
     capability_count = index_capability_router(
         client=client,
         config=config,
         capabilities=capabilities,
         embedding_model=embedding_model,
     )
+    print(f"Indexed capability router: {capability_count}", file=sys.stderr, flush=True)
+
+    print("Indexing chat history...", file=sys.stderr, flush=True)
     chat_history_count = index_chat_history_collection(
         client=client,
         config=config,
         root=chat_history_dir,
         embedding_model=embedding_model,
+        progress=lambda count: print(
+            f"Indexed chat history records: {count}",
+            file=sys.stderr,
+            flush=True,
+        ),
     )
+    print(f"Indexed chat history total: {chat_history_count}", file=sys.stderr, flush=True)
+
+    print("Indexing long-term memory...", file=sys.stderr, flush=True)
     long_term_memory_count = index_long_term_memory_collection(
         client=client,
         config=config,
         path=memory_path,
         embedding_model=embedding_model,
+        progress=lambda count: print(
+            f"Indexed long-term memory batch: {count}",
+            file=sys.stderr,
+            flush=True,
+        ),
+    )
+    print(
+        f"Indexed long-term memory total: {long_term_memory_count}",
+        file=sys.stderr,
+        flush=True,
     )
 
     return {

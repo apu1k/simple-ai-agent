@@ -46,3 +46,6 @@ logs
 
 # temporary logs
 textual.log
+
+# Qdrant
+runtime/knowledge/qdrant/

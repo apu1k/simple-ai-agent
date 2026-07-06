@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 from uuid import NAMESPACE_URL, uuid5
 
 from tools.knowledge.config import QdrantConfig, QdrantDataCollectionConfig
@@ -81,16 +81,18 @@ def build_long_term_memory_points(
     embedding_model: EmbeddingModel,
 ) -> list[dict[str, Any]]:
     """Build vector points for the long-term-memory evidence collection."""
-    points: list[dict[str, Any]] = []
-    for record in iter_long_term_memory_records(path):
-        points.append(
-            {
-                "id": memory_point_id(record["path"], int(record["line"])),
-                "vector": embedding_model.embed_text(record["embedding_text"]),
-                "payload": memory_payload(record, collection),
-            }
-        )
-    return points
+    records = list(iter_long_term_memory_records(path))
+    vectors = embedding_model.embed_texts(
+        [str(record["embedding_text"]) for record in records]
+    )
+    return [
+        {
+            "id": memory_point_id(record["path"], int(record["line"])),
+            "vector": vector,
+            "payload": memory_payload(record, collection),
+        }
+        for record, vector in zip(records, vectors, strict=True)
+    ]
 
 
 def index_long_term_memory_collection(
@@ -99,6 +101,7 @@ def index_long_term_memory_collection(
     path: Path,
     embedding_model: EmbeddingModel,
     source_key: str = DEFAULT_MEMORY_SOURCE_KEY,
+    progress: Callable[[int], None] | None = None,
 ) -> int:
     """Index local long-term memory into its normal Qdrant evidence collection."""
     collection = config.data_collections.get(source_key)
@@ -118,6 +121,8 @@ def index_long_term_memory_collection(
             collection_name=collection.collection,
             points=[_to_qdrant_point(point) for point in batch],
         )
+        if progress is not None:
+            progress(len(batch))
     return len(points)
 
 
