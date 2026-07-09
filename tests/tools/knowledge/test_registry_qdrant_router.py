@@ -70,6 +70,9 @@ def test_registry_uses_qdrant_router_when_enabled():
     assert client.queried is True
     assert [candidate.capability.id for candidate in candidates] == ["search.recent_chats"]
     assert candidates[0].reason == "Matched by local Qdrant capability router"
+    assert registry.diagnostics()["qdrant_attempted"] is True
+    assert registry.diagnostics()["qdrant_used"] is True
+    assert registry.diagnostics()["fallback_used"] is False
 
 
 def test_registry_falls_back_to_keyword_router_when_qdrant_fails():
@@ -91,6 +94,10 @@ def test_registry_falls_back_to_keyword_router_when_qdrant_fails():
         "search.long_term_memory"
     ]
     assert candidates[0].reason.startswith("Matched terms:")
+    assert registry.diagnostics()["qdrant_attempted"] is True
+    assert registry.diagnostics()["qdrant_used"] is False
+    assert registry.diagnostics()["fallback_used"] is True
+    assert registry.diagnostics()["qdrant_error"] == "missing collection"
 
 
 def test_registry_does_not_use_qdrant_router_when_disabled():

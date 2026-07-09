@@ -75,6 +75,9 @@ def test_recent_chats_capability_uses_qdrant_when_enabled(tmp_path):
     assert bundle.items[0].content == "User: Qdrant evidence search"
     assert bundle.items[0].metadata["source_key"] == "chat_history"
     assert bundle.confidence == 0.86
+    assert capability.diagnostics()["qdrant_attempted"] is True
+    assert capability.diagnostics()["qdrant_used"] is True
+    assert capability.diagnostics()["fallback_used"] is False
 
 
 def test_recent_chats_capability_falls_back_to_keyword_when_qdrant_fails(tmp_path):
@@ -97,6 +100,10 @@ def test_recent_chats_capability_falls_back_to_keyword_when_qdrant_fails(tmp_pat
     assert len(bundle.items) == 1
     assert "Qdrant fallback question" in bundle.items[0].content
     assert bundle.items[0].metadata["path"].endswith("turns_original.jsonl")
+    assert capability.diagnostics()["qdrant_attempted"] is True
+    assert capability.diagnostics()["qdrant_used"] is False
+    assert capability.diagnostics()["fallback_used"] is True
+    assert capability.diagnostics()["qdrant_error"] == "missing collection"
 
 
 def test_recent_chats_capability_does_not_use_qdrant_when_disabled(tmp_path):

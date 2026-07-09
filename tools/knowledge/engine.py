@@ -34,6 +34,7 @@ class KnowledgeEngine:
             top_k=max(5, int(request.max_capabilities)),
         )
         timings_ms["registry_search"] = _elapsed_ms(started)
+        registry_diagnostics = self.registry.diagnostics()
 
         started = perf_counter()
         plan = self.planner.plan(request, candidates)
@@ -41,6 +42,7 @@ class KnowledgeEngine:
 
         bundles: list[EvidenceBundle] = []
         capability_timings: dict[str, int] = {}
+        capability_diagnostics: dict[str, dict[str, object]] = {}
         for candidate in plan.candidates:
             started = perf_counter()
             try:
@@ -62,6 +64,7 @@ class KnowledgeEngine:
                     )
                 )
             capability_timings[candidate.capability.id] = latency_ms
+            capability_diagnostics[candidate.capability.id] = self.executor.diagnostics(candidate)
 
         timings_ms["capability_execution_total"] = sum(capability_timings.values())
         timings_ms["total"] = _elapsed_ms(total_started)
@@ -72,6 +75,10 @@ class KnowledgeEngine:
                 "candidate_count": len(candidates),
                 "planned_capability_count": len(plan.candidates),
                 "candidates": [candidate.to_dict() for candidate in candidates],
+                "qdrant": {
+                    "router": registry_diagnostics,
+                    "capabilities": capability_diagnostics,
+                },
                 "timings_ms": timings_ms,
                 "capability_timings_ms": capability_timings,
             }

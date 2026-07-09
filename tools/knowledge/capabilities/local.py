@@ -24,14 +24,22 @@ class SearchRecentChatsCapability:
         self._qdrant_client = qdrant_client
         self._embedding_model = embedding_model
         self._qdrant_failed = False
+        self._diagnostics: dict[str, Any] = _initial_diagnostics(self.qdrant_config.enabled)
 
     def search(self, request: KnowledgeSearchRequest) -> EvidenceBundle:
+        self._diagnostics = _initial_diagnostics(self.qdrant_config.enabled)
         if self.qdrant_config.enabled and not self._qdrant_failed:
+            self._diagnostics["qdrant_attempted"] = True
             items = self._search_qdrant(request)
             if items:
+                self._diagnostics["qdrant_used"] = True
                 return _bundle_chat_items(items)
 
+        self._diagnostics["fallback_used"] = True
         return _search_local_chat_history(request)
+
+    def diagnostics(self) -> dict[str, Any]:
+        return dict(self._diagnostics)
 
     def _search_qdrant(self, request: KnowledgeSearchRequest) -> list[EvidenceItem]:
         try:
@@ -42,9 +50,10 @@ class SearchRecentChatsCapability:
                 embedding_model=self._get_embedding_model(),
                 limit=int(request.max_results),
             )
-        except Exception:
+        except Exception as exc:
             # The vector collection may not be indexed yet. Keep the capability
             # useful by falling back to the local keyword store.
+            self._diagnostics["qdrant_error"] = str(exc)
             self._qdrant_failed = True
             return []
 
@@ -105,14 +114,22 @@ class SearchLongTermMemoryCapability:
         self._qdrant_client = qdrant_client
         self._embedding_model = embedding_model
         self._qdrant_failed = False
+        self._diagnostics: dict[str, Any] = _initial_diagnostics(self.qdrant_config.enabled)
 
     def search(self, request: KnowledgeSearchRequest) -> EvidenceBundle:
+        self._diagnostics = _initial_diagnostics(self.qdrant_config.enabled)
         if self.qdrant_config.enabled and not self._qdrant_failed:
+            self._diagnostics["qdrant_attempted"] = True
             items = self._search_qdrant(request)
             if items:
+                self._diagnostics["qdrant_used"] = True
                 return _bundle_memory_items(items)
 
+        self._diagnostics["fallback_used"] = True
         return _search_local_long_term_memory(request)
+
+    def diagnostics(self) -> dict[str, Any]:
+        return dict(self._diagnostics)
 
     def _search_qdrant(self, request: KnowledgeSearchRequest) -> list[EvidenceItem]:
         try:
@@ -123,9 +140,10 @@ class SearchLongTermMemoryCapability:
                 embedding_model=self._get_embedding_model(),
                 limit=int(request.max_results),
             )
-        except Exception:
+        except Exception as exc:
             # The vector collection may not be indexed yet. Keep the capability
             # useful by falling back to the local keyword store.
+            self._diagnostics["qdrant_error"] = str(exc)
             self._qdrant_failed = True
             return []
 
@@ -173,3 +191,13 @@ def _bundle_memory_items(items: list[EvidenceItem]) -> EvidenceBundle:
         confidence=max((item.confidence for item in items), default=0.0),
         items=items,
     )
+
+
+def _initial_diagnostics(qdrant_enabled: bool) -> dict[str, Any]:
+    return {
+        "qdrant_enabled": qdrant_enabled,
+        "qdrant_attempted": False,
+        "qdrant_used": False,
+        "fallback_used": False,
+        "qdrant_error": None,
+    }

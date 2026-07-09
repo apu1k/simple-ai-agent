@@ -78,18 +78,26 @@ class CapabilityRegistry:
         self._qdrant_client = qdrant_client
         self._embedding_model = embedding_model
         self._qdrant_failed = False
+        self._diagnostics: dict[str, Any] = _initial_diagnostics(self.qdrant_config.enabled)
 
     def search(
         self,
         request: KnowledgeSearchRequest,
         top_k: int = 5,
     ) -> list[CapabilityCandidate]:
+        self._diagnostics = _initial_diagnostics(self.qdrant_config.enabled)
         if self.qdrant_config.enabled and not self._qdrant_failed:
+            self._diagnostics["qdrant_attempted"] = True
             qdrant_candidates = self._search_qdrant(request, top_k=top_k)
             if qdrant_candidates:
+                self._diagnostics["qdrant_used"] = True
                 return qdrant_candidates
 
+        self._diagnostics["fallback_used"] = True
         return self._search_keyword(request, top_k=top_k)
+
+    def diagnostics(self) -> dict[str, Any]:
+        return dict(self._diagnostics)
 
     def _search_qdrant(
         self,
@@ -109,10 +117,11 @@ class CapabilityRegistry:
                 allow_network=request.allow_network,
                 sources=request.sources,
             )
-        except Exception:
+        except Exception as exc:
             # Router search is an optimization. If local Qdrant is missing, the
             # collection has not been indexed yet, or any backend error occurs,
             # keep the knowledge tool usable by falling back to keyword routing.
+            self._diagnostics["qdrant_error"] = str(exc)
             self._qdrant_failed = True
             return []
 
@@ -263,4 +272,14 @@ def _tokens(text: str) -> set[str]:
         token
         for token in re.findall(r"[a-zA-Z0-9_äöüÄÖÜß-]+", text.lower())
         if len(token) >= 2
+    }
+
+
+def _initial_diagnostics(qdrant_enabled: bool) -> dict[str, Any]:
+    return {
+        "qdrant_enabled": qdrant_enabled,
+        "qdrant_attempted": False,
+        "qdrant_used": False,
+        "fallback_used": False,
+        "qdrant_error": None,
     }

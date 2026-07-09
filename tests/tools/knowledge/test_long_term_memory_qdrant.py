@@ -75,6 +75,9 @@ def test_long_term_memory_capability_uses_qdrant_when_enabled(tmp_path):
     assert bundle.items[0].content == "The user prefers local semantic search."
     assert bundle.items[0].metadata["source_key"] == "long_term_memory"
     assert bundle.confidence == 0.88
+    assert capability.diagnostics()["qdrant_attempted"] is True
+    assert capability.diagnostics()["qdrant_used"] is True
+    assert capability.diagnostics()["fallback_used"] is False
 
 
 def test_long_term_memory_capability_falls_back_to_keyword_when_qdrant_fails(tmp_path):
@@ -97,6 +100,10 @@ def test_long_term_memory_capability_falls_back_to_keyword_when_qdrant_fails(tmp
     assert len(bundle.items) == 1
     assert bundle.items[0].content == "Qdrant fallback memory"
     assert bundle.items[0].metadata["path"].endswith("memory.jsonl")
+    assert capability.diagnostics()["qdrant_attempted"] is True
+    assert capability.diagnostics()["qdrant_used"] is False
+    assert capability.diagnostics()["fallback_used"] is True
+    assert capability.diagnostics()["qdrant_error"] == "missing collection"
 
 
 def test_long_term_memory_capability_does_not_use_qdrant_when_disabled(tmp_path):
