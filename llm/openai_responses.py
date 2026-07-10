@@ -26,6 +26,8 @@ class OpenAIResponsesClient:
             self._client = OpenAI(api_key=provider.api_key)
         self._model = provider.default_model
         self._last_response_id: str | None = None
+        self._last_tools: list[dict] | None = None
+        self._last_tool_choice: str | dict | None = None
 
     @property
     def supports_native_tools(self) -> bool:
@@ -45,6 +47,8 @@ class OpenAIResponsesClient:
     def reset_conversation(self) -> None:
         """Clear stateful Responses API continuation state."""
         self._last_response_id = None
+        self._last_tools = None
+        self._last_tool_choice = None
 
     def chat(
         self,
@@ -83,6 +87,12 @@ class OpenAIResponsesClient:
         else:
             kwargs["input"] = input_messages
         
+        # Cache the latest native-tool configuration so Responses tool-output
+        # continuations can resend the same schemas. Responses API calls that use
+        # previous_response_id should not rely on provider-side memory of tool schemas.
+        self._last_tools = tools
+        self._last_tool_choice = tool_choice
+
         # Add native tool parameters if provided
         if tools is not None:
             kwargs["tools"] = tools
@@ -93,6 +103,7 @@ class OpenAIResponsesClient:
         # so tool results can be submitted back with the response ID
         kwargs["store"] = True
         
+        self._debug_log_response_request_tools("chat", kwargs)
         response = self._client.responses.create(**kwargs)
         self._last_response_id = response.id
         return self._parse_response(response)
@@ -111,15 +122,60 @@ class OpenAIResponsesClient:
             for t in tool_outputs
         ]
 
-        response = self._client.responses.create(
-            model=self._model,
-            previous_response_id=self._last_response_id,
-            input=input_items,
-            timeout=REQUEST_TIMEOUT_SECONDS,
-            store=True,
-        )
+        kwargs = {
+            "model": self._model,
+            "previous_response_id": self._last_response_id,
+            "input": input_items,
+            "timeout": REQUEST_TIMEOUT_SECONDS,
+            "store": True,
+        }
+
+        # Resend the same native-tool configuration used by chat(). This is
+        # important for multi-step tool chains such as:
+        # search/read -> propose_file_edit.
+        if self._last_tools is not None:
+            kwargs["tools"] = self._last_tools
+        if self._last_tool_choice is not None:
+            kwargs["tool_choice"] = self._last_tool_choice
+
+        self._debug_log_response_request_tools("submit_tool_outputs", kwargs)
+        response = self._client.responses.create(**kwargs)
         self._last_response_id = response.id
         return self._parse_response(response)
+
+    def _debug_log_response_request_tools(self, label: str, kwargs: dict) -> None:
+        """Log the actual tool schemas sent to the Responses API request."""
+        if not DEBUG_LOGS:
+            return
+
+        tools = kwargs.get("tools") or []
+        names = []
+
+        for item in tools:
+            if not isinstance(item, dict):
+                continue
+
+            if item.get("type") != "function":
+                continue
+
+            # Responses schema uses top-level name.
+            if isinstance(item.get("name"), str):
+                names.append(item["name"])
+                continue
+
+            # Chat Completions schema uses nested function.name. Include this
+            # defensively so diagnostics are useful if the wrong schema leaks in.
+            function = item.get("function")
+            if isinstance(function, dict) and isinstance(function.get("name"), str):
+                names.append(function["name"])
+
+        print(
+            f"[debug] RESPONSES REQUEST {label}: "
+            f"previous_response_id={bool(kwargs.get('previous_response_id'))} "
+            f"tool_count={len(tools)} "
+            f"tools={names}",
+            file=sys.stderr,
+        )
 
     def _parse_response(self, response) -> str | LLMResponse:
         """Parse Responses API output into unified LLMResponse/string."""

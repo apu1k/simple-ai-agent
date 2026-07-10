@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from llm.base import NativeToolOutput
 from llm.openai_responses import OpenAIResponsesClient
 from llm.providers import ProviderConfig
 
@@ -80,4 +81,95 @@ def test_responses_reset_conversation_clears_previous_response_id():
 
     second_kwargs = fake_openai.responses.calls[1]
     assert "previous_response_id" not in second_kwargs
+    assert second_kwargs["input"] == [{"role": "user", "content": "fresh"}]
+
+def test_responses_submit_tool_outputs_resends_cached_tools_and_tool_choice():
+    client = OpenAIResponsesClient(_provider())
+    fake_openai = _FakeOpenAIClient()
+    client._client = fake_openai
+
+    tools = [
+        {
+            "type": "function",
+            "name": "propose_file_edit",
+            "description": "Propose a file edit.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "old": {"type": "string"},
+                    "new": {"type": "string"},
+                },
+                "required": ["path", "old", "new"],
+            },
+        }
+    ]
+
+    client.chat(
+        [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "first"},
+        ],
+        tools=tools,
+        tool_choice="auto",
+    )
+
+    client.submit_tool_outputs([
+        NativeToolOutput(call_id="call_1", output="tool result")
+    ])
+
+    first_kwargs = fake_openai.responses.calls[0]
+    second_kwargs = fake_openai.responses.calls[1]
+
+    assert first_kwargs["tools"] == tools
+    assert first_kwargs["tool_choice"] == "auto"
+
+    assert second_kwargs["previous_response_id"] == "resp_1"
+    assert second_kwargs["input"] == [
+        {
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": "tool result",
+        }
+    ]
+    assert second_kwargs["tools"] == tools
+    assert second_kwargs["tool_choice"] == "auto"
+    assert second_kwargs["store"] is True
+
+
+def test_responses_reset_conversation_clears_cached_tools():
+    client = OpenAIResponsesClient(_provider())
+    fake_openai = _FakeOpenAIClient()
+    client._client = fake_openai
+
+    tools = [
+        {
+            "type": "function",
+            "name": "propose_file_edit",
+            "description": "Propose a file edit.",
+            "parameters": {"type": "object", "properties": {}},
+        }
+    ]
+
+    client.chat(
+        [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "first"},
+        ],
+        tools=tools,
+        tool_choice="auto",
+    )
+
+    client.reset_conversation()
+
+    client.chat([
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "fresh"},
+    ])
+
+    second_kwargs = fake_openai.responses.calls[1]
+
+    assert "previous_response_id" not in second_kwargs
+    assert "tools" not in second_kwargs
+    assert "tool_choice" not in second_kwargs
     assert second_kwargs["input"] == [{"role": "user", "content": "fresh"}]
