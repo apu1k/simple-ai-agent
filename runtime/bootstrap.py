@@ -27,6 +27,7 @@ if DEBUG_LOGS:
     for key, p in PROVIDERS.items():
         print(f"  {key}: api_type={p.api_type}, model={p.default_model}", file=sys.stderr)
     print("===========================", file=sys.stderr)
+from runtime.chat_store import ChatStore
 from runtime.prompt import build_system_prompt
 from runtime.state import AgentState, ModelConfig
 
@@ -94,6 +95,7 @@ def create_initial_state(model_config: ModelConfig) -> AgentState:
     return AgentState(
         cwd=Path.cwd(),
         model_config=model_config,
+        chat_store=ChatStore(background_indexing_enabled=True),
     )
 
 

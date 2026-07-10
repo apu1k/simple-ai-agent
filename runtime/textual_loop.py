@@ -16,6 +16,7 @@ from runtime.bootstrap import (
     create_initial_state,
     initialize_tools,
 )
+from tools.knowledge.runtime import start_embedding_warmup
 
 
 def _select_default_model_config():
@@ -47,6 +48,7 @@ def create_textual_app() -> AgentTextualApp:
 
     model_config, llm = _select_default_model_config()
     state = create_initial_state(model_config)
+    start_embedding_warmup()
 
     return AgentTextualApp(
         state=state,

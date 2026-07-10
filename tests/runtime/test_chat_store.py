@@ -83,6 +83,35 @@ def test_record_final_turn_writes_original_and_working_streams(tmp_path: Path):
     assert working_turn["assistant_final"] == "hi there"
 
 
+def test_record_final_turn_schedules_incremental_index_after_persistence(
+    tmp_path: Path,
+    monkeypatch,
+):
+    state = make_state(tmp_path)
+    state.chat_store.background_indexing_enabled = True
+    calls = []
+
+    def fake_schedule(path, session_id, turn_index):
+        assert path.exists()
+        calls.append((path, session_id, turn_index))
+
+    monkeypatch.setattr(
+        "tools.knowledge.runtime.schedule_chat_turn_index",
+        fake_schedule,
+    )
+
+    turn_index = record_final_turn(state, "question", "answer")
+
+    assert turn_index == 1
+    assert calls == [
+        (
+            state.chat_store.original_turns_path,
+            state.chat_session_id,
+            1,
+        )
+    ]
+
+
 def test_record_final_turn_creates_session_if_missing(tmp_path: Path):
     state = make_state(tmp_path)
 

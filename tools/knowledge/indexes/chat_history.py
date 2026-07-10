@@ -8,7 +8,7 @@ from uuid import NAMESPACE_URL, uuid5
 from tools.knowledge.config import QdrantConfig, QdrantDataCollectionConfig
 from tools.knowledge.embeddings.base import EmbeddingModel
 from tools.knowledge.models import EvidenceItem
-from tools.knowledge.stores.local import SEARCHABLE_SUFFIXES, _parse_chat_line
+from tools.knowledge.stores.local import _parse_chat_line
 from tools.knowledge.stores.qdrant import QdrantUnavailableError
 
 CHAT_HISTORY_SCHEMA_VERSION = 1
@@ -60,6 +60,43 @@ def iter_chat_history_records(root: Path) -> Iterable[dict[str, Any]]:
                     }
         except OSError:
             continue
+
+
+def find_chat_history_turn(
+    path: Path,
+    session_id: str,
+    turn_index: int,
+) -> dict[str, Any] | None:
+    """Find one persisted chat turn and return its indexable record."""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                parsed = _parse_chat_line(line)
+                metadata = parsed.get("metadata", {})
+                if not isinstance(metadata, dict):
+                    continue
+                if metadata.get("session_id") != session_id:
+                    continue
+                if metadata.get("turn_index") != turn_index:
+                    continue
+                if not _is_chat_turn_record(parsed):
+                    continue
+
+                content = str(parsed.get("display_content", "")).strip()
+                if not content:
+                    return None
+                return {
+                    "path": str(path),
+                    "line": line_number,
+                    "title": f"{path}:{line_number}",
+                    "content": content,
+                    "embedding_text": content,
+                    "metadata": metadata,
+                }
+    except OSError:
+        return None
+
+    return None
 
 
 def chat_history_point_id(path: str, line: int) -> str:
@@ -187,6 +224,42 @@ def index_chat_history_collection(
         if progress is not None:
             progress(count)
     return count
+
+
+def index_chat_history_turn(
+    client: Any,
+    config: QdrantConfig,
+    path: Path,
+    session_id: str,
+    turn_index: int,
+    embedding_model: EmbeddingModel,
+    source_key: str = DEFAULT_CHAT_HISTORY_SOURCE_KEY,
+) -> int:
+    """Embed and upsert exactly one persisted original chat turn."""
+    collection = config.data_collections.get(source_key)
+    if collection is None:
+        raise ValueError(f"Missing Qdrant data collection config: {source_key}")
+
+    record = find_chat_history_turn(path, session_id, turn_index)
+    if record is None:
+        return 0
+
+    ensure_evidence_collection(
+        client=client,
+        collection_name=collection.collection,
+        vector_size=config.vector_size,
+        distance=config.distance,
+    )
+    points = _build_chat_history_points_for_records(
+        [record],
+        collection,
+        embedding_model,
+    )
+    client.upsert(
+        collection_name=collection.collection,
+        points=[_to_qdrant_point(point) for point in points],
+    )
+    return len(points)
 
 
 def search_chat_history_collection(

@@ -9,7 +9,9 @@ from tools.knowledge.indexes.chat_history import (
     build_chat_history_points,
     chat_history_point_id,
     chat_history_payload,
+    find_chat_history_turn,
     index_chat_history_collection,
+    index_chat_history_turn,
     iter_chat_history_records,
     search_chat_history_collection,
 )
@@ -176,6 +178,80 @@ def test_index_chat_history_collection_creates_collection_and_upserts(tmp_path):
     assert client.created_collections[0]["collection_name"] == "agent_chat_history"
     assert client.upserts[0]["collection_name"] == "agent_chat_history"
     assert len(client.upserts[0]["points"]) == 1
+
+
+def test_find_chat_history_turn_returns_only_requested_original_turn(tmp_path):
+    chat_dir = tmp_path / ".agent_chat_history"
+    path = chat_dir / "turns_original.jsonl"
+    chat_dir.mkdir(parents=True)
+    records = [
+        {
+            "type": "turn",
+            "stream": "original",
+            "session_id": "session-1",
+            "turn_index": 1,
+            "user": "first",
+            "assistant_final": "answer one",
+        },
+        {
+            "type": "turn",
+            "stream": "original",
+            "session_id": "session-1",
+            "turn_index": 2,
+            "user": "second",
+            "assistant_final": "answer two",
+        },
+    ]
+    path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+    record = find_chat_history_turn(path, "session-1", 2)
+
+    assert record is not None
+    assert record["line"] == 2
+    assert record["content"] == "User: second\n\nAssistant: answer two"
+    assert record["metadata"]["turn_index"] == 2
+
+
+def test_index_chat_history_turn_upserts_only_requested_turn(tmp_path):
+    chat_dir = tmp_path / ".agent_chat_history"
+    path = chat_dir / "turns_original.jsonl"
+    chat_dir.mkdir(parents=True)
+    records = [
+        {
+            "type": "turn",
+            "session_id": "session-1",
+            "turn_index": index,
+            "user": f"user {index}",
+            "assistant_final": f"assistant {index}",
+        }
+        for index in (1, 2)
+    ]
+    path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    client = FakeQdrantClient()
+
+    count = index_chat_history_turn(
+        client=client,
+        config=make_config(),
+        path=path,
+        session_id="session-1",
+        turn_index=2,
+        embedding_model=HashingEmbeddingModel(dimensions=8),
+    )
+
+    assert count == 1
+    assert len(client.upserts) == 1
+    assert len(client.upserts[0]["points"]) == 1
+    point = client.upserts[0]["points"][0]
+    point_id = point["id"] if isinstance(point, dict) else point.id
+    payload = point["payload"] if isinstance(point, dict) else point.payload
+    assert str(point_id) == chat_history_point_id(str(path), 2)
+    assert payload["content"] == "User: user 2\n\nAssistant: assistant 2"
 
 
 def test_search_chat_history_collection_returns_evidence_items():

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import threading
 from typing import Any
 
 
@@ -20,6 +21,11 @@ class SentenceTransformerEmbeddingModel:
     local_files_only: bool = True
     batch_size: int = 32
     _model: Any | None = field(default=None, init=False, repr=False)
+    _model_load_lock: threading.Lock = field(
+        default_factory=threading.Lock,
+        init=False,
+        repr=False,
+    )
 
     @property
     def vector_size(self) -> int:
@@ -51,36 +57,43 @@ class SentenceTransformerEmbeddingModel:
         if self._model is not None:
             return self._model
 
-        if self.local_files_only and not Path(self.model_name_or_path).exists():
-            raise RuntimeError(
-                "Local embedding model path does not exist: "
-                f"{self.model_name_or_path!r}. Download/install the model locally "
-                "or set embedding_local_files_only=false explicitly."
-            )
+        with self._model_load_lock:
+            if self._model is not None:
+                return self._model
 
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError as exc:  # pragma: no cover - depends on local env
-            raise RuntimeError(
-                "sentence-transformers is not installed. Install it before using "
-                "embedding_backend=sentence_transformers."
-            ) from exc
-
-        try:
-            self._model = SentenceTransformer(
-                self.model_name_or_path,
-                device=self.device,
-                local_files_only=self.local_files_only,
-            )
-        except TypeError as exc:
-            if self.local_files_only:
+            if self.local_files_only and not Path(self.model_name_or_path).exists():
                 raise RuntimeError(
-                    "Installed sentence-transformers version does not support "
-                    "local_files_only; refusing to risk a model download."
-                ) from exc
-            self._model = SentenceTransformer(self.model_name_or_path, device=self.device)
+                    "Local embedding model path does not exist: "
+                    f"{self.model_name_or_path!r}. Download/install the model locally "
+                    "or set embedding_local_files_only=false explicitly."
+                )
 
-        return self._model
+            try:
+                from sentence_transformers import SentenceTransformer
+            except ImportError as exc:  # pragma: no cover - depends on local env
+                raise RuntimeError(
+                    "sentence-transformers is not installed. Install it before using "
+                    "embedding_backend=sentence_transformers."
+                ) from exc
+
+            try:
+                self._model = SentenceTransformer(
+                    self.model_name_or_path,
+                    device=self.device,
+                    local_files_only=self.local_files_only,
+                )
+            except TypeError as exc:
+                if self.local_files_only:
+                    raise RuntimeError(
+                        "Installed sentence-transformers version does not support "
+                        "local_files_only; refusing to risk a model download."
+                    ) from exc
+                self._model = SentenceTransformer(
+                    self.model_name_or_path,
+                    device=self.device,
+                )
+
+            return self._model
 
     def _validate_vector_sizes(self, vectors: list[list[float]]) -> None:
         for vector in vectors:

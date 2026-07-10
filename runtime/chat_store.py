@@ -14,6 +14,7 @@ changing the persistence format or agent loop wiring.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import uuid
 from dataclasses import dataclass
@@ -32,6 +33,8 @@ CHAT_HISTORY_DIR = PROJECT_ROOT / ".agent_chat_history"
 SESSIONS_FILE = "sessions.jsonl"
 ORIGINAL_TURNS_FILE = "turns_original.jsonl"
 WORKING_TURNS_FILE = "turns_working.jsonl"
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _assert_no_unhandled_tool_call_markup(text: str) -> None:
@@ -68,8 +71,14 @@ class ChatSessionSummary:
 class ChatStore:
     """Append-only JSONL chat history store."""
 
-    def __init__(self, root: Path | None = None):
+    def __init__(
+        self,
+        root: Path | None = None,
+        *,
+        background_indexing_enabled: bool = False,
+    ):
         self.root = root or CHAT_HISTORY_DIR
+        self.background_indexing_enabled = background_indexing_enabled
         self.sessions_path = self.root / SESSIONS_FILE
         self.original_turns_path = self.root / ORIGINAL_TURNS_FILE
         self.working_turns_path = self.root / WORKING_TURNS_FILE
@@ -265,12 +274,30 @@ def record_final_turn(state: "AgentState", user_text: str, assistant_text: str) 
         assistant_text = ""
 
     session_id = ensure_chat_session(state)
-    return state.chat_store.append_turn(
+    turn_index = state.chat_store.append_turn(
         session_id=session_id,
         user_text=user_text,
         assistant_text=assistant_text,
         state=state,
     )
+
+    if state.chat_store.background_indexing_enabled:
+        try:
+            from tools.knowledge.runtime import schedule_chat_turn_index
+
+            schedule_chat_turn_index(
+                state.chat_store.original_turns_path,
+                session_id,
+                turn_index,
+            )
+        except Exception:
+            _LOGGER.exception(
+                "Could not schedule chat-history indexing for %s turn %s",
+                session_id,
+                turn_index,
+            )
+
+    return turn_index
 
 
 def _utc_now() -> str:
