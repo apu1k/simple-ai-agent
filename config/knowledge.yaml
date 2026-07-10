@@ -5,18 +5,19 @@
 # 2. data collections: normal vector databases containing evidence such as chats,
 #    memories, project files, PDFs, or other indexed documents.
 #
-# This default config is fully local. It uses qdrant-client local persistence
-# under runtime/knowledge/qdrant and does not require Qdrant Cloud or an API key.
+# This default config is fully local. It connects to a Qdrant server bound
+# to localhost and does not require Qdrant Cloud or an API key.
 
 qdrant:
   enabled: true
 
   # local = embedded/local qdrant-client storage at local_path, no HTTP service.
   # http = connect to a locally running Qdrant server via url.
-  mode: local
+  # Server mode avoids embedded-storage locks while the Textual app is running.
+  mode: http
   local_path: runtime/knowledge/qdrant
   url: http://localhost:6333
-  timeout_seconds: 10.0
+  timeout_seconds: 2.0
 
   # Router index for selecting capability definitions from config/capabilities/*.yaml.
   capability_collection: agent_capability_router

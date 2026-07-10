@@ -1,0 +1,12 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: ai-agent-qdrant
+    restart: unless-stopped
+    ports:
+      # Bind to localhost only. Your Textual/Caddy/Tailscale setup should not
+      # expose Qdrant directly unless you intentionally add authentication/proxying.
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - ./runtime/knowledge/qdrant_server:/qdrant/storage

@@ -49,3 +49,4 @@ textual.log
 
 # Qdrant
 runtime/knowledge/qdrant/
+runtime/knowledge/qdrant_server/
