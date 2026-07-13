@@ -128,18 +128,159 @@ def test_approve_raises_if_id_missing():
         store.approve(999)
 
 
-def test_approve_raises_if_file_changed(tmp_path):
+def test_approve_rebases_separate_non_conflicting_proposals(tmp_path):
+    f = tmp_path / "f.py"
+    f.write_text("alpha\nbeta\n", encoding="utf-8")
+
+    store = EditStore()
+    first, _ = store.propose(f, [FileEdit(find="alpha", replace="one")])
+    second, _ = store.propose(f, [FileEdit(find="beta", replace="two")])
+
+    store.approve(first.id)
+    message = store.approve(second.id)
+
+    assert f.read_text(encoding="utf-8") == "one\ntwo\n"
+    assert second.status == "applied"
+    assert "exact-match rebasing" in message
+
+
+def test_approve_rebases_non_overlapping_words_on_the_same_line(tmp_path):
+    f = tmp_path / "f.txt"
+    f.write_text("The quick brown fox.\n", encoding="utf-8")
+
+    store = EditStore()
+    first, _ = store.propose(f, [FileEdit(find="quick", replace="fast")])
+    second, _ = store.propose(f, [FileEdit(find="brown", replace="red")])
+
+    store.approve(first.id)
+    store.approve(second.id)
+
+    assert f.read_text(encoding="utf-8") == "The fast red fox.\n"
+    assert second.status == "applied"
+
+
+def test_approve_rebase_rejects_overlapping_change_when_find_text_survives(tmp_path):
+    f = tmp_path / "f.md"
+    f.write_text("# heading\n\nbody\n", encoding="utf-8")
+
+    store = EditStore()
+    first, _ = store.propose(
+        f,
+        [FileEdit(find="# heading", replace="# heading [first]")],
+    )
+    second, _ = store.propose(
+        f,
+        [FileEdit(find="# heading", replace="# heading [second]")],
+    )
+
+    store.approve(first.id)
+
+    with pytest.raises(ValueError, match="changes overlap"):
+        store.approve(second.id)
+
+    assert f.read_text(encoding="utf-8") == "# heading [first]\n\nbody\n"
+    assert second.status == "pending"
+
+
+def test_approve_rebase_handles_large_files_with_small_changes(tmp_path):
+    unchanged = "repeated content for overlap checking\n" * 1_000
+    f = tmp_path / "f.txt"
+    f.write_text(f"first target\n{unchanged}second target\n", encoding="utf-8")
+
+    store = EditStore()
+    first, _ = store.propose(f, [FileEdit(find="first", replace="updated first")])
+    second, _ = store.propose(f, [FileEdit(find="second", replace="updated second")])
+
+    store.approve(first.id)
+    store.approve(second.id)
+
+    assert f.read_text(encoding="utf-8") == (
+        f"updated first target\n{unchanged}updated second target\n"
+    )
+
+
+def test_approve_rebase_rejects_partly_overlapping_find_blocks(tmp_path):
+    f = tmp_path / "f.txt"
+    f.write_text("abcdef\n", encoding="utf-8")
+
+    store = EditStore()
+    first, _ = store.propose(f, [FileEdit(find="abc", replace="ABC")])
+    second, _ = store.propose(f, [FileEdit(find="bcdef", replace="BCDEF")])
+
+    store.approve(first.id)
+
+    with pytest.raises(ValueError, match="changes overlap"):
+        store.approve(second.id)
+
+    assert f.read_text(encoding="utf-8") == "ABCdef\n"
+    assert second.status == "pending"
+
+
+def test_approve_rebase_is_atomic_when_a_later_replacement_conflicts(tmp_path):
+    f = tmp_path / "f.py"
+    f.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
+
+    store = EditStore()
+    edit, _ = store.propose(
+        f,
+        [
+            FileEdit(find="alpha", replace="one"),
+            FileEdit(find="beta", replace="two"),
+        ],
+    )
+    f.write_text("alpha\nchanged\ngamma\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="cannot be safely reapplied"):
+        store.approve(edit.id)
+
+    assert f.read_text(encoding="utf-8") == "alpha\nchanged\ngamma\n"
+    assert edit.status == "pending"
+
+
+def test_approve_rebase_rejects_newly_ambiguous_find_block(tmp_path):
+    f = tmp_path / "f.py"
+    f.write_text("target\nother\n", encoding="utf-8")
+
+    store = EditStore()
+    edit, _ = store.propose(f, [FileEdit(find="target", replace="updated")])
+    f.write_text("target\ntarget\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="multiple locations"):
+        store.approve(edit.id)
+
+    assert f.read_text(encoding="utf-8") == "target\ntarget\n"
+    assert edit.status == "pending"
+
+
+def test_approve_rejects_stale_whole_file_replacement(tmp_path):
+    f = tmp_path / "f.py"
+    f.write_text("original\n", encoding="utf-8")
+
+    store = EditStore()
+    edit, _ = store.propose_replace(f, "replacement\n")
+    f.write_text("externally changed\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Whole-file replacement is stale"):
+        store.approve(edit.id)
+
+    assert f.read_text(encoding="utf-8") == "externally changed\n"
+    assert edit.status == "pending"
+
+
+def test_approve_raises_if_file_changed_and_exact_edit_conflicts(tmp_path):
     f = tmp_path / "f.py"
     f.write_text("original\n", encoding="utf-8")
 
     store = EditStore()
     edit, _ = store.propose(f, [FileEdit(find="original", replace="changed")])
 
-    # Simulate external change to the file
+    # Simulate an external change that removes the exact find block.
     f.write_text("something else\n", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="stale"):
+    with pytest.raises(ValueError, match="cannot be safely reapplied"):
         store.approve(edit.id)
+
+    assert edit.status == "pending"
 
 
 def test_approve_raises_if_already_applied(tmp_path):

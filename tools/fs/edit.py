@@ -22,7 +22,11 @@ from editing.model import FileEdit
 @tool(
     description=(
         "Propose exact-match file edits without directly modifying the file. "
-        "The edit becomes pending until the user approves it with \\approve <id>."
+        "The edit becomes pending until the user approves it with \\approve <id>. "
+        "Separate proposals may target the same file: at approval, non-overlapping "
+        "exact replacements are replayed on the latest content. A proposal is rejected "
+        "if its changes overlap newer changes, or if a find block is missing or no "
+        "longer unique."
     ),
     params={
         "path": "Path to the file to edit.",

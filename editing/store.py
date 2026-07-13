@@ -11,13 +11,15 @@ EditStore owns the full pending-change lifecycle:
   reject()          → marks as rejected without writing/applying
   pending()         → returns all pending changes
 
-This store intentionally re-validates filesystem state at approval time so a
-proposal cannot be applied if the relevant files/directories changed unsafely.
+This store intentionally re-validates filesystem state at approval time. Exact
+find-and-replace edits can be safely replayed on changed file content, while
+ambiguous, conflicting, and whole-file replacements are rejected as stale.
 """
 
 from __future__ import annotations
 
 import shutil
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from editing.diff import create_unified_diff
@@ -25,6 +27,7 @@ from editing.model import FileEdit, PendingEdit
 
 
 MAX_OPERATION_PREVIEW_ENTRIES = 100
+MAX_CHARACTER_DIFF_CELLS = 1_000_000
 
 
 class EditStore:
@@ -324,13 +327,46 @@ class EditStore:
 
         if edit.kind == "edit":
             current = edit.path.read_text(encoding="utf-8")
-            if current != edit.original_content:
-                raise ValueError(
-                    f"File changed since edit #{edit_id} was proposed. "
-                    "Edit is stale and cannot be applied safely."
+            rebased = current != edit.original_content
+
+            if rebased:
+                if not edit.edits:
+                    raise ValueError(
+                        f"File changed since edit #{edit_id} was proposed. "
+                        "Whole-file replacement is stale and cannot be applied safely."
+                    )
+
+                if _changes_overlap(
+                    edit.original_content,
+                    current,
+                    edit.new_content,
+                ):
+                    raise ValueError(
+                        f"File changed since edit #{edit_id} was proposed and its "
+                        "exact replacements cannot be safely reapplied because their "
+                        "changes overlap content modified since the proposal."
+                    )
+
+                updated_content = current
+                try:
+                    for file_edit in edit.edits:
+                        updated_content = _apply_exact_edit(updated_content, file_edit)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"File changed since edit #{edit_id} was proposed and its "
+                        f"exact replacements cannot be safely reapplied: {exc}"
+                    ) from exc
+            else:
+                updated_content = edit.new_content
+
+            edit.path.write_text(updated_content, encoding="utf-8")
+            if rebased:
+                message = (
+                    f"Applied pending edit #{edit_id} to the updated file "
+                    f"using exact-match rebasing: {edit.path}."
                 )
-            edit.path.write_text(edit.new_content, encoding="utf-8")
-            message = f"Applied pending edit #{edit_id} to {edit.path}."
+            else:
+                message = f"Applied pending edit #{edit_id} to {edit.path}."
 
         elif edit.kind == "create":
             if edit.path.exists():
@@ -519,6 +555,90 @@ def _build_tree_preview(path: Path) -> list[str]:
         lines.append(f"Preview truncated after {MAX_OPERATION_PREVIEW_ENTRIES} entries.")
 
     return lines
+
+
+def _changes_overlap(original: str, current: str, proposed: str) -> bool:
+    """Return whether current and proposed changes touch the same original region."""
+    current_spans = _changed_spans(original, current)
+    proposed_spans = _changed_spans(original, proposed)
+    return any(
+        _spans_overlap(current_span, proposed_span)
+        for current_span in current_spans
+        for proposed_span in proposed_spans
+    )
+
+
+def _changed_spans(original: str, modified: str) -> list[tuple[int, int]]:
+    """Map changes to original character ranges using a line-first diff."""
+    original_lines = original.splitlines(keepends=True)
+    modified_lines = modified.splitlines(keepends=True)
+    original_offsets = _line_offsets(original_lines)
+    modified_offsets = _line_offsets(modified_lines)
+    spans: list[tuple[int, int]] = []
+
+    for tag, original_start, original_end, modified_start, modified_end in SequenceMatcher(
+        None,
+        original_lines,
+        modified_lines,
+        autojunk=False,
+    ).get_opcodes():
+        if tag == "equal":
+            continue
+
+        start_offset = original_offsets[original_start]
+        end_offset = original_offsets[original_end]
+        if tag != "replace":
+            spans.append((start_offset, end_offset))
+            continue
+
+        original_block = original[start_offset:end_offset]
+        modified_block = modified[
+            modified_offsets[modified_start] : modified_offsets[modified_end]
+        ]
+        spans.extend(_character_changed_spans(original_block, modified_block, start_offset))
+
+    return spans
+
+
+def _line_offsets(lines: list[str]) -> list[int]:
+    """Return the character offset at every line boundary, including EOF."""
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line))
+    return offsets
+
+
+def _character_changed_spans(
+    original_block: str,
+    modified_block: str,
+    block_offset: int,
+) -> list[tuple[int, int]]:
+    """Refine a changed line block to character spans when bounded in size."""
+    if len(original_block) * len(modified_block) > MAX_CHARACTER_DIFF_CELLS:
+        return [(block_offset, block_offset + len(original_block))]
+
+    return [
+        (block_offset + original_start, block_offset + original_end)
+        for tag, original_start, original_end, _, _ in SequenceMatcher(
+            None,
+            original_block,
+            modified_block,
+            autojunk=False,
+        ).get_opcodes()
+        if tag != "equal"
+    ]
+
+
+def _spans_overlap(first: tuple[int, int], second: tuple[int, int]) -> bool:
+    """Treat insertions at the same point or at a changed range boundary as overlap."""
+    first_start, first_end = first
+    second_start, second_end = second
+
+    if first_start == first_end:
+        return second_start <= first_start <= second_end
+    if second_start == second_end:
+        return first_start <= second_start <= first_end
+    return first_start < second_end and second_start < first_end
 
 
 def _apply_exact_edit(content: str, edit: FileEdit) -> str:
