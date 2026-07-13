@@ -17,10 +17,17 @@ def _to_json_schema_parameters(spec: ToolSpec) -> dict:
     if not isinstance(params, dict):
         params = {}
 
-    properties = {
-        name: {"type": "string", "description": str(desc)}
-        for name, desc in params.items()
-    }
+    properties = {}
+    for name, definition in params.items():
+        if isinstance(definition, dict):
+            # Copy explicit schemas so provider-specific processing cannot
+            # mutate the registry's ToolSpec.
+            properties[name] = dict(definition)
+        else:
+            properties[name] = {
+                "type": "string",
+                "description": str(definition),
+            }
 
     return {
         "type": "object",

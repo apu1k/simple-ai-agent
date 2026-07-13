@@ -34,7 +34,8 @@ class ToolSpec:
     name: str
     function: Callable
     description: str
-    parameters: dict[str, str]          # param_name → description
+    # Values may be a plain description or an explicit JSON Schema fragment.
+    parameters: dict[str, str | dict]
     requires_state: bool = False
     example: dict | None = None
 
@@ -76,7 +77,7 @@ registry = ToolRegistry()
 def tool(
     *,
     description: str,
-    params: dict[str, str] | None = None,
+    params: dict[str, str | dict] | None = None,
     requires_state: bool = False,
     example: dict | None = None,
 ):
@@ -85,7 +86,7 @@ def tool(
 
     Args:
         description:     What the tool does (shown in the system prompt).
-        params:          Mapping of parameter name → description.
+        params:          Mapping of parameter name → description or JSON Schema.
         requires_state:  If True, AgentState is injected as the first argument.
         example:         Optional example tool call dict for the system prompt.
 

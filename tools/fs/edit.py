@@ -26,7 +26,21 @@ from editing.model import FileEdit
     ),
     params={
         "path": "Path to the file to edit.",
-        "edits": "List of edits. Each edit must have 'find' and 'replace' string fields.",
+        "edits": {
+            "type": "array",
+            "description": (
+                "List of edits. Each edit must have 'find' and 'replace' string fields."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "find": {"type": "string"},
+                    "replace": {"type": "string"},
+                },
+                "required": ["find", "replace"],
+                "additionalProperties": False,
+            },
+        },
     },
     requires_state=True,
     example={

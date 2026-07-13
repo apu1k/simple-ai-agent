@@ -34,7 +34,11 @@ def _build_tools_section() -> str:
 
         if spec.parameters:
             lines.append("  Parameters:")
-            for param_name, param_desc in spec.parameters.items():
+            for param_name, param_definition in spec.parameters.items():
+                if isinstance(param_definition, dict):
+                    param_desc = param_definition.get("description", "")
+                else:
+                    param_desc = param_definition
                 lines.append(f"  - {param_name}: {param_desc}")
 
         if spec.example:
