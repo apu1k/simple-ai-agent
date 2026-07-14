@@ -140,6 +140,18 @@ class _FakeLLMResponses:
         self.reset_calls += 1
 
 
+class _FakeLLMResponsesOversizedBatch(_FakeLLMResponses):
+    def chat(self, messages, tools=None, tool_choice=None):
+        self.chat_calls += 1
+        return LLMResponse(
+            content=None,
+            tool_calls=[
+                NativeToolCall(id=f"call_resp_{i}", name="t_ok_native", arguments={})
+                for i in range(11)
+            ],
+        )
+
+
 class _FakeLLMChatNoNative:
     supports_native_tools = False
     supports_native_tool_outputs = False
@@ -579,6 +591,36 @@ def test_pending_native_tool_outputs_persist_across_steps():
     out2 = agent.step("continue")
     assert out2 == "final-after-submit"
     assert llm.submit_calls == 2
+    assert agent._pending_native_tool_calls is None
+
+
+def test_oversized_native_responses_batch_executes_limit_and_reports_excess_calls():
+    reg = ToolRegistry()
+    executed = 0
+
+    def t_ok_native():
+        nonlocal executed
+        executed += 1
+        return "ok-native"
+
+    _register_tool(reg, "t_ok_native", t_ok_native)
+
+    state = _DummyState()
+    state.model_config.api_type = "responses"
+    llm = _FakeLLMResponsesOversizedBatch()
+    agent = Agent(system_prompt="test", state=state, llm=llm, tool_registry=reg)
+
+    out = agent.step("go")
+
+    assert out == "final-after-submit"
+    assert executed == 10
+    assert llm.submit_calls == 1
+    assert len(llm.submitted_tool_outputs) == 1
+    submitted = llm.submitted_tool_outputs[0]
+    assert [item.call_id for item in submitted] == [f"call_resp_{i}" for i in range(11)]
+    assert [item.output for item in submitted[:10]] == ["ok-native"] * 10
+    assert "batch limit exceeded" in submitted[10].output
+    assert "do not assume it ran" in submitted[10].output
     assert agent._pending_native_tool_calls is None
 
 

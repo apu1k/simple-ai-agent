@@ -720,16 +720,40 @@ class Agent:
                     self._append_tool_batch_result("Error: No tool calls were provided.")
                     continue
 
-                if len(calls) > MAX_BATCH_TOOL_CALLS:
-                    error_text = (
-                        "Error: Too many tool calls requested in one response: "
-                        f"{len(calls)} > {MAX_BATCH_TOOL_CALLS}."
+                excess_calls: list[protocol.ToolCall] = []
+                requested_call_count = len(calls)
+                if requested_call_count > MAX_BATCH_TOOL_CALLS:
+                    excess_calls = calls[MAX_BATCH_TOOL_CALLS:]
+                    calls = calls[:MAX_BATCH_TOOL_CALLS]
+                    self._error(
+                        "Tool call batch limit exceeded: "
+                        f"executing {len(calls)} and skipping {len(excess_calls)} excess call(s)."
                     )
-                    self._error(error_text)
-                    self._append_tool_batch_result(error_text)
-                    continue
 
                 records = self._execute_tool_batch(calls)
+
+                if excess_calls:
+                    for record in records:
+                        record.total = requested_call_count
+                    records.extend(
+                        BatchToolRecord(
+                            index=i,
+                            total=requested_call_count,
+                            action=call.action,
+                            tool_input=call.tool_input,
+                            status="skipped",
+                            observation=(
+                                "Skipped: tool call batch limit exceeded. "
+                                f"This was call {i} of {requested_call_count}; "
+                                f"at most {MAX_BATCH_TOOL_CALLS} calls are executed per batch. "
+                                "Retry this call in a new batch and do not assume it ran."
+                            ),
+                        )
+                        for i, call in enumerate(
+                            excess_calls,
+                            start=MAX_BATCH_TOOL_CALLS + 1,
+                        )
+                    )
 
                 for r in records:
                     if r.status == "success":
