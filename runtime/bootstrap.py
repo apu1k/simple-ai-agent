@@ -1,13 +1,7 @@
 """
 runtime/bootstrap.py
 
-Shared composition helpers for all frontends.
-
-This module contains setup code needed by both:
-- CLI runtime
-- future Textual/web runtime
-
-It must not contain terminal-specific input/output code.
+Composition helpers for the Textual runtime.
 """
 
 from __future__ import annotations
@@ -107,7 +101,6 @@ def create_agent(
     on_tool: Callable[[str], None] | None = None,
     on_raw: Callable[[str], None] | None = None,
     on_error: Callable[[str], None] | None = None,
-    on_display: Callable[[list], None] | None = None,
 ) -> Agent:
     """Create an Agent wired with frontend callbacks.
     
@@ -128,5 +121,4 @@ def create_agent(
         on_tool=on_tool,
         on_raw=on_raw,
         on_error=on_error,
-        on_display=on_display,
     )

@@ -8,19 +8,12 @@ Provides:
   - Constants (limits, ignored dirs)
   - resolve_path()
   - should_skip_path()
-  - guess_language()
-  - build_display_path()
-  - build_file_panel_title()
-  - create_file_display_item()
-  - direct_display_guidance()
+  - format_path()
   - validate_file_for_reading()
-  - read_complete_file_for_display()
-  - read_line_range_for_display()
+  - read_line_range()
 """
 
 from pathlib import Path
-
-from tools._base import DisplayItem
 
 
 # ---------------------------------------------------------------------------
@@ -36,10 +29,8 @@ IGNORED_DIRS = {
 }
 
 MAX_FILE_SIZE_BYTES = 1_000_000          # read_file / analyze
-MAX_DISPLAY_FILE_SIZE_BYTES = 100_000    # show_file / show_files (per file)
-MAX_DISPLAY_TOTAL_BYTES = 500_000        # show_files (total across all files)
-MAX_DISPLAY_FILES = 30
-MAX_DISPLAY_LINES = 2_000
+MAX_READ_RANGE_BYTES = 100_000
+MAX_READ_RANGE_LINES = 2_000
 MAX_ANALYZE_FILES = 30
 MAX_OPERATION_PREVIEW_ENTRIES = 100
 
@@ -58,6 +49,14 @@ def resolve_path(state, path=".") -> Path:
 
 def should_skip_path(path: Path) -> bool:
     return any(part in IGNORED_DIRS for part in path.parts)
+
+
+def format_path(state, path: Path) -> str:
+    """Format a path relative to the working directory when possible."""
+    try:
+        return str(path.relative_to(state.cwd))
+    except ValueError:
+        return str(path)
 
 
 def parse_bool(value, default: bool = False) -> bool:
@@ -91,68 +90,6 @@ def is_inside_cwd(state, path: Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Display helpers
-# ---------------------------------------------------------------------------
-
-def guess_language(path) -> str:
-    suffix = Path(path).suffix.lower()
-    return {
-        ".py": "python",
-        ".md": "markdown",
-        ".json": "json",
-        ".toml": "toml",
-        ".yaml": "yaml",
-        ".yml": "yaml",
-        ".txt": "text",
-        ".env": "bash",
-        ".sh": "bash",
-        ".html": "html",
-        ".css": "css",
-        ".js": "javascript",
-        ".ts": "typescript",
-    }.get(suffix, "text")
-
-
-def build_display_path(state, file_path: Path) -> str:
-    try:
-        return str(file_path.relative_to(state.cwd))
-    except ValueError:
-        return str(file_path)
-
-
-def build_file_panel_title(display_path: str, complete: bool, start_line: int, end_line: int) -> str:
-    if complete:
-        return f"File: {display_path} Complete"
-    return f"File: {display_path} Lines: {start_line}-{end_line}"
-
-
-def create_file_display_item(state, file_path: Path, content: str, start_line: int, end_line: int, complete: bool) -> DisplayItem:
-    display_path = build_display_path(state, file_path)
-    title = build_file_panel_title(display_path, complete, start_line, end_line)
-    return DisplayItem(
-        kind="file",
-        title=title,
-        content=content,
-        path=str(file_path),
-        display_path=display_path,
-        language=guess_language(file_path),
-        start_line=start_line,
-        end_line=end_line,
-        complete=complete,
-    )
-
-
-def direct_display_guidance() -> str:
-    return (
-        "Important: The file contents were rendered directly in the local CLI for the user. "
-        "The contents were not returned to you in this tool result. "
-        "Do not repeat, reconstruct, or include the displayed file contents in your final answer. "
-        "If this completed the user's request, give only a short confirmation. "
-        "If you need to inspect or analyze the file contents yourself, call read_file separately."
-    )
-
-
-# ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
 
@@ -166,32 +103,10 @@ def validate_file_for_reading(file_path: Path) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# File reading for display
+# File range reading
 # ---------------------------------------------------------------------------
 
-def read_complete_file_for_display(file_path: Path) -> tuple:
-    """Returns (content, start_line, end_line, error) where error is str|None."""
-    if file_path.stat().st_size > MAX_DISPLAY_FILE_SIZE_BYTES:
-        return (
-            None, None, None,
-            f"Error: File is too large to display completely: {file_path}. "
-            "Request a line range instead.",
-        )
-    try:
-        with file_path.open("r", encoding="utf-8") as f:
-            content = f.read()
-    except UnicodeDecodeError:
-        return None, None, None, f"Error: File is not valid UTF-8: {file_path}"
-    except PermissionError:
-        return None, None, None, f"Error: Permission denied: {file_path}"
-    except Exception as e:
-        return None, None, None, f"Error: Failed to read file '{file_path}': {e}"
-
-    line_count = len(content.splitlines())
-    return content, 1, line_count, None
-
-
-def read_line_range_for_display(file_path: Path, start_line: int, end_line: int | None) -> tuple:
+def read_line_range(file_path: Path, start_line: int, end_line: int | None) -> tuple:
     """Returns (content, actual_end_line, error) where error is str|None."""
     selected_lines = []
     selected_bytes = 0
@@ -206,7 +121,7 @@ def read_line_range_for_display(file_path: Path, start_line: int, end_line: int 
                     break
 
                 selected_bytes += len(line.encode("utf-8"))
-                if selected_bytes > MAX_DISPLAY_FILE_SIZE_BYTES:
+                if selected_bytes > MAX_READ_RANGE_BYTES:
                     return None, None, (
                         f"Error: Selected line range is too large: {file_path}. "
                         "Request a smaller line range."
@@ -215,9 +130,9 @@ def read_line_range_for_display(file_path: Path, start_line: int, end_line: int 
                 selected_lines.append(line)
                 end_line_actual = line_number
 
-                if len(selected_lines) > MAX_DISPLAY_LINES:
+                if len(selected_lines) > MAX_READ_RANGE_LINES:
                     return None, None, (
-                        f"Error: Selected line range exceeds {MAX_DISPLAY_LINES} lines."
+                        f"Error: Selected line range exceeds {MAX_READ_RANGE_LINES} lines."
                     )
 
     except UnicodeDecodeError:
@@ -260,9 +175,9 @@ def normalize_line_range(start_line=None, end_line=None) -> tuple[int | None, in
         raise ValueError("start_line must be greater than or equal to 1.")
     if end_line is not None and end_line < start_line:
         raise ValueError("end_line must be greater than or equal to start_line.")
-    if end_line is not None and (end_line - start_line + 1) > MAX_DISPLAY_LINES:
+    if end_line is not None and (end_line - start_line + 1) > MAX_READ_RANGE_LINES:
         raise ValueError(
-            f"Requested line range is too large. Maximum is {MAX_DISPLAY_LINES} lines."
+            f"Requested line range is too large. Maximum is {MAX_READ_RANGE_LINES} lines."
         )
 
     return start_line, end_line, False

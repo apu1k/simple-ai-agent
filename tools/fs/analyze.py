@@ -11,7 +11,7 @@ from tools._base import tool
 from tools.fs._shared import (
     MAX_ANALYZE_FILES,
     MAX_FILE_SIZE_BYTES,
-    build_display_path,
+    format_path,
     resolve_path,
     should_skip_path,
 )
@@ -124,7 +124,7 @@ def _module_docstring_line(tree) -> int | None:
 
 
 def _analyze_tree(state, file_path: Path, source: str, tree) -> str:
-    display_path = build_display_path(state, file_path)
+    display_path = format_path(state, file_path)
     lines = [f"File: {display_path}", f"Lines: {len(source.splitlines())}"]
 
     # Docstring
@@ -218,7 +218,7 @@ def _analyze_file_path(state, file_path: Path) -> str:
         if e.offset is not None:
             parts.append(f"column {e.offset}")
         location = ", ".join(parts) or "unknown location"
-        display_path = build_display_path(state, file_path)
+        display_path = format_path(state, file_path)
         return "\n".join([f"File: {display_path}", "", "Syntax error:", f"- {location}: {e.msg}"])
 
     return _analyze_tree(state, file_path, source, tree)

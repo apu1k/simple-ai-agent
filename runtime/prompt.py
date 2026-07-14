@@ -168,8 +168,7 @@ Filesystem behavior:
 - Use find_files() to locate files by name or extension.
 - Use search_text() to locate code, symbols, functions, or specific text.
 - Use read_file() when you need to inspect or reason about file contents.
-- Use show_file() only when the user explicitly asks to see a file.
-- Use propose_file_edit() for all file modifications — never rewrite files directly.
+- Use pending file-operation tools for all modifications; never rewrite files directly.
 
 General rules:
 - Use only the listed tools.

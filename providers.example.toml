@@ -41,28 +41,6 @@ base_url = "http://localhost:1234/v1"
 default_model = ""
 supports_model_listing = true
 
-# Example: GWDG as an OpenAI-compatible provider
-#
-# [[providers]]
-# key = "gwdg"
-# label = "GWDG"
-# api_type = "chat_completions"
-# api_key_env = "GWDG_API_KEY"
-# base_url_env = "GWDG_BASE_URL"
-# default_model = "gwdg.qwen3-30b-a3b-instruct-2507"
-# supports_model_listing = true
-
-# Example: UPB AI Gateway as an OpenAI-compatible provider
-#
-# [[providers]]
-# key = "upb"
-# label = "UPB AI Gateway"
-# api_type = "chat_completions"
-# api_key_env = "UPB_API_KEY"
-# base_url = "https://ai-gateway.uni-paderborn.de/v1"
-# default_model = ""
-# supports_model_listing = true
-
 # Example: LM Studio local server
 #
 # [[providers]]

@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from tools.knowledge.models import KnowledgeSearchRequest
 from tools.knowledge.registry import CapabilityRegistry, load_capability_definitions
 

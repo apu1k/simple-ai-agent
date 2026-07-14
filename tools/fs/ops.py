@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 from tools._base import tool
-from tools.fs._shared import build_display_path, parse_bool, resolve_path
+from tools.fs._shared import format_path, parse_bool, resolve_path
 
 
 PROTECTED_DELETE_NAMES = {
@@ -248,7 +248,7 @@ def file_info(state, path: str) -> str:
 
         lines = [
             f"Path: {target}",
-            f"Display path: {build_display_path(state, target)}",
+            f"Path: {format_path(state, target)}",
             f"Type: {kind}",
             f"Size: {st.st_size} bytes",
             f"Created: {_format_time(st.st_ctime)}",

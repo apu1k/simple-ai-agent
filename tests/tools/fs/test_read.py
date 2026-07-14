@@ -1,7 +1,7 @@
 """
 tests/tools/fs/test_read.py
 
-Tests for tools/fs/read.py: pwd, ls, cd, read_file, show_file, show_files.
+Tests for tools/fs/read.py: pwd, ls, cd, and read_file.
 """
 
 import sys
@@ -12,8 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from editing.store import EditStore
-from tools._base import ToolResult
-from tools.fs.read import pwd, ls, cd, read_file, show_file, show_files
+from tools.fs.read import pwd, ls, cd, read_file
 
 
 @dataclass
@@ -333,125 +332,3 @@ def test_read_file_pdf_missing_dependency_returns_clear_error(tmp_path, monkeypa
     assert result.startswith("Error:")
     assert "pymupdf4llm" in result
     assert "pip install pymupdf4llm" in result
-
-
-# ---------------------------------------------------------------------------
-# show_file
-# ---------------------------------------------------------------------------
-
-def test_show_file_complete_returns_tool_result(tmp_path):
-    state = make_state(tmp_path)
-    content = "print('secret')\nprint('second')\n"
-    (tmp_path / "example.py").write_text(content, encoding="utf-8")
-
-    result = show_file(state, "example.py")
-
-    assert isinstance(result, ToolResult)
-    assert len(result.display_items) == 1
-
-    item = result.display_items[0]
-    assert item.kind == "file"
-    assert item.display_path == "example.py"
-    assert item.title == "File: example.py Complete"
-    assert item.content == content
-    assert item.language == "python"
-    assert item.start_line == 1
-    assert item.end_line == 2
-    assert item.complete is True
-
-    # Content must NOT leak into the LLM observation
-    assert "secret" in item.content
-    assert "secret" not in result.observation
-
-
-def test_show_file_line_range(tmp_path):
-    state = make_state(tmp_path)
-    (tmp_path / "example.py").write_text(
-        "line 1\nline 2 secret\nline 3 selected\nline 4\n",
-        encoding="utf-8",
-    )
-
-    result = show_file(state, "example.py", start_line=2, end_line=3)
-
-    assert isinstance(result, ToolResult)
-    item = result.display_items[0]
-    assert item.title == "File: example.py Lines: 2-3"
-    assert item.content == "line 2 secret\nline 3 selected\n"
-    assert item.complete is False
-    assert "line 2 secret" not in result.observation
-    assert "lines 2-3" in result.observation
-
-
-@pytest.mark.parametrize("start_line,end_line,expected", [
-    (0, 2, "greater than or equal to 1"),
-    (5, 2, "greater than or equal to start_line"),
-    ("abc", 2, "must be an integer"),
-    (1, "abc", "must be an integer"),
-])
-def test_show_file_invalid_line_range(tmp_path, start_line, end_line, expected):
-    state = make_state(tmp_path)
-    (tmp_path / "example.py").write_text("line 1\nline 2\n", encoding="utf-8")
-
-    result = show_file(state, "example.py", start_line=start_line, end_line=end_line)
-
-    assert isinstance(result, str)
-    assert result.startswith("Error:")
-    assert expected in result
-
-
-def test_show_file_too_large(tmp_path, monkeypatch):
-    import tools.fs._shared as shared
-    state = make_state(tmp_path)
-    (tmp_path / "large.py").write_text("print('too large')\n", encoding="utf-8")
-    monkeypatch.setattr(shared, "MAX_DISPLAY_FILE_SIZE_BYTES", 5)
-
-    result = show_file(state, "large.py")
-
-    assert isinstance(result, str)
-    assert result.startswith("Error:")
-    assert "too large" in result
-
-
-# ---------------------------------------------------------------------------
-# show_files
-# ---------------------------------------------------------------------------
-
-def test_show_files_multiple(tmp_path):
-    state = make_state(tmp_path)
-    (tmp_path / "a.py").write_text("print('secret a')\n", encoding="utf-8")
-    (tmp_path / "b.py").write_text("print('secret b')\n", encoding="utf-8")
-
-    result = show_files(state, "*.py", path=".", max_files=30)
-
-    assert isinstance(result, ToolResult)
-    assert len(result.display_items) == 2
-    paths = {item.display_path for item in result.display_items}
-    assert paths == {"a.py", "b.py"}
-    assert "secret a" not in result.observation
-    assert "secret b" not in result.observation
-
-
-def test_show_files_respects_max_files(tmp_path):
-    state = make_state(tmp_path)
-    (tmp_path / "a.py").write_text("a\n", encoding="utf-8")
-    (tmp_path / "b.py").write_text("b\n", encoding="utf-8")
-
-    result = show_files(state, "*.py", path=".", max_files=1)
-
-    assert isinstance(result, ToolResult)
-    assert len(result.display_items) == 1
-    assert "Result limit reached" in result.observation
-
-
-def test_show_files_skips_ignored_dirs(tmp_path):
-    state = make_state(tmp_path)
-    (tmp_path / "visible.py").write_text("visible\n", encoding="utf-8")
-    git_dir = tmp_path / ".git"
-    git_dir.mkdir()
-    (git_dir / "hidden.py").write_text("hidden\n", encoding="utf-8")
-
-    result = show_files(state, "*.py", path=".", max_files=30)
-
-    assert isinstance(result, ToolResult)
-    assert len(result.display_items) == 1
-    assert result.display_items[0].display_path == "visible.py"

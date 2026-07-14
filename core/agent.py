@@ -46,7 +46,6 @@ class BatchToolRecord:
     status: Literal["success", "failed", "skipped"]
     observation: str | None = None
     error: str | None = None
-    display_count: int = 0
 
 
 class Agent:
@@ -59,7 +58,6 @@ class Agent:
         on_tool: Callable[[str], None] | None = None,
         on_raw: Callable[[str], None] | None = None,
         on_error: Callable[[str], None] | None = None,
-        on_display: Callable[[list], None] | None = None,
         tool_registry: "ToolRegistry | None" = None,
     ):
         """
@@ -71,7 +69,6 @@ class Agent:
             on_tool:        Optional callback for tool call log messages.
             on_raw:         Optional callback for raw LLM response strings.
             on_error:       Optional callback for error messages.
-            on_display:     Optional callback for display items (file panels, etc).
         """
         self.state = state
         self.llm = llm
@@ -83,7 +80,6 @@ class Agent:
         self._tool = on_tool or (lambda msg: None)
         self._raw = on_raw or (lambda msg: None)
         self._error = on_error or (lambda msg: None)
-        self._display = on_display or (lambda items: None)
 
         self._debug(f"SYSTEM PROMPT: {system_prompt}")
         self._debug(
@@ -337,36 +333,15 @@ class Agent:
                 "content": content,
             })
 
-    def _process_tool_result(self, raw_result) -> tuple[str, int]:
-        """
-        Extract a text observation from a tool result.
-        If the result carries display items, fire the on_display callback.
-        Returns (observation, display_item_count).
-        """
-        # Import here to avoid a circular dependency at module load time.
-        from tools._base import ToolResult
-
-        if isinstance(raw_result, ToolResult):
-            display_count = len(raw_result.display_items or [])
-            if raw_result.display_items:
-                self._display(raw_result.display_items)
-            return raw_result.observation, display_count
-
-        return str(raw_result), 0
-
-    def _execute_one_tool_call(self, action: str, tool_input: dict) -> tuple[str, str, int, str | None]:
-        """Execute a single tool call.
-
-        Returns: (status, observation, display_count, error)
-        where status is 'success' or 'failed'.
-        """
+    def _execute_one_tool_call(self, action: str, tool_input: dict) -> tuple[str, str, str | None]:
+        """Execute one tool call and return status, observation, and error."""
         if action not in self.registry:
             error = (
                 f"Error: Tool '{action}' does not exist. "
                 f"Available tools: {', '.join(self.registry.names())}"
             )
             self._error(error)
-            return "failed", error, 0, error
+            return "failed", error, error
 
         spec = self.registry.get(action)
 
@@ -376,17 +351,16 @@ class Agent:
             else:
                 raw_result = spec.function(**tool_input)
 
-            observation, display_count = self._process_tool_result(raw_result)
-            return "success", observation, display_count, None
+            return "success", str(raw_result), None
 
         except TypeError as e:
             observation = f"Error: Invalid arguments for tool '{action}': {e}"
             self._error(observation)
-            return "failed", observation, 0, observation
+            return "failed", observation, observation
         except Exception as e:
             observation = f"Error: Tool execution failed for '{action}': {e}"
             self._error(observation)
-            return "failed", observation, 0, observation
+            return "failed", observation, observation
 
     def _execute_tool_batch(self, calls: list[protocol.ToolCall]) -> list[BatchToolRecord]:
         records: list[BatchToolRecord] = []
@@ -405,7 +379,7 @@ class Agent:
                 ))
                 continue
 
-            status, observation, display_count, error = self._execute_one_tool_call(
+            status, observation, error = self._execute_one_tool_call(
                 call.action,
                 call.tool_input,
             )
@@ -417,7 +391,6 @@ class Agent:
                 status=status,
                 observation=observation,
                 error=error,
-                display_count=display_count,
             ))
 
             if status == "failed" and FAIL_FAST_BATCH:
@@ -429,9 +402,6 @@ class Agent:
         success = sum(1 for r in records if r.status == "success")
         failed = sum(1 for r in records if r.status == "failed")
         skipped = sum(1 for r in records if r.status == "skipped")
-        displayed_calls = sum(1 for r in records if r.display_count > 0)
-        displayed_items = sum(r.display_count for r in records)
-
         lines = [f"Tool batch execution report (fail-fast={str(FAIL_FAST_BATCH).lower()}):"]
 
         for r in records:
@@ -440,8 +410,6 @@ class Agent:
                 lines.append(f"- {header} -> success")
                 if r.observation:
                     lines.append(f"  observation: {r.observation}")
-                if r.display_count > 0:
-                    lines.append(f"  display: showed to user ({r.display_count} item(s))")
             elif r.status == "failed":
                 lines.append(f"- {header} -> FAILED")
                 if r.error:
@@ -455,8 +423,7 @@ class Agent:
 
         lines.append(
             "Summary: "
-            f"success={success} failed={failed} skipped={skipped} total={len(records)} "
-            f"displayed_calls={displayed_calls} displayed_items={displayed_items}"
+            f"success={success} failed={failed} skipped={skipped} total={len(records)}"
         )
         return "\n".join(lines)
 
@@ -823,7 +790,6 @@ class Agent:
         on_tool=None,
         on_raw=None,
         on_error=None,
-        on_display=None,
     ) -> None:
         """Replace any subset of callbacks (e.g. when switching IO adapters)."""
         if on_debug is not None:
@@ -834,5 +800,3 @@ class Agent:
             self._raw = on_raw
         if on_error is not None:
             self._error = on_error
-        if on_display is not None:
-            self._display = on_display

@@ -8,7 +8,6 @@ import json
 from dataclasses import dataclass
 
 from core.agent import Agent
-from tools._base import ToolResult, DisplayItem
 from core.tool_registry import ToolRegistry, ToolSpec
 from editing.store import EditStore
 from llm.base import LLMResponse, NativeToolCall
@@ -388,49 +387,6 @@ def test_empty_final_response_retries_then_errors():
         if m["role"] == "user" and "Your previous response was empty." in m["content"]
     ]
     assert len(empty_retry_prompts) == 2
-
-
-def test_batch_report_includes_display_summary_for_toolresult():
-    local_registry = ToolRegistry()
-
-    def t_show_like():
-        return ToolResult(
-            observation="displayed something",
-            display_items=[
-                DisplayItem(
-                    kind="file",
-                    title="x",
-                    content="y",
-                    path="x.py",
-                    display_path="x.py",
-                    language="python",
-                )
-            ],
-        )
-
-    _register_tool(local_registry, "t_show_like", t_show_like)
-
-    agent = _make_agent([
-        '{"tool_calls": ['
-        '{"action": "t_show_like", "input": {}}, '
-        '{"action": "t_show_like", "input": {}}'
-        ']}',
-        'done',
-    ], tool_registry=local_registry)
-
-    out = agent.step("go")
-    assert out == "done"
-
-    batch_results = [
-        m["content"]
-        for m in agent.messages
-        if m["role"] == "user" and m["content"].startswith("TOOL RESULT (batch):")
-    ]
-    assert len(batch_results) == 1
-    report = batch_results[0]
-    assert "displayed_calls=2" in report
-    assert "displayed_items=2" in report
-    assert "showed to user" in report
 
 
 def _build_registry_capture(captured):

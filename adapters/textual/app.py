@@ -186,7 +186,6 @@ class AgentTextualApp(App):
             on_tool=self._on_tool,
             on_raw=self._on_raw,
             on_error=self._on_error,
-            on_display=self._on_display,
         )
         self._refresh_state()
         self._schedule_initial_input_focus()
@@ -1129,7 +1128,6 @@ class AgentTextualApp(App):
                 on_tool=self._on_tool,
                 on_raw=self._on_raw,
                 on_error=self._on_error,
-                on_display=self._on_display,
             )
         else:
             self.agent.set_llm(
@@ -1485,9 +1483,3 @@ class AgentTextualApp(App):
 
     def _on_error(self, message: str) -> None:
         print(f"[error] {message}", flush=True)
-
-    def _on_display(self, items: list) -> None:
-        for item in items:
-            title = getattr(item, "title", "Display item")
-            path = getattr(item, "display_path", getattr(item, "path", ""))
-            self._append_log("display", f"{title}\n{path}")
