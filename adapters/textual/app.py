@@ -38,36 +38,14 @@ class ClipboardInput(Input):
     """Input with reliable paste — uses terminal's Paste event when available."""
 
     def on_paste(self, event: Paste) -> None:
-        """Handle terminal-provided paste (right-click or terminal paste event)."""
-        event.stop()  # Prevent Input.on_paste from also handling it (double-paste)
+        """Insert a remote terminal/browser paste as a single input line."""
+        # Suppress Input's default handler, which keeps only the first line.
+        event.prevent_default()
+        event.stop()
         if event.text:
-            text = " ".join(event.text.split())
-            current = self.value
-            cp = self.cursor_position
-            self.value = current[:cp] + text + current[cp:]
-
-    def action_paste(self) -> None:
-        """Fallback when terminal doesn't send Paste event (Ctrl+V).
-
-        Uses PowerShell Get-Clipboard as the most reliable Windows API.
-        """
-        try:
-            import subprocess
-
-            r = subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
-                 "$OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-Clipboard -Raw"],
-                capture_output=True,
-                timeout=5,
-            )
-            text = r.stdout.decode("utf-8", errors="replace").strip() if r.stdout else ""
-            if text:
-                text = " ".join(text.split())
-                current = self.value
-                cp = self.cursor_position
-                self.value = current[:cp] + text + current[cp:]
-        except Exception:
-            pass
+            # Preserve meaningful intra-line spacing while replacing line breaks.
+            text = " ".join(event.text.splitlines())
+            self.replace(text, *self.selection)
 
 
 
@@ -90,7 +68,6 @@ class AgentTextualApp(App):
         ("ctrl+g", "cancel_overlay", "Back"),
 
         Binding("tab", "input_complete_command", show=False),
-        Binding("ctrl+v", "input_paste", show=False),
         Binding("ctrl+w", "input_delete_word_left", show=False),
         Binding("alt+backspace", "input_delete_word_left", show=False),
         Binding("alt+delete", "input_delete_word_right", show=False),
