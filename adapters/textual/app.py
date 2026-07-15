@@ -24,6 +24,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, VerticalScroll
 from textual.events import Paste
+from textual.geometry import Region
 from textual.suggester import SuggestFromList
 from textual.widgets import Footer, Input, Static, Tree
 
@@ -44,8 +45,21 @@ class ClipboardInput(Input):
         event.stop()
         if event.text:
             # Preserve meaningful intra-line spacing while replacing line breaks.
-            text = " ".join(event.text.splitlines())
+            # Expand tabs because Textual 8.2.7 accounts for them differently in
+            # cursor offsets and virtual content width, which can leave the final
+            # columns outside the input's horizontal scroll range.
+            text = " ".join(line.expandtabs(4) for line in event.text.splitlines())
             self.replace(text, *self.selection)
+            # A first update from an empty value does not trigger Input's normal
+            # cursor-scrolling watcher. Ensure a long paste follows the cursor.
+            self.call_after_refresh(self._scroll_cursor_into_view)
+
+    def _scroll_cursor_into_view(self) -> None:
+        self.scroll_to_region(
+            Region(self._cursor_offset, 0, width=1, height=1),
+            force=True,
+            animate=False,
+        )
 
 
 
@@ -62,7 +76,7 @@ class AgentTextualApp(App):
     ]
 
     BINDINGS = [
-        ("ctrl+c", "quit", "Quit"),
+        ("f10", "quit", "Quit"),
 
         ("f8", "toggle_theme", "Theme"),
         ("ctrl+g", "cancel_overlay", "Back"),
@@ -74,6 +88,7 @@ class AgentTextualApp(App):
 
         ("f9", "open_pending", "Pending"),
         ("f2", "open_models", "Models"),
+        ("f3", "open_chats", "Chats"),
     ]
 
     COMMANDS = [
@@ -905,7 +920,7 @@ class AgentTextualApp(App):
         if self._mode == "model_select":
             self._render_model_tree()
 
-    @work(thread=True, exclusive=True)
+    @work(thread=True, exclusive=True, group="model-listing")
     def _load_models_worker(self) -> None:
         self._from_any_thread(self._start_model_loading_incremental)
 
@@ -1143,6 +1158,14 @@ class AgentTextualApp(App):
             self.screen.remove_class("theme-dark")
             self.screen.add_class("theme-light")
 
+        # Markdown syntax themes and diff colors are selected in Python, so
+        # changing CSS classes alone is not enough for already-rendered content.
+        self._render_chat()
+        if self._mode == "pending_select":
+            self._render_pending_diff()
+        elif self._mode == "chat_select":
+            self._render_chat_detail()
+
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         if action in {"toggle_theme", "open_pending", "open_models", "open_chats"}:
             return self._mode == "chat"
@@ -1180,7 +1203,7 @@ class AgentTextualApp(App):
         self._set_processing(True)
         self._run_agent_step(text)
 
-    @work(thread=True, exclusive=True)
+    @work(thread=True, exclusive=True, group="agent")
     def _run_agent_step(self, text: str) -> None:
         try:
             if self.agent is None:
@@ -1450,13 +1473,13 @@ class AgentTextualApp(App):
             callback(*args)
 
     def _on_debug(self, message: str) -> None:
-        return
+        self._append_log("debug", message)
 
     def _on_tool(self, message: str) -> None:
-        return
+        self._append_log("tool", message)
 
     def _on_raw(self, message: str) -> None:
-        return
+        self._append_log("raw", message)
 
     def _on_error(self, message: str) -> None:
-        print(f"[error] {message}", flush=True)
+        self._append_log("error", message)
