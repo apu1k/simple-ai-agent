@@ -30,10 +30,16 @@ _SYNTHESIZER = KnowledgeSynthesizer(_CONFIG.synthesis)
         "max_capabilities": "Maximum capabilities to execute. Defaults to 3.",
         "include_trace": "Whether to include routing/debug trace. Defaults to false.",
         "allow_network": "Whether network-backed capabilities may run. Defaults to false.",
-        "response_mode": (
-            "Knowledge response format: 'synthesized', 'raw', or 'both'. "
-            "Defaults to 'synthesized'."
-        ),
+        "response_mode": {
+            "type": "string",
+            "enum": ["synthesized", "raw", "both"],
+            "description": (
+                "Use 'synthesized' for normal knowledge searches. Use 'raw' only "
+                "when exact source text or synthesis debugging is required. Use "
+                "'both' only when the user explicitly requests both a synthesis "
+                "and the complete raw evidence. When uncertain, use 'synthesized'."
+            ),
+        },
     },
     requires_state=True,
     example={

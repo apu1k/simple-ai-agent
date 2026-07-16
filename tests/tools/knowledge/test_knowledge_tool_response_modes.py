@@ -2,6 +2,8 @@ import importlib
 import json
 from types import SimpleNamespace
 
+from core.tool_registry import registry
+from runtime.prompt import build_system_prompt
 from tools.knowledge.models import EvidenceBundle, EvidenceItem, KnowledgeSearchResult
 
 
@@ -70,6 +72,20 @@ def _configure(monkeypatch, synthesizer, *, fallback_to_raw=True):
             )
         ),
     )
+
+
+def test_response_mode_schema_and_prompt_prefer_synthesized():
+    spec = registry.get("knowledge_search")
+    assert spec is not None
+    response_mode = spec.parameters["response_mode"]
+    assert isinstance(response_mode, dict)
+    assert response_mode["enum"] == ["synthesized", "raw", "both"]
+    assert "only when the user explicitly requests both" in response_mode["description"]
+
+    prompt = build_system_prompt(use_native_tools=True)
+    assert 'Use response_mode="synthesized" for ordinary knowledge searches.' in prompt
+    assert 'Never use "both" merely to increase confidence' in prompt
+    assert 'always choose "synthesized"' in prompt
 
 
 def test_raw_mode_does_not_call_synthesizer(monkeypatch, tmp_path):

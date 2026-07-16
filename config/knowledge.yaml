@@ -13,7 +13,7 @@ synthesis:
 
   # Empty means: use the currently selected provider and its credentials.
   # Set a providers.toml key here to use a dedicated provider instead.
-  provider_key: ""
+  provider_key: "openai"
   model: gpt-5.6-luna
 
   # Preserve knowledge-tool availability if synthesis times out, fails schema

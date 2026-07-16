@@ -175,6 +175,13 @@ General rules:
 - Use raw JSON only for tool calls (when not using native tool calling).
 - Use normal text only for final answers.
 
+Knowledge response-mode policy:
+- Use response_mode="synthesized" for ordinary knowledge searches.
+- Use response_mode="raw" only when the user needs exact quotations, direct source inspection, or synthesis debugging.
+- Use response_mode="both" only when the user explicitly asks for both a synthesis and the complete raw evidence.
+- Never use "both" merely to increase confidence, verify the synthesis, preserve options, or because you are uncertain.
+- When uncertain which knowledge response mode to use, always choose "synthesized".
+
 Operational constraints:
 - You have a maximum of {MAX_AGENT_STEPS} steps per user message.
 - Each call to the LLM (whether tool calls or a final answer) counts as one step.
