@@ -15,6 +15,16 @@ QdrantMode = Literal["local", "http"]
 
 
 @dataclass(frozen=True)
+class KnowledgeSynthesisConfig:
+    """Settings for reducing retrieved evidence with a dedicated LLM."""
+
+    enabled: bool = True
+    provider_key: str = ""
+    model: str = "gpt-5.6-luna"
+    fallback_to_raw: bool = True
+
+
+@dataclass(frozen=True)
 class QdrantDataCollectionConfig:
     """Configuration for a normal Qdrant evidence/data collection."""
 
@@ -53,6 +63,7 @@ class QdrantConfig:
 @dataclass(frozen=True)
 class KnowledgeConfig:
     qdrant: QdrantConfig = field(default_factory=QdrantConfig)
+    synthesis: KnowledgeSynthesisConfig = field(default_factory=KnowledgeSynthesisConfig)
 
 
 def load_knowledge_config(path: Path = DEFAULT_KNOWLEDGE_CONFIG_PATH) -> KnowledgeConfig:
@@ -72,7 +83,22 @@ def load_knowledge_config(path: Path = DEFAULT_KNOWLEDGE_CONFIG_PATH) -> Knowled
     if not isinstance(raw, dict):
         return KnowledgeConfig()
 
-    return KnowledgeConfig(qdrant=_parse_qdrant_config(raw.get("qdrant", {})))
+    return KnowledgeConfig(
+        qdrant=_parse_qdrant_config(raw.get("qdrant", {})),
+        synthesis=_parse_synthesis_config(raw.get("synthesis", {})),
+    )
+
+
+def _parse_synthesis_config(data: Any) -> KnowledgeSynthesisConfig:
+    if not isinstance(data, dict):
+        return KnowledgeSynthesisConfig()
+
+    return KnowledgeSynthesisConfig(
+        enabled=bool(data.get("enabled", True)),
+        provider_key=str(data.get("provider_key", "")).strip(),
+        model=str(data.get("model", "gpt-5.6-luna")).strip() or "gpt-5.6-luna",
+        fallback_to_raw=bool(data.get("fallback_to_raw", True)),
+    )
 
 
 def _parse_qdrant_config(data: Any) -> QdrantConfig:

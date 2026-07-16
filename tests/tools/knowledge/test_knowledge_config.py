@@ -62,6 +62,38 @@ def test_load_knowledge_config_falls_back_when_missing(tmp_path):
     assert config.qdrant.data_collections == {}
 
 
+def test_load_knowledge_synthesis_config(tmp_path):
+    config_path = tmp_path / "knowledge.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "synthesis:",
+                "  enabled: false",
+                "  provider_key: luna_provider",
+                "  model: gpt-5.6-luna",
+                "  fallback_to_raw: false",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_knowledge_config(config_path)
+
+    assert config.synthesis.enabled is False
+    assert config.synthesis.provider_key == "luna_provider"
+    assert config.synthesis.model == "gpt-5.6-luna"
+    assert config.synthesis.fallback_to_raw is False
+
+
+def test_missing_config_uses_default_enabled_synthesis(tmp_path):
+    config = load_knowledge_config(Path(tmp_path / "missing.yaml"))
+
+    assert config.synthesis.enabled is True
+    assert config.synthesis.provider_key == ""
+    assert config.synthesis.model == "gpt-5.6-luna"
+    assert config.synthesis.fallback_to_raw is True
+
+
 def test_invalid_qdrant_mode_falls_back_to_local(tmp_path):
     config_path = tmp_path / "knowledge.yaml"
     config_path.write_text(

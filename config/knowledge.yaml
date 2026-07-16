@@ -5,8 +5,20 @@
 # 2. data collections: normal vector databases containing evidence such as chats,
 #    memories, project files, PDFs, or other indexed documents.
 #
-# This default config is fully local. It connects to a Qdrant server bound
-# to localhost and does not require Qdrant Cloud or an API key.
+# Retrieval is local. When synthesis is enabled, retrieved evidence is sent to
+# the configured LLM provider before the compact result is returned to the main model.
+
+synthesis:
+  enabled: true
+
+  # Empty means: use the currently selected provider and its credentials.
+  # Set a providers.toml key here to use a dedicated provider instead.
+  provider_key: ""
+  model: gpt-5.6-luna
+
+  # Preserve knowledge-tool availability if synthesis times out, fails schema
+  # validation, or returns an unknown citation ID.
+  fallback_to_raw: true
 
 qdrant:
   enabled: true

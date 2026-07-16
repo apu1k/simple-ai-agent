@@ -3,18 +3,22 @@ from __future__ import annotations
 import json
 
 from tools._base import tool
+from tools.knowledge.config import load_knowledge_config
 from tools.knowledge.engine import KnowledgeEngine
 from tools.knowledge.models import KnowledgeSearchRequest
+from tools.knowledge.synthesizer import KnowledgeSynthesizer
 
 
 _ENGINE = KnowledgeEngine()
+_CONFIG = load_knowledge_config()
+_SYNTHESIZER = KnowledgeSynthesizer(_CONFIG.synthesis)
 
 
 @tool(
     description=(
         "Search the agent knowledge engine. This is the unified entry point for "
         "searching memories, previous chats, and future knowledge sources. "
-        "Returns structured evidence, not a final answer."
+        "Can return raw evidence, a compact cited synthesis, or both."
     ),
     params={
         "query": "Natural language search query.",
@@ -26,6 +30,10 @@ _ENGINE = KnowledgeEngine()
         "max_capabilities": "Maximum capabilities to execute. Defaults to 3.",
         "include_trace": "Whether to include routing/debug trace. Defaults to false.",
         "allow_network": "Whether network-backed capabilities may run. Defaults to false.",
+        "response_mode": (
+            "Knowledge response format: 'synthesized', 'raw', or 'both'. "
+            "Defaults to 'synthesized'."
+        ),
     },
     requires_state=True,
     example={
@@ -35,6 +43,7 @@ _ENGINE = KnowledgeEngine()
             "sources": "chats,memory",
             "max_results": 10,
             "max_capabilities": 2,
+            "response_mode": "synthesized",
         },
     },
 )
@@ -46,7 +55,9 @@ def knowledge_search(
     max_capabilities=3,
     include_trace=False,
     allow_network=False,
+    response_mode="synthesized",
 ) -> str:
+    mode = _parse_response_mode(response_mode)
     request = KnowledgeSearchRequest(
         query=query,
         max_results=int(max_results),
@@ -58,7 +69,61 @@ def knowledge_search(
     )
 
     result = _ENGINE.search(request)
-    return json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
+    raw = result.to_dict()
+
+    if mode == "raw":
+        return json.dumps(
+            {"response_mode": "raw", **raw},
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    if not _CONFIG.synthesis.enabled:
+        return json.dumps(
+            {
+                "response_mode": "raw",
+                "requested_response_mode": mode,
+                "synthesis_disabled": True,
+                **raw,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    try:
+        synthesized = _SYNTHESIZER.synthesize(result, state)
+    except Exception as exc:
+        if not _CONFIG.synthesis.fallback_to_raw:
+            raise
+        return json.dumps(
+            {
+                "response_mode": "raw",
+                "requested_response_mode": mode,
+                "synthesis_error": str(exc),
+                **raw,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    response = {
+        "query": result.query,
+        "response_mode": mode,
+        **synthesized,
+    }
+    if mode == "both":
+        response["raw"] = raw
+
+    return json.dumps(response, ensure_ascii=False, indent=2)
+
+
+def _parse_response_mode(value) -> str:
+    mode = str(value or "synthesized").strip().lower()
+    if mode not in {"synthesized", "raw", "both"}:
+        raise ValueError(
+            "response_mode must be one of: 'synthesized', 'raw', or 'both'."
+        )
+    return mode
 
 
 def _parse_bool(value, default: bool = False) -> bool:
