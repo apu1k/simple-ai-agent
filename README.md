@@ -91,7 +91,7 @@ key = "gemini_vertex"
 label = "Google Gemini (Vertex AI / ADC)"
 api_type = "gemini_vertex"
 project_env = "GOOGLE_CLOUD_PROJECT"
-location = "us-central1"
+location = "global"
 default_model = "gemini-2.5-flash"
 supports_model_listing = true
 ```
@@ -104,7 +104,7 @@ gcloud config set project YOUR_PROJECT_ID
 gcloud services enable aiplatform.googleapis.com --project YOUR_PROJECT_ID
 ```
 
-Then set `GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID` in `.env`. No Gemini API key is stored by this application. For local development ADC uses the credential file managed by `gcloud`; deployed environments should use an attached service account/workload identity instead.
+Then set `GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID` and `GOOGLE_CLOUD_LOCATION=global` in `.env`. The global endpoint is required for some Gemini 3.x models that appear in regional catalogues but cannot be invoked from those regional endpoints. No Gemini API key is stored by this application. For local development ADC uses the credential file managed by `gcloud`; deployed environments should use an attached service account/workload identity instead.
 
 Gemini models are discovered through the Vertex AI catalogue and filtered to generative Gemini models. If catalogue access fails, the configured `default_model` remains available. Gemini currently uses the agent's JSON tool-call protocol rather than Gemini-native function calling.
 
