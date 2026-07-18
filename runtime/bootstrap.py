@@ -33,7 +33,16 @@ def initialize_tools() -> None:
 
 def build_model_config_and_client(provider, model) -> tuple[ModelConfig, object]:
     """Create ModelConfig and LLM client from selected provider/model."""
-    if not provider.api_key:
+    if provider.api_type == "gemini_vertex":
+        if not provider.project:
+            raise ValueError(
+                f"Missing Google Cloud project ID for provider '{provider.label}'."
+            )
+        if not provider.location:
+            raise ValueError(
+                f"Missing Google Cloud location for provider '{provider.label}'."
+            )
+    elif not provider.api_key:
         envs = ", ".join(provider.api_key_envs) if provider.api_key_envs else "none configured"
         raise ValueError(
             f"Missing API key for provider '{provider.label}'. "
@@ -47,6 +56,8 @@ def build_model_config_and_client(provider, model) -> tuple[ModelConfig, object]
         api_key=provider.api_key,
         base_url=provider.base_url,
         api_type=provider.api_type,
+        project=provider.project,
+        location=provider.location,
     )
 
     from llm.providers import ProviderConfig
@@ -60,6 +71,8 @@ def build_model_config_and_client(provider, model) -> tuple[ModelConfig, object]
         default_model=config.model,
         supports_model_listing=provider.supports_model_listing,
         api_key_envs=provider.api_key_envs,
+        project=config.project,
+        location=config.location,
     )
 
     llm = create_llm_client(effective_provider, config.model)

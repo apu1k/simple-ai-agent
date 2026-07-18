@@ -16,7 +16,7 @@ from typing import Literal
 from config.settings import PROVIDERS_EXAMPLE_FILE, PROVIDERS_FILE
 
 
-ApiType = Literal["chat_completions", "responses", "completions"]
+ApiType = Literal["chat_completions", "responses", "completions", "gemini_vertex"]
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,8 @@ class ProviderConfig:
     default_model: str
     supports_model_listing: bool
     api_key_envs: tuple[str, ...] = ()
+    project: str | None = None
+    location: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +52,8 @@ def create_llm_client(provider: ProviderConfig, model: str):
         default_model=model,
         supports_model_listing=provider.supports_model_listing,
         api_key_envs=provider.api_key_envs,
+        project=provider.project,
+        location=provider.location,
     )
 
     # IMPORTANT: branch on effective.api_type (the normalized runtime config),
@@ -65,6 +69,10 @@ def create_llm_client(provider: ProviderConfig, model: str):
     if effective.api_type == "completions":
         from llm.openai_completions import OpenAICompletionsClient
         return OpenAICompletionsClient(effective)
+
+    if effective.api_type == "gemini_vertex":
+        from llm.gemini_vertex import GeminiVertexClient
+        return GeminiVertexClient(effective)
 
     raise ValueError(f"Unsupported api_type: '{effective.api_type}'")
 
@@ -221,17 +229,21 @@ def _build_provider(data: dict, index: int) -> ProviderConfig:
     key = _required_str(data, "key", index)
     label = _required_str(data, "label", index)
     api_type_raw = _required_str(data, "api_type", index)
-    if api_type_raw not in {"chat_completions", "responses", "completions"}:
+    if api_type_raw not in {"chat_completions", "responses", "completions", "gemini_vertex"}:
         raise ValueError(f"Provider #{index} has invalid api_type: '{api_type_raw}'")
     api_type: ApiType = api_type_raw  # type: ignore
 
     api_key_envs = _env_names(data, "api_key_env", "api_key_envs")
     base_url_envs = _env_names(data, "base_url_env", "base_url_envs")
     model_envs = _env_names(data, "default_model_env", "default_model_envs")
+    project_envs = _env_names(data, "project_env", "project_envs")
+    location_envs = _env_names(data, "location_env", "location_envs")
 
     api_key = _optional_str(data, "api_key") or _first_env(api_key_envs)
     base_url = _first_env(base_url_envs) or _optional_str(data, "base_url")
     default_model = _first_env(model_envs) or _optional_str(data, "default_model") or ""
+    project = _first_env(project_envs) or _optional_str(data, "project")
+    location = _first_env(location_envs) or _optional_str(data, "location")
 
     supports_listing = data.get("supports_model_listing", True)
     if not isinstance(supports_listing, bool):
@@ -246,6 +258,8 @@ def _build_provider(data: dict, index: int) -> ProviderConfig:
         default_model=default_model,
         supports_model_listing=supports_listing,
         api_key_envs=api_key_envs,
+        project=project,
+        location=location,
     )
 
 

@@ -9,7 +9,7 @@ The project is independent and is not affiliated with any university, research i
 ## Highlights
 
 - Textual terminal UI with chat, model switching, chat history, and pending-change review
-- OpenAI Responses API and OpenAI-compatible Chat Completions support
+- OpenAI Responses API, OpenAI-compatible Chat Completions, and Google Gemini through Vertex AI
 - Native tool calling where supported, with a JSON protocol fallback
 - Bounded, fail-fast tool batches
 - Exact-match file edits that remain pending until explicitly approved
@@ -21,7 +21,7 @@ The project is independent and is not affiliated with any university, research i
 ## Requirements
 
 - Python 3.11 or newer
-- An API key for the provider you configure, unless your local endpoint does not require one
+- An API key for key-based providers, or Google Cloud Application Default Credentials for Vertex AI
 
 ## Installation
 
@@ -82,6 +82,31 @@ api_key_env = "OPENAI_API_KEY"
 default_model = "gpt-4.1-mini"
 supports_model_listing = true
 ```
+
+Google Gemini through Vertex AI and Application Default Credentials (ADC):
+
+```toml
+[[providers]]
+key = "gemini_vertex"
+label = "Google Gemini (Vertex AI / ADC)"
+api_type = "gemini_vertex"
+project_env = "GOOGLE_CLOUD_PROJECT"
+location = "us-central1"
+default_model = "gemini-2.5-flash"
+supports_model_listing = false
+```
+
+Install the Google Cloud CLI, enable Vertex AI in the project, and authenticate once:
+
+```bash
+gcloud auth application-default login
+gcloud config set project YOUR_PROJECT_ID
+gcloud services enable aiplatform.googleapis.com --project YOUR_PROJECT_ID
+```
+
+Then set `GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID` in `.env`. No Gemini API key is stored by this application. For local development ADC uses the credential file managed by `gcloud`; deployed environments should use an attached service account/workload identity instead.
+
+Gemini currently uses the agent's JSON tool-call protocol rather than Gemini-native function calling.
 
 Generic OpenAI-compatible example:
 

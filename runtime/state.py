@@ -19,7 +19,7 @@ from editing.store import EditStore
 from runtime.chat_store import ChatStore
 
 
-ApiType = Literal["chat_completions", "responses", "completions"]
+ApiType = Literal["chat_completions", "responses", "completions", "gemini_vertex"]
 
 
 @dataclass
@@ -27,9 +27,11 @@ class ModelConfig:
     provider_key: str
     provider_label: str
     model: str
-    api_key: str
+    api_key: str | None
     base_url: str | None
     api_type: ApiType
+    project: str | None = None
+    location: str | None = None
 
 
 @dataclass

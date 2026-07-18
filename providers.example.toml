@@ -10,6 +10,18 @@
 #
 # API keys should usually stay in .env.
 # Use api_key_env or api_key_envs to reference environment variables.
+# Vertex AI providers use Google Application Default Credentials instead.
+
+[[providers]]
+key = "gemini_vertex"
+label = "Google Gemini (Vertex AI / ADC)"
+api_type = "gemini_vertex"
+project_env = "GOOGLE_CLOUD_PROJECT"
+location_env = "GOOGLE_CLOUD_LOCATION"
+location = "us-central1"
+default_model_env = "GEMINI_DEFAULT_MODEL"
+default_model = "gemini-2.5-flash"
+supports_model_listing = false
 
 [[providers]]
 key = "openai"
