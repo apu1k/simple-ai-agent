@@ -6,6 +6,7 @@ Loads provider configs from providers.toml and creates LLM clients.
 To add a new provider type:
   1. Create llm/myprovider.py implementing LLMClient
   2. Add its api_type string to the factory in create_llm_client()
+  3. Register its catalogue backend in llm/model_listing.py when supported
 """
 
 import os
@@ -100,18 +101,9 @@ def list_provider_models(
     if not provider.supports_model_listing:
         return []
     try:
-        from openai import OpenAI
+        from llm.model_listing import list_models
 
-        kwargs = {
-            "api_key": provider.api_key,
-            "timeout": timeout,
-            "max_retries": max_retries,
-        }
-        if provider.base_url:
-            kwargs["base_url"] = provider.base_url
-
-        client = OpenAI(**kwargs)
-        return sorted(m.id for m in client.models.list().data)
+        return list_models(provider, timeout=timeout, max_retries=max_retries)
     except Exception as e:
         print(f"Warning: Could not fetch models for {provider.label}: {e}")
         return []

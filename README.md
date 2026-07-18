@@ -93,7 +93,7 @@ api_type = "gemini_vertex"
 project_env = "GOOGLE_CLOUD_PROJECT"
 location = "us-central1"
 default_model = "gemini-2.5-flash"
-supports_model_listing = false
+supports_model_listing = true
 ```
 
 Install the Google Cloud CLI, enable Vertex AI in the project, and authenticate once:
@@ -106,7 +106,7 @@ gcloud services enable aiplatform.googleapis.com --project YOUR_PROJECT_ID
 
 Then set `GOOGLE_CLOUD_PROJECT=YOUR_PROJECT_ID` in `.env`. No Gemini API key is stored by this application. For local development ADC uses the credential file managed by `gcloud`; deployed environments should use an attached service account/workload identity instead.
 
-Gemini currently uses the agent's JSON tool-call protocol rather than Gemini-native function calling.
+Gemini models are discovered through the Vertex AI catalogue and filtered to generative Gemini models. If catalogue access fails, the configured `default_model` remains available. Gemini currently uses the agent's JSON tool-call protocol rather than Gemini-native function calling.
 
 Generic OpenAI-compatible example:
 

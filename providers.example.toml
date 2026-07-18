@@ -21,7 +21,7 @@ location_env = "GOOGLE_CLOUD_LOCATION"
 location = "us-central1"
 default_model_env = "GEMINI_DEFAULT_MODEL"
 default_model = "gemini-2.5-flash"
-supports_model_listing = false
+supports_model_listing = true
 
 [[providers]]
 key = "openai"
