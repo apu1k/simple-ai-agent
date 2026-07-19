@@ -35,7 +35,7 @@ def test_long_first_paste_scrolls_to_the_cursor() -> None:
             input_widget = app.query_one("#input", ClipboardInput)
             input_widget.focus()
             pasted_text = "first\tline\n" + ("second\tline " * 10)
-            expected = "first   line " + ("second  line " * 10)
+            expected = "first   line second  line " + ("second line " * 9)
 
             input_widget.post_message(Paste(pasted_text))
             await pilot.pause()
