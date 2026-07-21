@@ -1,11 +1,10 @@
 """
 runtime/prompt.py
 
-Builds the LLM system prompt dynamically from the tool registry.
+Builds the LLM system prompt from an agent's explicit tool registry.
 
-After autodiscover() has run, registry.all() contains every registered tool.
-build_system_prompt() formats their names, descriptions, parameters, and
-examples into the prompt that teaches the LLM how to use them.
+After autodiscovery, a capability profile selects an independent subset of the
+source registry. build_system_prompt() describes only that selected subset.
 
 For native tool calling, the prompt omits JSON syntax instructions since
 tools are passed via the API instead.
@@ -13,7 +12,7 @@ tools are passed via the API instead.
 
 import json
 from config import MAX_AGENT_STEPS, MAX_BATCH_TOOL_CALLS
-from core.tool_registry import registry
+from core.tool_registry import ToolRegistry, registry
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -26,9 +25,9 @@ def _format_tool_signature(name: str, spec) -> str:
     return f"{name}({', '.join(spec.parameters.keys())})"
 
 
-def _build_tools_section() -> str:
+def _build_tools_section(tool_registry: ToolRegistry) -> str:
     lines = []
-    for name, spec in registry.all().items():
+    for name, spec in tool_registry.all().items():
         sig = _format_tool_signature(name, spec)
         lines.append(f"- {sig}: {spec.description}")
 
@@ -136,15 +135,21 @@ Tool calling rules:
 """
 
 
-def build_system_prompt(state: "AgentState" = None, use_native_tools: bool = False) -> str:
-    """Build the system prompt.
-    
+def build_system_prompt(
+    state: "AgentState" = None,
+    use_native_tools: bool = False,
+    tool_registry: ToolRegistry | None = None,
+) -> str:
+    """Build a system prompt describing only the agent's available tools.
+
     Args:
         state: Runtime state for context injection (optional).
-        use_native_tools: If True, omit JSON syntax instructions
-                         (tools are passed via API instead).
+        use_native_tools: If True, omit JSON syntax instructions.
+        tool_registry: Explicit registry assigned to this agent. The global
+            source registry remains the compatibility default for direct callers.
     """
-    tools_section = _build_tools_section()
+    active_registry = tool_registry if tool_registry is not None else registry
+    tools_section = _build_tools_section(active_registry)
     
     parts = []
     
@@ -164,23 +169,13 @@ def build_system_prompt(state: "AgentState" = None, use_native_tools: bool = Fal
 Filesystem behavior:
 - You are connected to a local runtime with a current working directory.
 - Relative paths are resolved against the current working directory.
-- Use ls() to inspect directories before assuming file names.
-- Use find_files() to locate files by name or extension.
-- Use search_text() to locate code, symbols, functions, or specific text.
-- Use read_file() when you need to inspect or reason about file contents.
-- Use pending file-operation tools for all modifications; never rewrite files directly.
+- Inspect available files with the listed tools rather than assuming file names.
+- If mutation tools are listed, use their pending operations; never bypass them.
 
 General rules:
 - Use only the listed tools.
 - Use raw JSON only for tool calls (when not using native tool calling).
 - Use normal text only for final answers.
-
-Knowledge response-mode policy:
-- Use response_mode="synthesized" for ordinary knowledge searches.
-- Use response_mode="raw" only when the user needs exact quotations, direct source inspection, or synthesis debugging.
-- Use response_mode="both" only when the user explicitly asks for both a synthesis and the complete raw evidence.
-- Never use "both" merely to increase confidence, verify the synthesis, preserve options, or because you are uncertain.
-- When uncertain which knowledge response mode to use, always choose "synthesized".
 
 Operational constraints:
 - You have a maximum of {MAX_AGENT_STEPS} steps per user message.
@@ -188,5 +183,15 @@ Operational constraints:
 - You can make up to {MAX_BATCH_TOOL_CALLS} tool calls in a single batch response.
 - Plan your actions carefully, use batch tool calls when possible, and produce a final answer before running out of steps.
 """)
-    
+
+    if "knowledge_search" in active_registry:
+        parts.append("""
+Knowledge response-mode policy:
+- Use response_mode="synthesized" for ordinary knowledge searches.
+- Use response_mode="raw" only for exact quotations, source inspection, or synthesis debugging.
+- Use response_mode="both" only when the user explicitly requests synthesis and complete raw evidence.
+- Never use "both" merely to increase confidence, verify synthesis, preserve options, or because you are uncertain.
+- When uncertain which knowledge response mode to use, always choose "synthesized".
+""")
+
     return "\n\n".join(parts)

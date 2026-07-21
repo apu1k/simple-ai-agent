@@ -72,7 +72,7 @@ class Agent:
         """
         self.state = state
         self.llm = llm
-        self.registry = tool_registry or registry
+        self.registry = tool_registry if tool_registry is not None else registry
         self.messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
         # Callbacks — default to no-op so callers don't need to pass them all

@@ -10,8 +10,8 @@ Usage in a tool file:
     def add(a, b):
         return a + b
 
-The registry is a singleton. Autodiscovery imports all modules under `tools/`
-so their decorators fire. runtime/loop.py calls autodiscover() once at startup.
+Tool decorators register discovered tools in a source registry. Agent runtimes
+must derive an explicit capability registry from that source before execution.
 
 No I/O, no imports from this project beyond this file.
 """
@@ -61,6 +61,27 @@ class ToolRegistry:
 
     def names(self) -> list[str]:
         return list(self._tools.keys())
+
+    def select(self, names: list[str] | tuple[str, ...], *, strict: bool = True) -> "ToolRegistry":
+        """Return an independent registry containing only the named tools.
+
+        ``strict=True`` makes capability profiles fail closed when a configured
+        tool was not discovered, rather than silently granting an incomplete or
+        unexpected set of capabilities.
+        """
+        selected = ToolRegistry()
+        missing: list[str] = []
+        for name in names:
+            spec = self.get(name)
+            if spec is None:
+                missing.append(name)
+                continue
+            selected.register(spec)
+
+        if strict and missing:
+            missing_list = ", ".join(sorted(missing))
+            raise ValueError(f"Unknown tool(s) in capability profile: {missing_list}")
+        return selected
 
     def __contains__(self, name: str) -> bool:
         return name in self._tools

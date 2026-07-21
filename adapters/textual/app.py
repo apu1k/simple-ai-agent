@@ -362,7 +362,13 @@ class AgentTextualApp(App):
         if command == "\\new_chat":
             session_id = start_new_chat(self.state)
             if self.agent is not None:
-                self.agent.reset(build_system_prompt())
+                self.agent.reset(
+                    build_system_prompt(
+                        self.state,
+                        use_native_tools=getattr(self.llm, "supports_native_tools", False),
+                        tool_registry=self.agent.registry,
+                    )
+                )
             self._messages.clear()
             self._render_chat()
             self._append_chat("System", f"Started new chat session: {session_id}")
@@ -374,7 +380,13 @@ class AgentTextualApp(App):
 
         if command == "\\reset":
             if self.agent is not None:
-                self.agent.reset(build_system_prompt())
+                self.agent.reset(
+                    build_system_prompt(
+                        self.state,
+                        use_native_tools=getattr(self.llm, "supports_native_tools", False),
+                        tool_registry=self.agent.registry,
+                    )
+                )
             self._append_chat("System", "Conversation context reset.")
             return
 
@@ -872,7 +884,13 @@ class AgentTextualApp(App):
         self._render_chat()
 
         if self.agent is not None:
-            self.agent.reset(build_system_prompt())
+            self.agent.reset(
+                build_system_prompt(
+                    self.state,
+                    use_native_tools=getattr(self.llm, "supports_native_tools", False),
+                    tool_registry=self.agent.registry,
+                )
+            )
             for turn in turns:
                 self.agent.messages.append({"role": "user", "content": str(turn.get("user", ""))})
                 self.agent.messages.append({"role": "assistant", "content": str(turn.get("assistant_final", ""))})
@@ -1127,6 +1145,7 @@ class AgentTextualApp(App):
                 system_prompt=build_system_prompt(
                     self.state,
                     use_native_tools=getattr(self.llm, 'supports_native_tools', False),
+                    tool_registry=self.agent.registry,
                 ),
             )
         self._refresh_state()

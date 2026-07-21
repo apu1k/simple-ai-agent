@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 from core.agent import Agent
-from core.tool_registry import autodiscover
+from core.tool_registry import ToolRegistry, autodiscover
 from llm.providers import create_llm_client, PROVIDERS
 from config.settings import DEBUG_LOGS
 
@@ -24,6 +24,7 @@ if DEBUG_LOGS:
 from runtime.chat_store import ChatStore
 from runtime.prompt import build_system_prompt
 from runtime.state import AgentState, ModelConfig
+from runtime.tool_profiles import AgentProfile, build_profile_registry
 
 
 def initialize_tools() -> None:
@@ -114,17 +115,29 @@ def create_agent(
     on_tool: Callable[[str], None] | None = None,
     on_raw: Callable[[str], None] | None = None,
     on_error: Callable[[str], None] | None = None,
+    profile: AgentProfile | str = AgentProfile.HEAD,
+    tool_registry: ToolRegistry | None = None,
 ) -> Agent:
     """Create an Agent wired with frontend callbacks.
     
     Automatically detects if the LLM supports native tool calling
     and builds the system prompt accordingly.
     """
+    # A caller may inject a registry for tests or specialized composition.
+    # Normal runtimes always derive one from an explicit, fail-closed profile.
+    active_registry = (
+        tool_registry if tool_registry is not None else build_profile_registry(profile)
+    )
+
     # Detect native tool support
     use_native_tools = getattr(llm, 'supports_native_tools', False)
-    
-    # Build prompt with appropriate tool instructions
-    system_prompt = build_system_prompt(state, use_native_tools=use_native_tools)
+
+    # Build prompt from the exact registry that the Agent will execute against.
+    system_prompt = build_system_prompt(
+        state,
+        use_native_tools=use_native_tools,
+        tool_registry=active_registry,
+    )
     
     return Agent(
         system_prompt=system_prompt,
@@ -134,4 +147,5 @@ def create_agent(
         on_tool=on_tool,
         on_raw=on_raw,
         on_error=on_error,
+        tool_registry=active_registry,
     )
