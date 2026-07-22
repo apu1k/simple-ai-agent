@@ -15,6 +15,8 @@ load_dotenv(ENV_FILE)
 
 PROVIDERS_FILE = PROJECT_ROOT / "providers.toml"
 PROVIDERS_EXAMPLE_FILE = PROJECT_ROOT / "providers.example.toml"
+OPERATIONAL_DATA_DIR = PROJECT_ROOT / ".agent_runtime"
+OPERATIONAL_DATABASE = OPERATIONAL_DATA_DIR / "operations.sqlite3"
 
 # Agent operational limits
 MAX_AGENT_STEPS = 10

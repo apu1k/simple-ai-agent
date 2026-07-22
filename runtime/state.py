@@ -8,7 +8,7 @@ AgentState holds everything the agent needs at runtime:
   - chat_store:      owns persistent chat/session history
   - chat_session_id: current persistent chat session id (lazily created)
 
-ModelConfig is a plain dataclass; it's updated when the user runs \models.
+ModelConfig is a plain dataclass; it's updated when the user runs \\models.
 """
 
 from dataclasses import dataclass, field
@@ -17,6 +17,7 @@ from typing import Literal
 
 from editing.store import EditStore
 from runtime.chat_store import ChatStore
+from night_shifts.storage import ToolCallStore
 
 
 ApiType = Literal["chat_completions", "responses", "completions", "gemini_vertex"]
@@ -41,3 +42,4 @@ class AgentState:
     edit_store: EditStore = field(default_factory=EditStore)
     chat_store: ChatStore = field(default_factory=ChatStore)
     chat_session_id: str | None = None
+    tool_call_store: ToolCallStore | None = None

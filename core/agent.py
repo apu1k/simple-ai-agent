@@ -23,6 +23,7 @@ from config import MAX_AGENT_STEPS, MAX_BATCH_TOOL_CALLS
 from core import protocol
 from core.tool_registry import registry
 from llm.base import LLMResponse, NativeToolOutput
+from night_shifts.models import ToolCallRecord, ToolCallStatus
 
 if TYPE_CHECKING:
     from llm.base import LLMClient
@@ -59,6 +60,8 @@ class Agent:
         on_raw: Callable[[str], None] | None = None,
         on_error: Callable[[str], None] | None = None,
         tool_registry: "ToolRegistry | None" = None,
+        agent_profile: str = "head",
+        job_id: str | None = None,
     ):
         """
         Args:
@@ -73,6 +76,8 @@ class Agent:
         self.state = state
         self.llm = llm
         self.registry = tool_registry if tool_registry is not None else registry
+        self.agent_profile = agent_profile
+        self.job_id = job_id
         self.messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
         # Callbacks — default to no-op so callers don't need to pass them all
@@ -333,14 +338,48 @@ class Agent:
                 "content": content,
             })
 
+    def _start_tool_audit(self, action: str, tool_input: dict) -> str | None:
+        """Start a best-effort operational audit record without affecting execution."""
+        store = getattr(self.state, "tool_call_store", None)
+        if store is None:
+            return None
+        try:
+            return store.start(ToolCallRecord(
+                tool_name=action,
+                arguments=tool_input,
+                agent_profile=self.agent_profile,
+                job_id=self.job_id,
+                session_id=getattr(self.state, "chat_session_id", None),
+            ))
+        except Exception as exc:
+            self._debug(f"TOOL AUDIT START FAILED: {exc}")
+            return None
+
+    def _complete_tool_audit(
+        self,
+        call_id: str | None,
+        status: ToolCallStatus,
+        result: str | None,
+        error: str | None,
+    ) -> None:
+        if call_id is None:
+            return
+        store = getattr(self.state, "tool_call_store", None)
+        try:
+            store.complete(call_id, status=status, result=result, error=error)
+        except Exception as exc:
+            self._debug(f"TOOL AUDIT COMPLETION FAILED: {exc}")
+
     def _execute_one_tool_call(self, action: str, tool_input: dict) -> tuple[str, str, str | None]:
         """Execute one tool call and return status, observation, and error."""
+        audit_id = self._start_tool_audit(action, tool_input)
         if action not in self.registry:
             error = (
                 f"Error: Tool '{action}' does not exist. "
                 f"Available tools: {', '.join(self.registry.names())}"
             )
             self._error(error)
+            self._complete_tool_audit(audit_id, ToolCallStatus.FAILED, error, error)
             return "failed", error, error
 
         spec = self.registry.get(action)
@@ -351,15 +390,19 @@ class Agent:
             else:
                 raw_result = spec.function(**tool_input)
 
-            return "success", str(raw_result), None
+            observation = str(raw_result)
+            self._complete_tool_audit(audit_id, ToolCallStatus.SUCCESS, observation, None)
+            return "success", observation, None
 
         except TypeError as e:
             observation = f"Error: Invalid arguments for tool '{action}': {e}"
             self._error(observation)
+            self._complete_tool_audit(audit_id, ToolCallStatus.FAILED, observation, observation)
             return "failed", observation, observation
         except Exception as e:
             observation = f"Error: Tool execution failed for '{action}': {e}"
             self._error(observation)
+            self._complete_tool_audit(audit_id, ToolCallStatus.FAILED, observation, observation)
             return "failed", observation, observation
 
     def _execute_tool_batch(self, calls: list[protocol.ToolCall]) -> list[BatchToolRecord]:

@@ -12,7 +12,8 @@ from typing import Callable
 from core.agent import Agent
 from core.tool_registry import ToolRegistry, autodiscover
 from llm.providers import create_llm_client, PROVIDERS
-from config.settings import DEBUG_LOGS
+from config.settings import DEBUG_LOGS, OPERATIONAL_DATABASE
+from night_shifts.storage import ToolCallStore
 
 # Debug: print loaded providers (gated)
 import sys
@@ -99,11 +100,14 @@ def build_model_config_and_client(provider, model) -> tuple[ModelConfig, object]
 
 
 def create_initial_state(model_config: ModelConfig) -> AgentState:
-    """Create initial runtime state."""
+    """Create initial runtime state and remove expired operational audit rows."""
+    tool_call_store = ToolCallStore(OPERATIONAL_DATABASE)
+    tool_call_store.purge_expired()
     return AgentState(
         cwd=Path.cwd(),
         model_config=model_config,
         chat_store=ChatStore(background_indexing_enabled=True),
+        tool_call_store=tool_call_store,
     )
 
 
@@ -148,4 +152,5 @@ def create_agent(
         on_raw=on_raw,
         on_error=on_error,
         tool_registry=active_registry,
+        agent_profile=AgentProfile(profile).value,
     )

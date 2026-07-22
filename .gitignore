@@ -10,6 +10,7 @@ providers.toml
 # Local agent files
 .agent_history
 .agent_chat_history/
+.agent_runtime/
 
 # Python
 __pycache__/
