@@ -9,6 +9,7 @@ from night_shifts.models import (
     ToolCallRecord,
     ToolCallStatus,
 )
+from night_shifts.protocol import WorkerOutcome, WorkerResult, WorkerTask
 from night_shifts.service import NightShiftService
 
 __all__ = [
@@ -20,4 +21,7 @@ __all__ = [
     "NightShiftService",
     "ToolCallRecord",
     "ToolCallStatus",
+    "WorkerOutcome",
+    "WorkerResult",
+    "WorkerTask",
 ]
