@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from night_shifts.models import NightShiftEvent, NightShiftJob
+from night_shifts.models import AgentPlan, NightShiftEvent, NightShiftJob
 
 PROTOCOL_VERSION = 1
 
@@ -31,6 +31,7 @@ class WorkerTask:
     acceptance_criteria: tuple[str, ...] = ()
     repository_id: str | None = None
     starting_revision: str | None = None
+    plan: AgentPlan = AgentPlan.FLEX
 
     @classmethod
     def from_job(cls, job: NightShiftJob) -> "WorkerTask":
@@ -41,6 +42,7 @@ class WorkerTask:
             acceptance_criteria=job.acceptance_criteria,
             repository_id=job.repository_id,
             starting_revision=job.starting_revision,
+            plan=job.plan,
         )
 
 
@@ -63,6 +65,7 @@ def encode_task(task: WorkerTask) -> str:
         "acceptance_criteria": list(task.acceptance_criteria),
         "repository_id": task.repository_id,
         "starting_revision": task.starting_revision,
+        "plan": task.plan.value,
     })
 
 
@@ -76,6 +79,7 @@ def decode_task(line: str) -> WorkerTask:
         acceptance_criteria=tuple(_text_list(payload.get("acceptance_criteria", []))),
         repository_id=_optional_text(payload, "repository_id"),
         starting_revision=_optional_text(payload, "starting_revision"),
+        plan=_agent_plan(payload.get("plan", AgentPlan.FLEX.value)),
     )
 
 
@@ -193,3 +197,10 @@ def _text_list(value: Any) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ProtocolError("Expected a list of strings")
     return value
+
+
+def _agent_plan(value: Any) -> AgentPlan:
+    try:
+        return AgentPlan(value)
+    except (TypeError, ValueError) as exc:
+        raise ProtocolError(f"Unknown agent plan: {value!r}") from exc

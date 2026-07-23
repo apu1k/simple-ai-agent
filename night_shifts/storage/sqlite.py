@@ -13,11 +13,15 @@ from pathlib import Path
 from typing import Any
 
 from night_shifts.models import (
+    AgentPlan,
     ArtifactRecord,
     JobBudget,
     JobStatus,
     NightShiftEvent,
     NightShiftJob,
+    SandboxRecord,
+    SandboxSpec,
+    SandboxStatus,
     ToolCallRecord,
     ToolCallStatus,
     utc_now,
@@ -29,6 +33,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     title TEXT NOT NULL,
     objective TEXT NOT NULL,
     worker_profile TEXT NOT NULL,
+    plan TEXT NOT NULL DEFAULT 'flex',
     repository_id TEXT,
     starting_revision TEXT,
     acceptance_criteria_json TEXT NOT NULL,
@@ -76,6 +81,18 @@ CREATE TABLE IF NOT EXISTS artifacts (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS artifacts_job_created_idx ON artifacts(job_id, created_at);
+CREATE TABLE IF NOT EXISTS sandboxes (
+    sandbox_id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    backend TEXT NOT NULL,
+    external_id TEXT,
+    status TEXT NOT NULL,
+    spec_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_error TEXT
+);
+CREATE INDEX IF NOT EXISTS sandboxes_job_created_idx ON sandboxes(job_id, created_at);
 """
 
 _SENSITIVE_KEYS = frozenset({
@@ -117,6 +134,18 @@ class _SQLiteStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.executescript(_SCHEMA)
+            self._migrate_schema(connection)
+
+    @staticmethod
+    def _migrate_schema(connection: sqlite3.Connection) -> None:
+        """Apply small additive migrations to databases created by earlier phases."""
+        job_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(jobs)").fetchall()
+        }
+        if "plan" not in job_columns:
+            connection.execute(
+                "ALTER TABLE jobs ADD COLUMN plan TEXT NOT NULL DEFAULT 'flex'"
+            )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=10)
@@ -130,7 +159,11 @@ class JobStore(_SQLiteStore):
     def create(self, job: NightShiftJob) -> None:
         with self._connect() as connection:
             connection.execute(
-                """INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO jobs (
+                job_id, title, objective, worker_profile, plan, repository_id,
+                starting_revision, acceptance_criteria_json, budget_json, status,
+                created_at, updated_at, cancellation_requested, result_summary
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 _job_values(job),
             )
 
@@ -138,7 +171,7 @@ class JobStore(_SQLiteStore):
         values = _job_values(job)
         with self._connect() as connection:
             cursor = connection.execute(
-                """UPDATE jobs SET title=?, objective=?, worker_profile=?, repository_id=?,
+                """UPDATE jobs SET title=?, objective=?, worker_profile=?, plan=?, repository_id=?,
                 starting_revision=?, acceptance_criteria_json=?, budget_json=?, status=?,
                 created_at=?, updated_at=?, cancellation_requested=?, result_summary=?
                 WHERE job_id=?""",
@@ -198,6 +231,44 @@ class EventStore(_SQLiteStore):
             )
             for row in rows
         ]
+
+
+class SandboxStore(_SQLiteStore):
+    """Persist host-observed VM/sandbox identity, policy, and lifecycle state."""
+
+    def create(self, sandbox: SandboxRecord) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO sandboxes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                _sandbox_values(sandbox),
+            )
+
+    def update(self, sandbox: SandboxRecord) -> None:
+        values = _sandbox_values(sandbox)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """UPDATE sandboxes SET job_id=?, backend=?, external_id=?, status=?,
+                spec_json=?, created_at=?, updated_at=?, last_error=? WHERE sandbox_id=?""",
+                (*values[1:], values[0]),
+            )
+            if cursor.rowcount != 1:
+                raise KeyError(f"Unknown sandbox: {sandbox.sandbox_id}")
+
+    def get(self, sandbox_id: str) -> SandboxRecord | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM sandboxes WHERE sandbox_id=?", (sandbox_id,)
+            ).fetchone()
+        return _sandbox_from_row(row) if row else None
+
+    def list(self, *, job_id: str | None = None) -> list[SandboxRecord]:
+        where = " WHERE job_id=?" if job_id is not None else ""
+        params: tuple[Any, ...] = (job_id,) if job_id is not None else ()
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM sandboxes{where} ORDER BY created_at ASC", params
+            ).fetchall()
+        return [_sandbox_from_row(row) for row in rows]
 
 
 class ToolCallStore(_SQLiteStore):
@@ -312,6 +383,7 @@ def _job_values(job: NightShiftJob) -> tuple[Any, ...]:
         job.title,
         job.objective,
         job.worker_profile,
+        job.plan.value,
         job.repository_id,
         job.starting_revision,
         _json(job.acceptance_criteria),
@@ -335,6 +407,7 @@ def _job_from_row(row: sqlite3.Row) -> NightShiftJob:
         title=row["title"],
         objective=row["objective"],
         worker_profile=row["worker_profile"],
+        plan=AgentPlan(row["plan"]),
         repository_id=row["repository_id"],
         starting_revision=row["starting_revision"],
         acceptance_criteria=tuple(json.loads(row["acceptance_criteria_json"])),
@@ -344,6 +417,39 @@ def _job_from_row(row: sqlite3.Row) -> NightShiftJob:
         updated_at=datetime.fromisoformat(row["updated_at"]),
         cancellation_requested=bool(row["cancellation_requested"]),
         result_summary=row["result_summary"],
+    )
+
+
+def _sandbox_values(sandbox: SandboxRecord) -> tuple[Any, ...]:
+    return (
+        sandbox.sandbox_id,
+        sandbox.job_id,
+        sandbox.backend,
+        sandbox.external_id,
+        sandbox.status.value,
+        _json({
+            "cpu_count": sandbox.spec.cpu_count,
+            "memory_mb": sandbox.spec.memory_mb,
+            "disk_gb": sandbox.spec.disk_gb,
+            "network_enabled": sandbox.spec.network_enabled,
+        }),
+        sandbox.created_at.isoformat(),
+        sandbox.updated_at.isoformat(),
+        sandbox.last_error,
+    )
+
+
+def _sandbox_from_row(row: sqlite3.Row) -> SandboxRecord:
+    return SandboxRecord(
+        sandbox_id=row["sandbox_id"],
+        job_id=row["job_id"],
+        backend=row["backend"],
+        external_id=row["external_id"],
+        status=SandboxStatus(row["status"]),
+        spec=SandboxSpec(**json.loads(row["spec_json"])),
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+        last_error=row["last_error"],
     )
 
 

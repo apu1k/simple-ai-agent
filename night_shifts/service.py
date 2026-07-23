@@ -24,7 +24,11 @@ class NightShiftService:
             job_id=job.job_id,
             event_type="job_created",
             actor=actor,
-            payload={"status": job.status.value, "worker_profile": job.worker_profile},
+            payload={
+                "status": job.status.value,
+                "worker_profile": job.worker_profile,
+                "plan": job.plan.value,
+            },
         ))
         return job
 

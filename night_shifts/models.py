@@ -40,6 +40,25 @@ class ToolCallStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class AgentPlan(str, Enum):
+    """Requested worker inference latency/cost policy."""
+
+    FLEX = "flex"
+    NORMAL = "normal"
+
+
+class SandboxStatus(str, Enum):
+    """Host-observed lifecycle state for one disposable sandbox."""
+
+    CREATED = "created"
+    STARTING = "starting"
+    RUNNING = "running"
+    PAUSED = "paused"
+    STOPPED = "stopped"
+    DESTROYED = "destroyed"
+    ERROR = "error"
+
+
 @dataclass(frozen=True)
 class JobBudget:
     """Limits enforced by a future worker backend."""
@@ -64,12 +83,42 @@ class NightShiftJob:
     starting_revision: str | None = None
     acceptance_criteria: tuple[str, ...] = ()
     budget: JobBudget = field(default_factory=JobBudget)
+    plan: AgentPlan = AgentPlan.FLEX
     job_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     status: JobStatus = JobStatus.DRAFT
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
     cancellation_requested: bool = False
     result_summary: str | None = None
+
+
+@dataclass(frozen=True)
+class SandboxSpec:
+    """Resource and network policy enforced by a sandbox controller."""
+
+    cpu_count: int = 2
+    memory_mb: int = 4096
+    disk_gb: int = 20
+    network_enabled: bool = False
+
+    def __post_init__(self) -> None:
+        if self.cpu_count <= 0 or self.memory_mb <= 0 or self.disk_gb <= 0:
+            raise ValueError("Sandbox CPU, memory, and disk limits must be positive")
+
+
+@dataclass
+class SandboxRecord:
+    """Durable host-side identity and state for a job sandbox."""
+
+    job_id: str
+    backend: str
+    spec: SandboxSpec = field(default_factory=SandboxSpec)
+    sandbox_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    external_id: str | None = None
+    status: SandboxStatus = SandboxStatus.CREATED
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
+    last_error: str | None = None
 
 
 @dataclass(frozen=True)
