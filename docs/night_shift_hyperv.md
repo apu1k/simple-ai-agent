@@ -4,7 +4,9 @@ Phase 3 uses **Hyper-V on Windows** as the first local VM backend. The process b
 
 ## Implementation status
 
-Phase 3A defines the backend-independent sandbox lifecycle, durable sandbox records, resource policy, and the worker `plan` setting. It does **not** create or run a VM yet. The next Phase 3 slice will implement the Hyper-V controller and host–guest transport.
+The trusted-host controller now implements Hyper-V prerequisite checks, pinned-image verification, generation-2 VM creation, disposable differencing disks, resource configuration, status, start, pause, stop, and idempotent destruction. Every operation derives names and paths from a trusted sandbox ID and the PowerShell scripts verify the persisted VM ownership marker before acting.
+
+Task, event, and result handling uses the existing versioned JSONL protocol through a narrow `HyperVTransport` interface. The default transport fails closed. A reviewed Linux-compatible Hyper-V guest channel and the guest worker image are still required before real tasks can run; these are the next Phase 3 deliverables.
 
 ## Host prerequisites
 
@@ -34,7 +36,7 @@ The Linux image must be built and reviewed separately. It must contain only the 
 - guest services limited to the narrow versioned task/event/result transport;
 - automatic shutdown after the job deadline or loss of the host controller.
 
-Pin and record the image SHA-256 digest. The controller must reject an unexpected image digest rather than silently using a changed image.
+Pin and record the image SHA-256 digest. `HyperVSandboxController` verifies it before every creation and rejects an unexpected image rather than silently using a changed image. The base image virtual disk must be no larger than the job's configured disk limit.
 
 ## Default sandbox policy
 
@@ -58,3 +60,26 @@ The plan is persisted with the job and included in the version-1 worker task. It
 5. Persist the external VM ID immediately after creation so controller restart cleanup can find it.
 6. Make stop and destroy idempotent and reconcile orphaned records at startup.
 7. Destroy differencing disks after completion, cancellation, timeout, and failed provisioning while retaining operational records and approved artifacts.
+
+## Trusted configuration example
+
+```python
+from pathlib import Path
+
+from night_shifts.backends import HyperVConfig, HyperVSandboxController
+from night_shifts.storage import SandboxStore
+
+config = HyperVConfig(
+    base_image=Path(r"C:\ProgramData\NightShift\images\worker.vhdx"),
+    base_image_sha256="<64-character reviewed digest>",
+    workspace_root=Path(r"C:\ProgramData\NightShift\sandboxes"),
+    switch_name=None,  # networking disabled by default
+)
+controller = HyperVSandboxController(
+    config,
+    SandboxStore(Path(".agent_runtime/operations.sqlite3")),
+)
+controller.check_prerequisites()
+```
+
+Run the host process with only the permissions needed for its owned VMs and workspace. Do not accept these paths, the image digest, switch name, or PowerShell executable from an agent task.
