@@ -12,6 +12,7 @@ from night_shifts.backends.hyperv_serial import (
     WindowsNamedPipeConnector,
 )
 from night_shifts.backends.process import ProcessWorkerBackend
+from night_shifts.backends.sandbox_worker import SandboxWorkerBackend
 
 __all__ = [
     "HyperVConfig",
@@ -19,6 +20,7 @@ __all__ = [
     "HyperVSandboxController",
     "HyperVSerialTransport",
     "ProcessWorkerBackend",
+    "SandboxWorkerBackend",
     "SubprocessPowerShellRunner",
     "WindowsNamedPipeConnector",
     "WorkerBackend",

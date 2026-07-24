@@ -97,4 +97,10 @@ Each VM's COM1 port is attached to `\\.\pipe\night-shift-<sandbox-id>-com1`. The
 
 Inside the reviewed Linux image, the worker bootstrap must open `/dev/ttyS0` in raw mode, read one protocol-version-1 task line, and write protocol-version-1 event/result lines. The image build must disable `serial-getty@ttyS0.service` (and any kernel serial console) to prevent login prompts or echoed bytes from corrupting the protocol. The host transport defaults to a 1 MiB maximum frame and does not add network access or credentials.
 
-The serial channel is transport isolation, not the complete worker sandbox. The reviewed image, restricted worker runtime, deadline/cancellation adapter, and guaranteed VM cleanup remain required before untrusted work is enabled.
+The serial channel is transport isolation, not the complete worker sandbox. The reviewed image and restricted worker runtime remain required before untrusted work is enabled.
+
+## VM-backed execution adapter
+
+`SandboxWorkerBackend` connects the backend-independent worker interface to any `SandboxController`, including Hyper-V. One overall deadline covers provisioning, startup, task transport, event streaming, and result retrieval. The adapter continues checking cancellation and timeout while guest events are read on a daemon thread, persists both guest and orchestrator events when an `EventStore` is supplied, and attempts sandbox destruction on success, cancellation, timeout, startup failure, protocol failure, or result failure.
+
+A cleanup failure is returned as a failed worker result rather than allowing an apparently successful job to hide a VM that was not destroyed. Fixed controller operations are still bounded separately by the trusted Hyper-V PowerShell command timeout. Restart reconciliation and owned-orphan cleanup are the next host-side Phase 3 work.
