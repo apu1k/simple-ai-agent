@@ -68,6 +68,22 @@ class PowerShellCommandRunner(Protocol):
 
 
 @dataclass(frozen=True)
+class HyperVReconciliationReport:
+    """Outcome of one fail-safe startup reconciliation pass."""
+
+    reconciled: tuple[str, ...]
+    destroyed: tuple[str, ...]
+    orphaned_destroyed: tuple[str, ...]
+    errors: tuple[str, ...]
+
+    @property
+    def succeeded(self) -> bool:
+        """Return whether every eligible sandbox was cleaned up."""
+
+        return not self.errors
+
+
+@dataclass(frozen=True)
 class HyperVConfig:
     """Trusted host configuration; never populated from an agent task."""
 
@@ -170,6 +186,59 @@ class HyperVSandboxController(SandboxController):
         self._verify_base_image()
         self._run("preflight.ps1", ())
 
+    def reconcile(self) -> HyperVReconciliationReport:
+        """Destroy sandboxes left behind when a previous controller stopped.
+
+        Inventory is validated completely before cleanup starts. Only VMs whose
+        trusted name and ownership marker agree are returned by the fixed host
+        script. Persisted records are authoritative for identity conflicts, and
+        cleanup continues after individual failures so one bad VM cannot strand
+        every other owned sandbox.
+        """
+
+        self._run("preflight.ps1", ())
+        inventory = self._owned_inventory()
+        records = {record.sandbox_id: record for record in self.store.list()}
+        reconciled: list[str] = []
+        destroyed: list[str] = []
+        orphaned_destroyed: list[str] = []
+        errors: list[str] = []
+
+        for sandbox_id, record in records.items():
+            host_status = inventory.pop(sandbox_id, None)
+            if record.backend != self.backend_name:
+                if host_status is not None:
+                    errors.append(
+                        f"{sandbox_id}: owned Hyper-V VM conflicts with persisted "
+                        f"backend {record.backend!r}"
+                    )
+                continue
+            if record.status is SandboxStatus.DESTROYED and host_status is None:
+                continue
+            try:
+                self._validate_record(record)
+                if host_status is not None:
+                    self._set_state(record, host_status)
+                    reconciled.append(sandbox_id)
+                self.destroy(record)
+                destroyed.append(sandbox_id)
+            except Exception as exc:
+                errors.append(f"{sandbox_id}: {exc}")
+
+        for sandbox_id in sorted(inventory):
+            try:
+                self._destroy_orphan(sandbox_id)
+                orphaned_destroyed.append(sandbox_id)
+            except Exception as exc:
+                errors.append(f"{sandbox_id}: {exc}")
+
+        return HyperVReconciliationReport(
+            reconciled=tuple(reconciled),
+            destroyed=tuple(destroyed),
+            orphaned_destroyed=tuple(orphaned_destroyed),
+            errors=tuple(errors),
+        )
+
     def create(self, *, job_id: str, spec: SandboxSpec) -> SandboxRecord:
         if spec.network_enabled and self.config.switch_name is None:
             raise HyperVError("Network-enabled sandboxes require an approved Hyper-V switch")
@@ -270,7 +339,7 @@ class HyperVSandboxController(SandboxController):
 
     def destroy(self, sandbox: SandboxRecord) -> None:
         self._validate_record(sandbox)
-        self.transport.close(sandbox)
+        transport_error = self._close_transport(sandbox)
         try:
             self._run(
                 "destroy.ps1",
@@ -280,15 +349,64 @@ class HyperVSandboxController(SandboxController):
                     "-DiskPath", str(self._disk_path(sandbox)),
                 ),
             )
-            workspace = self._disk_path(sandbox).parent
-            try:
-                workspace.rmdir()
-            except FileNotFoundError:
-                pass
+            self._remove_workspace(sandbox)
         except Exception as exc:
             self._set_state(sandbox, SandboxStatus.ERROR, error=str(exc))
             raise
         self._set_state(sandbox, SandboxStatus.DESTROYED)
+        if transport_error is not None:
+            raise HyperVError(
+                f"Sandbox was destroyed but its transport failed to close: {transport_error}"
+            )
+
+    def _owned_inventory(self) -> dict[str, SandboxStatus]:
+        output = self._run("list_owned.ps1", ())
+        inventory: dict[str, SandboxStatus] = {}
+        for line in output.splitlines():
+            fields = line.strip().split("\t")
+            if len(fields) != 2 or not _SANDBOX_ID.fullmatch(fields[0]):
+                raise HyperVError("Hyper-V owned-VM inventory returned malformed output")
+            sandbox_id, raw_state = fields
+            state = _STATE_MAP.get(raw_state.lower())
+            if state is None or state is SandboxStatus.DESTROYED:
+                raise HyperVError(
+                    f"Hyper-V owned-VM inventory returned unknown state: {raw_state}"
+                )
+            if sandbox_id in inventory:
+                raise HyperVError("Hyper-V owned-VM inventory returned a duplicate ID")
+            inventory[sandbox_id] = state
+        return inventory
+
+    def _destroy_orphan(self, sandbox_id: str) -> None:
+        sandbox = SandboxRecord(
+            job_id="orphaned-host-vm",
+            backend=self.backend_name,
+            spec=SandboxSpec(),
+            sandbox_id=sandbox_id,
+            external_id=f"{_VM_PREFIX}{sandbox_id}",
+        )
+        self._validate_record(sandbox)
+        transport_error = self._close_transport(sandbox)
+        self._run(
+            "destroy.ps1",
+            (
+                "-VmName", self._vm_name(sandbox),
+                "-OwnerMarker", self._owner_marker(sandbox),
+                "-DiskPath", str(self._disk_path(sandbox)),
+            ),
+        )
+        self._remove_workspace(sandbox)
+        if transport_error is not None:
+            raise HyperVError(
+                f"Orphan VM was destroyed but its transport failed to close: {transport_error}"
+            )
+
+    def _close_transport(self, sandbox: SandboxRecord) -> str | None:
+        try:
+            self.transport.close(sandbox)
+        except Exception as exc:
+            return str(exc)
+        return None
 
     def _operate(self, sandbox: SandboxRecord, script: str) -> None:
         self._validate_record(sandbox)
@@ -339,6 +457,13 @@ class HyperVSandboxController(SandboxController):
         if root not in path.parents:
             raise HyperVError("Sandbox disk path escaped the configured workspace")
         return path
+
+    def _remove_workspace(self, sandbox: SandboxRecord) -> None:
+        workspace = self._disk_path(sandbox).parent
+        try:
+            workspace.rmdir()
+        except FileNotFoundError:
+            pass
 
     def _run(self, script_name: str, arguments: Sequence[str]) -> str:
         script = (self.scripts_dir / script_name).resolve()

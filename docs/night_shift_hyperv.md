@@ -103,4 +103,12 @@ The serial channel is transport isolation, not the complete worker sandbox. The 
 
 `SandboxWorkerBackend` connects the backend-independent worker interface to any `SandboxController`, including Hyper-V. One overall deadline covers provisioning, startup, task transport, event streaming, and result retrieval. The adapter continues checking cancellation and timeout while guest events are read on a daemon thread, persists both guest and orchestrator events when an `EventStore` is supplied, and attempts sandbox destruction on success, cancellation, timeout, startup failure, protocol failure, or result failure.
 
-A cleanup failure is returned as a failed worker result rather than allowing an apparently successful job to hide a VM that was not destroyed. Fixed controller operations are still bounded separately by the trusted Hyper-V PowerShell command timeout. Restart reconciliation and owned-orphan cleanup are the next host-side Phase 3 work.
+A cleanup failure is returned as a failed worker result rather than allowing an apparently successful job to hide a VM that was not destroyed. Fixed controller operations are still bounded separately by the trusted Hyper-V PowerShell command timeout.
+
+## Restart reconciliation
+
+Call `controller.reconcile()` once during trusted orchestrator startup, before accepting new jobs. The reconciliation pass inventories Hyper-V through a fixed script and recognizes a VM only when both its strict `night-shift-<32 lowercase hex characters>` name and its exact `night-shift-owner:<sandbox-id>` marker agree. It validates the complete inventory before changing anything.
+
+Because guest transport sessions cannot be resumed safely after the orchestrator process is lost, reconciliation destroys every non-final persisted Hyper-V sandbox, cleans its trusted workspace, and marks its durable record destroyed. It also removes strictly owned host VMs that have no database record. VMs with unrelated names, missing or mismatched markers, or conflicting persisted backend identities are never touched.
+
+Cleanup continues after an individual failure and returns a `HyperVReconciliationReport`. The caller must check `report.succeeded` (and log/alert on `report.errors`) before enabling job execution. Reconciliation deliberately does not require the base-image digest to pass: a missing or changed creation image must not prevent removal of already-running disposable VMs. Hyper-V prerequisites and ownership checks still fail closed.

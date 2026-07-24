@@ -223,3 +223,110 @@ def test_controller_rejects_forged_external_identity(tmp_path: Path):
 
     with pytest.raises(HyperVError, match="external ID"):
         controller.start(sandbox)
+
+
+def test_reconcile_destroys_persisted_and_owned_orphan_vms(tmp_path: Path):
+    controller, runner = build_controller(tmp_path)
+    persisted = controller.create(job_id="job-1", spec=SandboxSpec())
+    orphan_id = "a" * 32
+    runner.outputs["list_owned.ps1"] = (
+        f"{persisted.sandbox_id}\tRunning\n{orphan_id}\tOff"
+    )
+
+    report = controller.reconcile()
+
+    assert report.succeeded
+    assert report.reconciled == (persisted.sandbox_id,)
+    assert report.destroyed == (persisted.sandbox_id,)
+    assert report.orphaned_destroyed == (orphan_id,)
+    assert controller.store.get(persisted.sandbox_id).status is SandboxStatus.DESTROYED
+    destroy_calls = [call for call in runner.calls if call[0] == "destroy.ps1"]
+    assert len(destroy_calls) == 2
+    assert destroy_calls[1][1][1] == f"night-shift-{orphan_id}"
+    assert destroy_calls[1][1][3] == f"night-shift-owner:{orphan_id}"
+
+
+def test_reconcile_cleans_record_when_vm_is_already_missing(tmp_path: Path):
+    controller, runner = build_controller(tmp_path)
+    persisted = controller.create(job_id="job-1", spec=SandboxSpec())
+    runner.outputs["list_owned.ps1"] = ""
+
+    report = controller.reconcile()
+
+    assert report.succeeded
+    assert report.reconciled == ()
+    assert report.destroyed == (persisted.sandbox_id,)
+    assert controller.store.get(persisted.sandbox_id).status is SandboxStatus.DESTROYED
+
+
+def test_reconcile_validates_complete_inventory_before_cleanup(tmp_path: Path):
+    controller, runner = build_controller(tmp_path)
+    persisted = controller.create(job_id="job-1", spec=SandboxSpec())
+    runner.outputs["list_owned.ps1"] = f"{persisted.sandbox_id}\tNotAState"
+
+    with pytest.raises(HyperVError, match="unknown state"):
+        controller.reconcile()
+
+    assert not any(call[0] == "destroy.ps1" for call in runner.calls)
+    assert controller.store.get(persisted.sandbox_id).status is SandboxStatus.CREATED
+
+
+def test_reconcile_refuses_cross_backend_identity_conflict(tmp_path: Path):
+    controller, runner = build_controller(tmp_path)
+    conflicting = SandboxRecord(
+        job_id="job-1",
+        backend="another-backend",
+        spec=SandboxSpec(),
+        sandbox_id="b" * 32,
+        external_id="another-external-id",
+    )
+    controller.store.create(conflicting)
+    runner.outputs["list_owned.ps1"] = f"{conflicting.sandbox_id}\tRunning"
+
+    report = controller.reconcile()
+
+    assert not report.succeeded
+    assert "conflicts with persisted backend" in report.errors[0]
+    assert not any(call[0] == "destroy.ps1" for call in runner.calls)
+
+
+def test_destroy_removes_vm_even_when_transport_close_fails(tmp_path: Path):
+    class FailingCloseTransport(FakeTransport):
+        def close(self, sandbox: SandboxRecord) -> None:
+            raise HyperVError("pipe close failed")
+
+    runner = FakeRunner()
+    controller, _ = build_controller(
+        tmp_path,
+        runner=runner,
+        transport=FailingCloseTransport("job-1"),
+    )
+    sandbox = controller.create(job_id="job-1", spec=SandboxSpec())
+
+    with pytest.raises(HyperVError, match="destroyed.*transport failed to close"):
+        controller.destroy(sandbox)
+
+    assert any(call[0] == "destroy.ps1" for call in runner.calls)
+    assert controller.store.get(sandbox.sandbox_id).status is SandboxStatus.DESTROYED
+
+
+def test_reconcile_continues_after_individual_cleanup_failure(tmp_path: Path):
+    class SelectiveFailureRunner(FakeRunner):
+        def run(self, script: Path, arguments: Sequence[str]) -> str:
+            self.calls.append((script.name, tuple(arguments)))
+            if script.name == "destroy.ps1" and arguments[1].endswith("c" * 32):
+                raise HyperVError("first cleanup failed")
+            return self.outputs.get(script.name, "")
+
+    runner = SelectiveFailureRunner()
+    controller, _ = build_controller(tmp_path, runner=runner)
+    first_id = "c" * 32
+    second_id = "d" * 32
+    runner.outputs["list_owned.ps1"] = f"{first_id}\tRunning\n{second_id}\tPaused"
+
+    report = controller.reconcile()
+
+    assert not report.succeeded
+    assert report.orphaned_destroyed == (second_id,)
+    assert "first cleanup failed" in report.errors[0]
+    assert len([call for call in runner.calls if call[0] == "destroy.ps1"]) == 2
