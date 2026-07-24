@@ -29,6 +29,7 @@ IGNORED_DIRS = {
 }
 
 MAX_FILE_SIZE_BYTES = 1_000_000          # read_file / analyze
+MAX_PDF_FILE_SIZE_BYTES = 2_000_000      # read_file PDF-to-Markdown input
 MAX_READ_RANGE_BYTES = 100_000
 MAX_READ_RANGE_LINES = 2_000
 MAX_ANALYZE_FILES = 30

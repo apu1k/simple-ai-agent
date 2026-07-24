@@ -296,7 +296,7 @@ def read_file(state, path: str, start_line=None, end_line=None) -> str:
         start_line, end_line, complete = _s.normalize_line_range(start_line, end_line)
 
         if _is_pdf(file_path):
-            if file_path.stat().st_size > _s.MAX_FILE_SIZE_BYTES:
+            if file_path.stat().st_size > _s.MAX_PDF_FILE_SIZE_BYTES:
                 return f"Error: PDF file is too large to read: {file_path}"
 
             markdown, pdf_error = _extract_pdf_markdown(file_path)
