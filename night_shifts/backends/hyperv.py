@@ -58,6 +58,8 @@ class HyperVTransport(Protocol):
 
     def result_message(self, sandbox: SandboxRecord) -> str: ...
 
+    def close(self, sandbox: SandboxRecord) -> None: ...
+
 
 class PowerShellCommandRunner(Protocol):
     """Execute a fixed PowerShell script with separate arguments."""
@@ -135,6 +137,9 @@ class UnavailableHyperVTransport:
     def result_message(self, sandbox: SandboxRecord) -> str:
         raise HyperVError(self._MESSAGE)
 
+    def close(self, sandbox: SandboxRecord) -> None:
+        return None
+
 
 class HyperVSandboxController(SandboxController):
     """Manage owned generation-2 Hyper-V VMs and disposable differencing disks."""
@@ -185,6 +190,7 @@ class HyperVSandboxController(SandboxController):
                     "-BaseImage", str(self.config.base_image.resolve()),
                     "-BaseImageSha256", self.config.base_image_sha256.lower(),
                     "-DiskPath", str(disk_path),
+                    "-ComPortPipe", self._serial_pipe_path(sandbox),
                     "-CpuCount", str(spec.cpu_count),
                     "-MemoryBytes", str(spec.memory_mb * 1024 * 1024),
                     "-DiskSizeBytes", str(spec.disk_gb * 1024 * 1024 * 1024),
@@ -256,11 +262,15 @@ class HyperVSandboxController(SandboxController):
         self._set_state(sandbox, SandboxStatus.PAUSED)
 
     def stop(self, sandbox: SandboxRecord) -> None:
-        self._operate(sandbox, "stop.ps1")
-        self._set_state(sandbox, SandboxStatus.STOPPED)
+        try:
+            self._operate(sandbox, "stop.ps1")
+            self._set_state(sandbox, SandboxStatus.STOPPED)
+        finally:
+            self.transport.close(sandbox)
 
     def destroy(self, sandbox: SandboxRecord) -> None:
         self._validate_record(sandbox)
+        self.transport.close(sandbox)
         try:
             self._run(
                 "destroy.ps1",
@@ -316,6 +326,12 @@ class HyperVSandboxController(SandboxController):
         if not _SANDBOX_ID.fullmatch(sandbox.sandbox_id):
             raise HyperVError("Sandbox ID is not a trusted 32-character hexadecimal ID")
         return f"{_VM_PREFIX}{sandbox.sandbox_id}"
+
+    @staticmethod
+    def _serial_pipe_path(sandbox: SandboxRecord) -> str:
+        if not _SANDBOX_ID.fullmatch(sandbox.sandbox_id):
+            raise HyperVError("Sandbox ID is not a trusted 32-character hexadecimal ID")
+        return rf"\\.\pipe\{_VM_PREFIX}{sandbox.sandbox_id}-com1"
 
     def _disk_path(self, sandbox: SandboxRecord) -> Path:
         root = self.config.workspace_root.resolve()

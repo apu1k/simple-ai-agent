@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory = $true)][string]$BaseImage,
     [Parameter(Mandatory = $true)][string]$BaseImageSha256,
     [Parameter(Mandatory = $true)][string]$DiskPath,
+    [Parameter(Mandatory = $true)][string]$ComPortPipe,
     [Parameter(Mandatory = $true)][long]$CpuCount,
     [Parameter(Mandatory = $true)][long]$MemoryBytes,
     [Parameter(Mandatory = $true)][long]$DiskSizeBytes,
@@ -47,6 +48,7 @@ try {
     Set-VM -Name $VmName -Notes $OwnerMarker -DynamicMemory:$false `
         -AutomaticStartAction Nothing -AutomaticStopAction ShutDown
     Set-VMProcessor -VMName $VmName -Count $CpuCount
+    Set-VMComPort -VMName $VmName -Number 1 -Path $ComPortPipe
     Set-VMFirmware -VMName $VmName -EnableSecureBoot On `
         -SecureBootTemplate MicrosoftUEFICertificateAuthority
     $VmName

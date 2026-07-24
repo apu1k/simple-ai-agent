@@ -38,6 +38,7 @@ class FakeTransport:
     def __init__(self, job_id: str):
         self.job_id = job_id
         self.sent: list[str] = []
+        self.closed: list[str] = []
 
     def send(self, sandbox: SandboxRecord, message: str) -> None:
         self.sent.append(message)
@@ -56,6 +57,9 @@ class FakeTransport:
         return encode_result(
             WorkerResult(self.job_id, WorkerOutcome.SUCCESS, "completed")
         )
+
+    def close(self, sandbox: SandboxRecord) -> None:
+        self.closed.append(sandbox.sandbox_id)
 
 
 def build_controller(
@@ -101,6 +105,9 @@ def test_create_uses_trusted_names_fixed_scripts_and_persists_policy(tmp_path: P
     assert create_arguments[create_arguments.index("-CpuCount") + 1] == "4"
     assert create_arguments[create_arguments.index("-MemoryBytes") + 1] == str(
         8192 * 1024 * 1024
+    )
+    assert create_arguments[create_arguments.index("-ComPortPipe") + 1] == (
+        rf"\\.\pipe\night-shift-{sandbox.sandbox_id}-com1"
     )
     assert create_arguments[create_arguments.index("-SwitchName") + 1] == ""
 

@@ -6,7 +6,7 @@ Phase 3 uses **Hyper-V on Windows** as the first local VM backend. The process b
 
 The trusted-host controller now implements Hyper-V prerequisite checks, pinned-image verification, generation-2 VM creation, disposable differencing disks, resource configuration, status, start, pause, stop, and idempotent destruction. Every operation derives names and paths from a trusted sandbox ID and the PowerShell scripts verify the persisted VM ownership marker before acting.
 
-Task, event, and result handling uses the existing versioned JSONL protocol through a narrow `HyperVTransport` interface. The default transport fails closed. A reviewed Linux-compatible Hyper-V guest channel and the guest worker image are still required before real tasks can run; these are the next Phase 3 deliverables.
+Task, event, and result handling uses the existing versioned JSONL protocol through a narrow `HyperVTransport` interface. A Linux-compatible host transport is available through an explicitly configured VM COM1 ↔ Windows named-pipe channel. The default transport still fails closed. A reviewed guest image configured to consume `/dev/ttyS0` is required before real tasks can run.
 
 ## Host prerequisites
 
@@ -34,6 +34,8 @@ The Linux image must be built and reviewed separately. It must contain only the 
 - cloud metadata and private/local network ranges blocked;
 - a read-only base disk and one disposable differencing disk per job;
 - guest services limited to the narrow versioned task/event/result transport;
+- COM1 exposed as `/dev/ttyS0`, with any serial console/getty disabled and the worker bootstrap holding exclusive access;
+- terminal echo, input translation, and output translation disabled on `/dev/ttyS0` so UTF-8 JSONL bytes are not altered;
 - automatic shutdown after the job deadline or loss of the host controller.
 
 Pin and record the image SHA-256 digest. `HyperVSandboxController` verifies it before every creation and rejects an unexpected image rather than silently using a changed image. The base image virtual disk must be no larger than the job's configured disk limit.
@@ -66,7 +68,11 @@ The plan is persisted with the job and included in the version-1 worker task. It
 ```python
 from pathlib import Path
 
-from night_shifts.backends import HyperVConfig, HyperVSandboxController
+from night_shifts.backends import (
+    HyperVConfig,
+    HyperVSandboxController,
+    HyperVSerialTransport,
+)
 from night_shifts.storage import SandboxStore
 
 config = HyperVConfig(
@@ -78,8 +84,17 @@ config = HyperVConfig(
 controller = HyperVSandboxController(
     config,
     SandboxStore(Path(".agent_runtime/operations.sqlite3")),
+    transport=HyperVSerialTransport(),
 )
 controller.check_prerequisites()
 ```
 
-Run the host process with only the permissions needed for its owned VMs and workspace. Do not accept these paths, the image digest, switch name, or PowerShell executable from an agent task.
+Run the host process with only the permissions needed for its owned VMs and workspace. Do not accept these paths, the image digest, switch name, PowerShell executable, or pipe name from an agent task.
+
+## Serial guest channel
+
+Each VM's COM1 port is attached to `\\.\pipe\night-shift-<sandbox-id>-com1`. The name is derived from the orchestrator-generated sandbox ID and passed to a fixed `Set-VMComPort` invocation during creation. Task text cannot influence it. `HyperVSerialTransport` opens that pipe directly without a shell, sends exactly one bounded UTF-8 task frame, streams bounded event frames, and retains exactly one terminal result frame.
+
+Inside the reviewed Linux image, the worker bootstrap must open `/dev/ttyS0` in raw mode, read one protocol-version-1 task line, and write protocol-version-1 event/result lines. The image build must disable `serial-getty@ttyS0.service` (and any kernel serial console) to prevent login prompts or echoed bytes from corrupting the protocol. The host transport defaults to a 1 MiB maximum frame and does not add network access or credentials.
+
+The serial channel is transport isolation, not the complete worker sandbox. The reviewed image, restricted worker runtime, deadline/cancellation adapter, and guaranteed VM cleanup remain required before untrusted work is enabled.
