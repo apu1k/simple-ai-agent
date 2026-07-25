@@ -1,5 +1,6 @@
 """Trusted host-side orchestration primitives for night-shift jobs."""
 
+from night_shifts.artifacts import ArtifactCollector, ArtifactRetrievalError
 from night_shifts.models import (
     AgentPlan,
     ArtifactRecord,
@@ -16,9 +17,19 @@ from night_shifts.models import (
 from night_shifts.protocol import WorkerOutcome, WorkerResult, WorkerTask
 from night_shifts.sandboxes import SandboxController
 from night_shifts.service import NightShiftService
+from night_shifts.worker_policy import ApprovedCommand, WorkerPolicyError, approve_worker_command
+from night_shifts.workspaces import (
+    PreparedWorkspace,
+    RepositoryRegistry,
+    TrustedRepository,
+    WorkspaceError,
+    WorkspacePreparer,
+)
 
 __all__ = [
     "AgentPlan",
+    "ArtifactCollector",
+    "ArtifactRetrievalError",
     "ArtifactRecord",
     "JobBudget",
     "JobStatus",
@@ -34,4 +45,12 @@ __all__ = [
     "WorkerOutcome",
     "WorkerResult",
     "WorkerTask",
+    "ApprovedCommand",
+    "WorkerPolicyError",
+    "approve_worker_command",
+    "PreparedWorkspace",
+    "RepositoryRegistry",
+    "TrustedRepository",
+    "WorkspaceError",
+    "WorkspacePreparer",
 ]

@@ -1,6 +1,6 @@
 # Night-shift Hyper-V backend
 
-Phase 3 uses **Hyper-V on Windows** as the first local VM backend. The process backend remains available only for fast protocol tests and is not a security boundary.
+Phase 3 uses **Hyper-V on Windows** as the first local VM backend. The process backend remains available only for fast protocol tests and is not a security boundary. The in-progress Phase 4 guest/workspace contract is documented in [`night_shift_worker_runtime.md`](night_shift_worker_runtime.md).
 
 ## Implementation status
 
