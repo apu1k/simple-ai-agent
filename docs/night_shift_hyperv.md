@@ -112,3 +112,55 @@ Call `controller.reconcile()` once during trusted orchestrator startup, before a
 Because guest transport sessions cannot be resumed safely after the orchestrator process is lost, reconciliation destroys every non-final persisted Hyper-V sandbox, cleans its trusted workspace, and marks its durable record destroyed. It also removes strictly owned host VMs that have no database record. VMs with unrelated names, missing or mismatched markers, or conflicting persisted backend identities are never touched.
 
 Cleanup continues after an individual failure and returns a `HyperVReconciliationReport`. The caller must check `report.succeeded` (and log/alert on `report.errors`) before enabling job execution. Reconciliation deliberately does not require the base-image digest to pass: a missing or changed creation image must not prevent removal of already-running disposable VMs. Hyper-V prerequisites and ownership checks still fail closed.
+
+For targeted recovery/tests, `reconcile(sandbox_ids=frozenset({...}))`
+restricts cleanup to exact sandbox IDs. Production startup uses unscoped
+`reconcile()`.
+
+## Phase 3 protocol-test image
+
+Guest assets:
+
+- `night_shifts/guest/protocol_test_bootstrap.py`
+- `night_shifts/guest/night-shift-protocol-test.service`
+
+The bootstrap locks `/dev/ttyS0` in raw mode and accepts only
+`phase3-protocol-success` or `phase3-protocol-sleep:<seconds>`. It never executes
+task text or repository code.
+
+Image checklist:
+
+1. Use a minimal generation-2 Linux VM with Python 3, networking off, and no
+   personal files, credentials, host mounts, remote login, or default password.
+2. Create locked user `night-shift`; grant only serial-device access.
+3. Install the bootstrap as root-owned/non-writable and enable the supplied unit.
+4. Disable `serial-getty@ttyS0`; remove `console=ttyS0` from kernel arguments.
+5. Verify raw exclusive serial access, fail-closed objectives, disconnect
+   shutdown, and the six-hour service limit.
+6. Clear logs, caches, history, machine identity, DHCP state, SSH host keys, and
+   installer artifacts. Review the filesystem, shut down, and store VHDX read-only.
+7. Record provenance and pin the digest:
+
+```powershell
+(Get-FileHash 'C:\ProgramData\NightShift\images\worker.vhdx' -Algorithm SHA256).Hash
+```
+
+## Opt-in real-host tests
+
+Normal runs skip `test_hyperv_real_host.py`. On a dedicated host:
+
+```powershell
+$env:NIGHT_SHIFT_HYPERV_INTEGRATION = '1'
+$env:NIGHT_SHIFT_HYPERV_BASE_IMAGE = 'C:\ProgramData\NightShift\images\worker.vhdx'
+$env:NIGHT_SHIFT_HYPERV_BASE_IMAGE_SHA256 = '<reviewed digest>'
+$env:NIGHT_SHIFT_HYPERV_WORKSPACE = 'C:\ProgramData\NightShift\integration-sandboxes'
+python -m pytest -q tests/night_shifts/test_hyperv_real_host.py
+```
+
+The suite keeps networking off and covers prerequisites, serial exchange,
+timeout/cancellation cleanup, disk removal, and exact-ID orphan reconciliation.
+It never enables Hyper-V, elevates, restarts, creates switches, or downloads an
+image. Optional timeout/resource variables are listed in the test file.
+
+Real-host results remain pending until a reviewed VHDX and host configuration
+are supplied. Mocked tests and the fail-closed default transport remain active.

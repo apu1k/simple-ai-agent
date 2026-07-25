@@ -1,0 +1,33 @@
+[Unit]
+Description=Night Shift Phase 3 serial protocol test worker
+After=dev-ttyS0.device
+Requires=dev-ttyS0.device
+SuccessAction=poweroff
+FailureAction=poweroff
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/night-shift/protocol_test_bootstrap.py
+Restart=no
+RuntimeMaxSec=6h
+TimeoutStopSec=15s
+User=night-shift
+Group=night-shift
+SupplementaryGroups=dialout
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=no
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=false
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

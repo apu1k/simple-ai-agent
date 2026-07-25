@@ -246,6 +246,36 @@ def test_reconcile_destroys_persisted_and_owned_orphan_vms(tmp_path: Path):
     assert destroy_calls[1][1][3] == f"night-shift-owner:{orphan_id}"
 
 
+def test_reconcile_scope_cleans_only_the_requested_sandbox(tmp_path: Path):
+    controller, runner = build_controller(tmp_path)
+    selected = controller.create(job_id="job-1", spec=SandboxSpec())
+    untouched = controller.create(job_id="job-2", spec=SandboxSpec())
+    orphan_id = "c" * 32
+    runner.outputs["list_owned.ps1"] = (
+        f"{selected.sandbox_id}\tRunning\n"
+        f"{untouched.sandbox_id}\tRunning\n"
+        f"{orphan_id}\tOff"
+    )
+
+    report = controller.reconcile(sandbox_ids=frozenset({selected.sandbox_id, orphan_id}))
+
+    assert report.succeeded
+    assert report.destroyed == (selected.sandbox_id,)
+    assert report.orphaned_destroyed == (orphan_id,)
+    assert controller.store.get(untouched.sandbox_id).status is SandboxStatus.CREATED
+    destroy_calls = [call for call in runner.calls if call[0] == "destroy.ps1"]
+    assert len(destroy_calls) == 2
+
+
+def test_reconcile_scope_rejects_invalid_sandbox_ids_before_host_calls(tmp_path: Path):
+    controller, runner = build_controller(tmp_path)
+
+    with pytest.raises(HyperVError, match="scope contains an invalid"):
+        controller.reconcile(sandbox_ids=frozenset({"not-a-sandbox-id"}))
+
+    assert not runner.calls
+
+
 def test_reconcile_cleans_record_when_vm_is_already_missing(tmp_path: Path):
     controller, runner = build_controller(tmp_path)
     persisted = controller.create(job_id="job-1", spec=SandboxSpec())

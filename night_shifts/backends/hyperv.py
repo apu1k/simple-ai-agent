@@ -186,7 +186,11 @@ class HyperVSandboxController(SandboxController):
         self._verify_base_image()
         self._run("preflight.ps1", ())
 
-    def reconcile(self) -> HyperVReconciliationReport:
+    def reconcile(
+        self,
+        *,
+        sandbox_ids: frozenset[str] | None = None,
+    ) -> HyperVReconciliationReport:
         """Destroy sandboxes left behind when a previous controller stopped.
 
         Inventory is validated completely before cleanup starts. Only VMs whose
@@ -194,11 +198,33 @@ class HyperVSandboxController(SandboxController):
         script. Persisted records are authoritative for identity conflicts, and
         cleanup continues after individual failures so one bad VM cannot strand
         every other owned sandbox.
+
+        ``sandbox_ids`` restricts cleanup to exact orchestrator-generated IDs.
+        Normal startup leaves it unset. The restricted form exists so real-host
+        validation can prove orphan cleanup without touching another workload.
         """
+
+        if sandbox_ids is not None:
+            invalid_ids = sorted(
+                value for value in sandbox_ids if not _SANDBOX_ID.fullmatch(value)
+            )
+            if invalid_ids:
+                raise HyperVError("Reconciliation scope contains an invalid sandbox ID")
 
         self._run("preflight.ps1", ())
         inventory = self._owned_inventory()
         records = {record.sandbox_id: record for record in self.store.list()}
+        if sandbox_ids is not None:
+            inventory = {
+                sandbox_id: status
+                for sandbox_id, status in inventory.items()
+                if sandbox_id in sandbox_ids
+            }
+            records = {
+                sandbox_id: record
+                for sandbox_id, record in records.items()
+                if sandbox_id in sandbox_ids
+            }
         reconciled: list[str] = []
         destroyed: list[str] = []
         orphaned_destroyed: list[str] = []
