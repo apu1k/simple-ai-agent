@@ -6,7 +6,20 @@ from night_shifts.channels import (
     MarkdownMailboxChannel,
     MarkdownMailboxError,
 )
-from night_shifts.contracts import SandboxProvider, WorkerChannel
+from night_shifts.composition import (
+    CompositionError,
+    ExecutionComponentSelection,
+    TrustedExecutionRegistry,
+)
+from night_shifts.contracts import (
+    ArtifactRetriever,
+    PreparedWorkspace,
+    RetrievedArtifacts,
+    SandboxProvider,
+    WorkerChannel,
+    WorkspaceInjector,
+    WorkspaceProvider,
+)
 from night_shifts.models import (
     AgentPlan,
     ArtifactRecord,
@@ -21,11 +34,9 @@ from night_shifts.models import (
     ToolCallStatus,
 )
 from night_shifts.protocol import WorkerOutcome, WorkerResult, WorkerTask
-from night_shifts.sandboxes import SandboxController
 from night_shifts.service import NightShiftService
 from night_shifts.worker_policy import ApprovedCommand, WorkerPolicyError, approve_worker_command
 from night_shifts.workspaces import (
-    PreparedWorkspace,
     RepositoryRegistry,
     TrustedRepository,
     WorkspaceError,
@@ -37,6 +48,9 @@ __all__ = [
     "ArtifactCollector",
     "ArtifactRetrievalError",
     "ArtifactRecord",
+    "ArtifactRetriever",
+    "CompositionError",
+    "ExecutionComponentSelection",
     "InMemoryWorkerChannel",
     "JobBudget",
     "JobStatus",
@@ -45,13 +59,14 @@ __all__ = [
     "NightShiftEvent",
     "NightShiftJob",
     "NightShiftService",
-    "SandboxController",
     "SandboxProvider",
     "SandboxRecord",
     "SandboxSpec",
     "SandboxStatus",
+    "RetrievedArtifacts",
     "ToolCallRecord",
     "ToolCallStatus",
+    "TrustedExecutionRegistry",
     "WorkerChannel",
     "WorkerOutcome",
     "WorkerResult",
@@ -63,5 +78,7 @@ __all__ = [
     "RepositoryRegistry",
     "TrustedRepository",
     "WorkspaceError",
+    "WorkspaceInjector",
     "WorkspacePreparer",
+    "WorkspaceProvider",
 ]

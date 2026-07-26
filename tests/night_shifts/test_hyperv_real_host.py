@@ -77,15 +77,7 @@ def sandbox_spec() -> SandboxSpec:
 @pytest.fixture
 def real_controller(tmp_path: Path, host_config: HyperVConfig):
     store = SandboxStore(tmp_path / "operations.sqlite3")
-    controller = HyperVSandboxController(
-        host_config,
-        store,
-        transport=HyperVSerialTransport(
-            connect_timeout_seconds=_positive_environment(
-                "NIGHT_SHIFT_HYPERV_SERIAL_TIMEOUT_SECONDS", "90"
-            )
-        ),
-    )
+    controller = HyperVSandboxController(host_config, store)
     yield controller
     cleanup_errors = []
     for sandbox in store.list():
@@ -97,6 +89,15 @@ def real_controller(tmp_path: Path, host_config: HyperVConfig):
             cleanup_errors.append(f"{sandbox.sandbox_id}: {exc}")
     if cleanup_errors:
         pytest.fail("real-host cleanup failed: " + "; ".join(cleanup_errors))
+
+
+@pytest.fixture
+def real_channel() -> HyperVSerialTransport:
+    return HyperVSerialTransport(
+        connect_timeout_seconds=_positive_environment(
+            "NIGHT_SHIFT_HYPERV_SERIAL_TIMEOUT_SECONDS", "90"
+        )
+    )
 
 
 def _task(objective: str) -> WorkerTask:
@@ -121,10 +122,13 @@ def test_real_host_prerequisites(real_controller: HyperVSandboxController):
 
 def test_real_host_serial_round_trip_and_cleanup(
     real_controller: HyperVSandboxController,
+    real_channel: HyperVSerialTransport,
     sandbox_spec: SandboxSpec,
 ):
     events: list[NightShiftEvent] = []
-    backend = SandboxWorkerBackend(real_controller, spec=sandbox_spec, poll_interval=0.1)
+    backend = SandboxWorkerBackend(
+        real_controller, real_channel, spec=sandbox_spec, poll_interval=0.1
+    )
 
     result = backend.run(
         _task("phase3-protocol-success"),
@@ -140,6 +144,7 @@ def test_real_host_serial_round_trip_and_cleanup(
 
 def test_real_host_cancellation_forces_cleanup_while_guest_is_blocked(
     real_controller: HyperVSandboxController,
+    real_channel: HyperVSerialTransport,
     sandbox_spec: SandboxSpec,
 ):
     task_sent_at: list[float] = []
@@ -151,7 +156,9 @@ def test_real_host_cancellation_forces_cleanup_while_guest_is_blocked(
     def cancellation_requested() -> bool:
         return bool(task_sent_at) and time.monotonic() - task_sent_at[0] >= 1.0
 
-    backend = SandboxWorkerBackend(real_controller, spec=sandbox_spec, poll_interval=0.1)
+    backend = SandboxWorkerBackend(
+        real_controller, real_channel, spec=sandbox_spec, poll_interval=0.1
+    )
     result = backend.run(
         _task("phase3-protocol-sleep:600"),
         timeout_seconds=_positive_environment("NIGHT_SHIFT_HYPERV_JOB_TIMEOUT_SECONDS", "180"),
@@ -165,10 +172,13 @@ def test_real_host_cancellation_forces_cleanup_while_guest_is_blocked(
 
 def test_real_host_timeout_forces_cleanup(
     real_controller: HyperVSandboxController,
+    real_channel: HyperVSerialTransport,
     sandbox_spec: SandboxSpec,
 ):
     events: list[NightShiftEvent] = []
-    backend = SandboxWorkerBackend(real_controller, spec=sandbox_spec, poll_interval=0.1)
+    backend = SandboxWorkerBackend(
+        real_controller, real_channel, spec=sandbox_spec, poll_interval=0.1
+    )
 
     result = backend.run(
         _task("phase3-protocol-sleep:600"),

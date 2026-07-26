@@ -18,6 +18,7 @@ from typing import BinaryIO, Protocol
 from night_shifts.backends.hyperv import HyperVError
 from night_shifts.models import NightShiftEvent, SandboxRecord
 from night_shifts.protocol import (
+    ProtocolError,
     WorkerResult,
     WorkerTask,
     decode_worker_message,
@@ -101,6 +102,8 @@ class HyperVSerialTransport:
         self._sessions: dict[str, _SerialSession] = {}
 
     def send_task(self, sandbox: SandboxRecord, task: WorkerTask) -> None:
+        if task.job_id != sandbox.job_id:
+            raise ProtocolError("Task job ID does not match sandbox job ID")
         session = self._session(sandbox)
         if session.task_sent:
             raise HyperVError("A task has already been sent to this sandbox")
@@ -119,7 +122,9 @@ class HyperVSerialTransport:
     def events(self, sandbox: SandboxRecord) -> Iterable[NightShiftEvent]:
         session = self._session(sandbox)
         while session.pending_events:
-            yield session.pending_events.popleft()
+            event = session.pending_events.popleft()
+            self._validate_event(sandbox, event)
+            yield event
         while session.result is None:
             message = decode_worker_message(self._read_message(sandbox, session))
             if isinstance(message, WorkerResult):
@@ -127,6 +132,7 @@ class HyperVSerialTransport:
                 return
             if not isinstance(message, NightShiftEvent):  # pragma: no cover - defensive
                 raise HyperVError("Unsupported message on Hyper-V serial transport")
+            self._validate_event(sandbox, message)
             yield message
 
     def retrieve_result(self, sandbox: SandboxRecord) -> WorkerResult:
@@ -137,7 +143,14 @@ class HyperVSerialTransport:
                 session.result = message
             else:
                 session.pending_events.append(message)
+        if session.result.job_id != sandbox.job_id:
+            raise ProtocolError("Guest result job ID does not match sandbox job ID")
         return session.result
+
+    @staticmethod
+    def _validate_event(sandbox: SandboxRecord, event: NightShiftEvent) -> None:
+        if event.job_id != sandbox.job_id or event.actor != "worker":
+            raise ProtocolError("Guest event has a mismatched job ID or forbidden actor")
 
     def close(self, sandbox: SandboxRecord) -> None:
         """Close and forget a sandbox channel; safe to call repeatedly."""

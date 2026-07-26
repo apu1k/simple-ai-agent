@@ -10,21 +10,17 @@ import hashlib
 import hmac
 import re
 import subprocess
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from night_shifts.contracts import WorkerChannel
 from night_shifts.models import (
-    NightShiftEvent,
     SandboxRecord,
     SandboxSpec,
     SandboxStatus,
     utc_now,
 )
-from night_shifts.protocol import ProtocolError, WorkerResult, WorkerTask
-from night_shifts.sandboxes import SandboxController
 from night_shifts.storage import SandboxStore
 
 _SANDBOX_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -122,25 +118,7 @@ class SubprocessPowerShellRunner:
         return completed.stdout.strip()
 
 
-class UnavailableHyperVTransport:
-    """Fail closed until a reviewed host/guest channel is configured."""
-
-    _MESSAGE = "No Hyper-V guest transport is configured"
-
-    def send_task(self, sandbox: SandboxRecord, task: WorkerTask) -> None:
-        raise HyperVError(self._MESSAGE)
-
-    def events(self, sandbox: SandboxRecord) -> Iterable[NightShiftEvent]:
-        raise HyperVError(self._MESSAGE)
-
-    def retrieve_result(self, sandbox: SandboxRecord) -> WorkerResult:
-        raise HyperVError(self._MESSAGE)
-
-    def close(self, sandbox: SandboxRecord) -> None:
-        return None
-
-
-class HyperVSandboxController(SandboxController):
+class HyperVSandboxController:
     """Manage owned generation-2 Hyper-V VMs and disposable differencing disks."""
 
     def __init__(
@@ -149,7 +127,6 @@ class HyperVSandboxController(SandboxController):
         store: SandboxStore,
         *,
         runner: PowerShellCommandRunner | None = None,
-        transport: WorkerChannel | None = None,
         scripts_dir: Path | None = None,
     ):
         self.config = config
@@ -158,7 +135,6 @@ class HyperVSandboxController(SandboxController):
             config.powershell_executable,
             timeout_seconds=config.command_timeout_seconds,
         )
-        self.transport = transport or UnavailableHyperVTransport()
         self.scripts_dir = scripts_dir or Path(__file__).with_name("hyperv_scripts")
 
     @property
@@ -310,40 +286,16 @@ class HyperVSandboxController(SandboxController):
         )
         return mapped
 
-    def send_task(self, sandbox: SandboxRecord, task: WorkerTask) -> None:
-        self._validate_record(sandbox)
-        if task.job_id != sandbox.job_id:
-            raise HyperVError("Task job ID does not match sandbox job ID")
-        self.transport.send_task(sandbox, task)
-
-    def events(self, sandbox: SandboxRecord) -> Iterable[NightShiftEvent]:
-        self._validate_record(sandbox)
-        for message in self.transport.events(sandbox):
-            if message.job_id != sandbox.job_id or message.actor != "worker":
-                raise ProtocolError("Guest event has a mismatched job ID or forbidden actor")
-            yield message
-
-    def retrieve_results(self, sandbox: SandboxRecord) -> WorkerResult:
-        self._validate_record(sandbox)
-        message = self.transport.retrieve_result(sandbox)
-        if message.job_id != sandbox.job_id:
-            raise ProtocolError("Guest result job ID does not match sandbox job ID")
-        return message
-
     def pause(self, sandbox: SandboxRecord) -> None:
         self._operate(sandbox, "pause.ps1")
         self._set_state(sandbox, SandboxStatus.PAUSED)
 
     def stop(self, sandbox: SandboxRecord) -> None:
-        try:
-            self._operate(sandbox, "stop.ps1")
-            self._set_state(sandbox, SandboxStatus.STOPPED)
-        finally:
-            self.transport.close(sandbox)
+        self._operate(sandbox, "stop.ps1")
+        self._set_state(sandbox, SandboxStatus.STOPPED)
 
     def destroy(self, sandbox: SandboxRecord) -> None:
         self._validate_record(sandbox)
-        transport_error = self._close_transport(sandbox)
         try:
             self._run(
                 "destroy.ps1",
@@ -358,10 +310,6 @@ class HyperVSandboxController(SandboxController):
             self._set_state(sandbox, SandboxStatus.ERROR, error=str(exc))
             raise
         self._set_state(sandbox, SandboxStatus.DESTROYED)
-        if transport_error is not None:
-            raise HyperVError(
-                f"Sandbox was destroyed but its transport failed to close: {transport_error}"
-            )
 
     def _owned_inventory(self) -> dict[str, SandboxStatus]:
         output = self._run("list_owned.ps1", ())
@@ -390,7 +338,6 @@ class HyperVSandboxController(SandboxController):
             external_id=f"{_VM_PREFIX}{sandbox_id}",
         )
         self._validate_record(sandbox)
-        transport_error = self._close_transport(sandbox)
         self._run(
             "destroy.ps1",
             (
@@ -400,17 +347,6 @@ class HyperVSandboxController(SandboxController):
             ),
         )
         self._remove_workspace(sandbox)
-        if transport_error is not None:
-            raise HyperVError(
-                f"Orphan VM was destroyed but its transport failed to close: {transport_error}"
-            )
-
-    def _close_transport(self, sandbox: SandboxRecord) -> str | None:
-        try:
-            self.transport.close(sandbox)
-        except Exception as exc:
-            return str(exc)
-        return None
 
     def _operate(self, sandbox: SandboxRecord, script: str) -> None:
         self._validate_record(sandbox)

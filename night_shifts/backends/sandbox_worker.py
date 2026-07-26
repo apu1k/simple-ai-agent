@@ -7,11 +7,19 @@ import threading
 import time
 from collections.abc import Callable
 
+from night_shifts.artifacts import ArtifactCollector
 from night_shifts.backends.base import WorkerBackend
-from night_shifts.contracts import SandboxProvider, WorkerChannel
+from night_shifts.contracts import (
+    ArtifactRetriever,
+    PreparedWorkspace,
+    RetrievedArtifacts,
+    SandboxProvider,
+    WorkerChannel,
+    WorkspaceInjector,
+    WorkspaceProvider,
+)
 from night_shifts.models import NightShiftEvent, SandboxRecord, SandboxSpec, SandboxStatus
 from night_shifts.protocol import WorkerOutcome, WorkerResult, WorkerTask
-from night_shifts.sandboxes import SandboxController
 from night_shifts.storage import EventStore
 
 _StreamItem = tuple[str, NightShiftEvent | Exception | None]
@@ -23,10 +31,14 @@ class SandboxWorkerBackend(WorkerBackend):
     def __init__(
         self,
         provider: SandboxProvider,
-        channel: WorkerChannel | None = None,
+        channel: WorkerChannel,
         *,
         spec: SandboxSpec | None = None,
         event_store: EventStore | None = None,
+        workspace_provider: WorkspaceProvider | None = None,
+        workspace_injector: WorkspaceInjector | None = None,
+        artifact_retriever: ArtifactRetriever | None = None,
+        artifact_collector: ArtifactCollector | None = None,
         poll_interval: float = 0.05,
         reader_join_seconds: float = 0.5,
     ):
@@ -34,14 +46,18 @@ class SandboxWorkerBackend(WorkerBackend):
             raise ValueError("Sandbox poll interval must be positive")
         if reader_join_seconds < 0:
             raise ValueError("Sandbox reader join timeout must not be negative")
+        if (workspace_provider is None) != (workspace_injector is None):
+            raise ValueError("Workspace provider and injector must be configured together")
+        if (artifact_retriever is None) != (artifact_collector is None):
+            raise ValueError("Artifact retriever and collector must be configured together")
         self.provider = provider
-        if channel is None:
-            if not isinstance(provider, SandboxController):
-                raise ValueError("A worker channel is required for this sandbox provider")
-            channel = _LegacyControllerChannel(provider)
         self.channel = channel
         self.spec = spec or SandboxSpec()
         self.event_store = event_store
+        self.workspace_provider = workspace_provider
+        self.workspace_injector = workspace_injector
+        self.artifact_retriever = artifact_retriever
+        self.artifact_collector = artifact_collector
         self.poll_interval = poll_interval
         self.reader_join_seconds = reader_join_seconds
 
@@ -58,12 +74,14 @@ class SandboxWorkerBackend(WorkerBackend):
 
         deadline = time.monotonic() + timeout_seconds
         sandbox: SandboxRecord | None = None
+        workspace: PreparedWorkspace | None = None
         reader: threading.Thread | None = None
-        result: WorkerResult
+        result: WorkerResult | None = None
 
         cleanup_error: str | None = None
         try:
             try:
+                workspace = self._prepare_workspace(task, on_event)
                 sandbox = self.provider.create(job_id=task.job_id, spec=self.spec)
                 self._record_host_event(
                     task.job_id,
@@ -71,6 +89,7 @@ class SandboxWorkerBackend(WorkerBackend):
                     {"sandbox_id": sandbox.sandbox_id, "backend": sandbox.backend},
                     on_event,
                 )
+                self._inject_workspace(sandbox, workspace, task, on_event)
 
                 abort = self._abort_result(
                     task,
@@ -105,9 +124,14 @@ class SandboxWorkerBackend(WorkerBackend):
                     on_event,
                 )
         finally:
-            cleanup_error = self._destroy(sandbox, task, on_event)
-            if reader is not None:
-                reader.join(timeout=self.reader_join_seconds)
+            cleanup_error = self._cleanup(
+                sandbox,
+                workspace,
+                result,
+                reader,
+                task,
+                on_event,
+            )
 
         if cleanup_error is not None:
             return WorkerResult(
@@ -116,6 +140,7 @@ class SandboxWorkerBackend(WorkerBackend):
                 summary="Sandbox cleanup failed.",
                 error=cleanup_error,
             )
+        assert result is not None
         return result
 
     def _run_started(
@@ -249,49 +274,134 @@ class SandboxWorkerBackend(WorkerBackend):
             )
         return None
 
-    def _destroy(
+    def _prepare_workspace(
+        self,
+        task: WorkerTask,
+        on_event: Callable[[NightShiftEvent], None] | None,
+    ) -> PreparedWorkspace | None:
+        if self.workspace_provider is None:
+            return None
+        if task.repository_id is None or task.starting_revision is None:
+            raise ValueError("Workspace execution requires a repository ID and revision")
+        workspace = self.workspace_provider.prepare(
+            job_id=task.job_id,
+            repository_id=task.repository_id,
+            revision=task.starting_revision,
+        )
+        self._record_host_event(
+            task.job_id,
+            "workspace_prepared",
+            {"repository_id": workspace.repository_id, "revision": workspace.revision},
+            on_event,
+        )
+        return workspace
+
+    def _inject_workspace(
+        self,
+        sandbox: SandboxRecord,
+        workspace: PreparedWorkspace | None,
+        task: WorkerTask,
+        on_event: Callable[[NightShiftEvent], None] | None,
+    ) -> None:
+        if workspace is None:
+            return
+        assert self.workspace_injector is not None
+        read_only = task.worker_profile != "coding-worker"
+        self.workspace_injector.inject(sandbox, workspace, read_only=read_only)
+        self._record_host_event(
+            task.job_id,
+            "workspace_injected",
+            {"sandbox_id": sandbox.sandbox_id, "read_only": read_only},
+            on_event,
+        )
+
+    def _cleanup(
         self,
         sandbox: SandboxRecord | None,
+        workspace: PreparedWorkspace | None,
+        result: WorkerResult | None,
+        reader: threading.Thread | None,
         task: WorkerTask,
         on_event: Callable[[NightShiftEvent], None] | None,
     ) -> str | None:
-        if sandbox is None:
-            return None
-        channel_error: str | None = None
-        destroy_error: str | None = None
-        try:
-            self.channel.close(sandbox)
-        except Exception as exc:
-            channel_error = str(exc)
-        try:
-            self.provider.destroy(sandbox)
-        except Exception as exc:
-            destroy_error = str(exc)
-        if channel_error is not None or destroy_error is not None:
-            if channel_error is not None and destroy_error is not None:
-                error = (
-                    f"channel close failed: {channel_error}; "
-                    f"sandbox destroy failed: {destroy_error}"
-                )
-            elif channel_error is not None:
-                error = f"channel close failed: {channel_error}"
+        errors: list[str] = []
+        if sandbox is not None:
+            try:
+                self.channel.close(sandbox)
+            except Exception as exc:
+                errors.append(f"channel close failed: {exc}")
+            if reader is not None:
+                reader.join(timeout=self.reader_join_seconds)
+            if result is not None and result.artifacts:
+                artifact_error = self._retrieve_artifacts(sandbox, result, task, on_event)
+                if artifact_error is not None:
+                    errors.append(artifact_error)
+            try:
+                self.provider.destroy(sandbox)
+            except Exception as exc:
+                errors.append(f"sandbox destroy failed: {exc}")
             else:
-                assert destroy_error is not None
-                error = destroy_error
-            self._record_host_event(
-                task.job_id,
-                "sandbox_cleanup_failed",
-                {"sandbox_id": sandbox.sandbox_id, "error": error},
-                on_event,
-            )
-            return error
+                self._record_host_event(
+                    task.job_id,
+                    "sandbox_destroyed",
+                    {"sandbox_id": sandbox.sandbox_id},
+                    on_event,
+                )
+        if workspace is not None:
+            assert self.workspace_provider is not None
+            try:
+                self.workspace_provider.destroy(workspace)
+            except Exception as exc:
+                errors.append(f"workspace cleanup failed: {exc}")
+        if not errors:
+            return None
+        error = "; ".join(errors)
         self._record_host_event(
             task.job_id,
-            "sandbox_destroyed",
-            {"sandbox_id": sandbox.sandbox_id},
+            "sandbox_cleanup_failed",
+            {
+                "sandbox_id": sandbox.sandbox_id if sandbox is not None else None,
+                "error": error,
+            },
             on_event,
         )
-        return None
+        return error
+
+    def _retrieve_artifacts(
+        self,
+        sandbox: SandboxRecord,
+        result: WorkerResult,
+        task: WorkerTask,
+        on_event: Callable[[NightShiftEvent], None] | None,
+    ) -> str | None:
+        if self.artifact_retriever is None or self.artifact_collector is None:
+            return "worker returned artifacts but no artifact retriever is configured"
+        retrieved: RetrievedArtifacts | None = None
+        error: str | None = None
+        try:
+            retrieved = self.artifact_retriever.retrieve(sandbox, result.artifacts)
+            if retrieved.references != result.artifacts:
+                raise ValueError("Artifact retriever changed the requested references")
+            records = self.artifact_collector.collect(
+                job_id=task.job_id,
+                staging_root=retrieved.staging_root,
+                references=retrieved.references,
+            )
+            self._record_host_event(
+                task.job_id,
+                "worker_artifacts_collected",
+                {"count": len(records)},
+                on_event,
+            )
+        except Exception as exc:
+            error = f"artifact retrieval failed: {exc}"
+        if retrieved is not None:
+            try:
+                self.artifact_retriever.cleanup(retrieved)
+            except Exception as exc:
+                cleanup_error = f"artifact staging cleanup failed: {exc}"
+                error = f"{error}; {cleanup_error}" if error else cleanup_error
+        return error
 
     def _failure(
         self,
@@ -339,25 +449,6 @@ class SandboxWorkerBackend(WorkerBackend):
         remaining = deadline - time.monotonic()
         if remaining > 0:
             time.sleep(min(self.poll_interval, remaining))
-
-
-class _LegacyControllerChannel:
-    """Temporary adapter for controllers that still combine lifecycle and I/O."""
-
-    def __init__(self, controller: SandboxController) -> None:
-        self.controller = controller
-
-    def send_task(self, sandbox: SandboxRecord, task: WorkerTask) -> None:
-        self.controller.send_task(sandbox, task)
-
-    def events(self, sandbox: SandboxRecord):
-        return self.controller.events(sandbox)
-
-    def retrieve_result(self, sandbox: SandboxRecord) -> WorkerResult:
-        return self.controller.retrieve_results(sandbox)
-
-    def close(self, sandbox: SandboxRecord) -> None:
-        return None
 
 
 def _pump_sandbox_events(

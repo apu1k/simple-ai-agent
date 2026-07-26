@@ -1,5 +1,5 @@
 import hashlib
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -9,14 +9,7 @@ from night_shifts.backends.hyperv import (
     HyperVError,
     HyperVSandboxController,
 )
-from night_shifts.models import NightShiftEvent, SandboxRecord, SandboxSpec, SandboxStatus
-from night_shifts.protocol import (
-    WorkerOutcome,
-    WorkerResult,
-    WorkerTask,
-    decode_task,
-    encode_task,
-)
+from night_shifts.models import SandboxRecord, SandboxSpec, SandboxStatus
 from night_shifts.storage import SandboxStore
 
 
@@ -33,35 +26,10 @@ class FakeRunner:
         return self.outputs.get(script.name, "")
 
 
-class FakeTransport:
-    def __init__(self, job_id: str):
-        self.job_id = job_id
-        self.sent: list[str] = []
-        self.closed: list[str] = []
-
-    def send_task(self, sandbox: SandboxRecord, task: WorkerTask) -> None:
-        self.sent.append(encode_task(task))
-
-    def events(self, sandbox: SandboxRecord) -> Iterable[NightShiftEvent]:
-        yield NightShiftEvent(
-            job_id=self.job_id,
-            event_type="progress_updated",
-            actor="worker",
-            payload={"percent": 50},
-        )
-
-    def retrieve_result(self, sandbox: SandboxRecord) -> WorkerResult:
-        return WorkerResult(self.job_id, WorkerOutcome.SUCCESS, "completed")
-
-    def close(self, sandbox: SandboxRecord) -> None:
-        self.closed.append(sandbox.sandbox_id)
-
-
 def build_controller(
     tmp_path: Path,
     *,
     runner: FakeRunner | None = None,
-    transport: FakeTransport | None = None,
     switch_name: str | None = None,
 ):
     image = tmp_path / "base.vhdx"
@@ -78,7 +46,6 @@ def build_controller(
         ),
         SandboxStore(database),
         runner=selected_runner,
-        transport=transport,
     )
     return controller, selected_runner
 
@@ -185,30 +152,13 @@ def test_lifecycle_failure_is_persisted(tmp_path: Path):
     assert controller.store.get(sandbox.sandbox_id) == sandbox
 
 
-def test_transport_round_trips_only_validated_protocol_messages(tmp_path: Path):
-    transport = FakeTransport("job-1")
-    controller, _ = build_controller(tmp_path, transport=transport)
-    sandbox = controller.create(job_id="job-1", spec=SandboxSpec())
-    task = WorkerTask("job-1", "Work", "coding-worker")
-
-    controller.send_task(sandbox, task)
-    events = list(controller.events(sandbox))
-    result = controller.retrieve_results(sandbox)
-
-    assert decode_task(transport.sent[0]) == task
-    assert events[0].event_type == "progress_updated"
-    assert result.outcome is WorkerOutcome.SUCCESS
-
-
-def test_default_transport_fails_closed(tmp_path: Path):
+def test_controller_exposes_only_sandbox_lifecycle(tmp_path: Path):
     controller, _ = build_controller(tmp_path)
-    sandbox = controller.create(job_id="job-1", spec=SandboxSpec())
 
-    with pytest.raises(HyperVError, match="No Hyper-V guest transport"):
-        controller.send_task(
-            sandbox,
-            WorkerTask("job-1", "Work", "coding-worker"),
-        )
+    assert not hasattr(controller, "send_task")
+    assert not hasattr(controller, "events")
+    assert not hasattr(controller, "retrieve_results")
+    assert not hasattr(controller, "transport")
 
 
 def test_controller_rejects_forged_external_identity(tmp_path: Path):
@@ -313,26 +263,6 @@ def test_reconcile_refuses_cross_backend_identity_conflict(tmp_path: Path):
     assert not report.succeeded
     assert "conflicts with persisted backend" in report.errors[0]
     assert not any(call[0] == "destroy.ps1" for call in runner.calls)
-
-
-def test_destroy_removes_vm_even_when_transport_close_fails(tmp_path: Path):
-    class FailingCloseTransport(FakeTransport):
-        def close(self, sandbox: SandboxRecord) -> None:
-            raise HyperVError("pipe close failed")
-
-    runner = FakeRunner()
-    controller, _ = build_controller(
-        tmp_path,
-        runner=runner,
-        transport=FailingCloseTransport("job-1"),
-    )
-    sandbox = controller.create(job_id="job-1", spec=SandboxSpec())
-
-    with pytest.raises(HyperVError, match="destroyed.*transport failed to close"):
-        controller.destroy(sandbox)
-
-    assert any(call[0] == "destroy.ps1" for call in runner.calls)
-    assert controller.store.get(sandbox.sandbox_id).status is SandboxStatus.DESTROYED
 
 
 def test_reconcile_continues_after_individual_cleanup_failure(tmp_path: Path):

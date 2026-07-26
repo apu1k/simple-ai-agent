@@ -7,30 +7,20 @@ import pytest
 from night_shifts.backends.sandbox_worker import SandboxWorkerBackend
 from night_shifts.models import NightShiftEvent, SandboxRecord, SandboxSpec, SandboxStatus
 from night_shifts.protocol import WorkerOutcome, WorkerResult, WorkerTask
-from night_shifts.sandboxes import SandboxController
 from night_shifts.storage import EventStore
 
 
-class FakeSandboxController(SandboxController):
+class FakeSandboxProvider:
     def __init__(
         self,
         *,
         statuses: list[SandboxStatus] | None = None,
-        events: list[NightShiftEvent] | None = None,
-        result: WorkerResult | None = None,
-        block_events: bool = False,
         destroy_error: str | None = None,
     ):
         self.statuses = statuses or [SandboxStatus.RUNNING]
-        self.worker_events = events or []
-        self.result = result or WorkerResult(
-            "job-1", WorkerOutcome.SUCCESS, "completed"
-        )
-        self.block_events = block_events
         self.destroy_error = destroy_error
         self.release_events = threading.Event()
         self.calls: list[str] = []
-        self.sent_task: WorkerTask | None = None
         self.record: SandboxRecord | None = None
 
     @property
@@ -51,20 +41,6 @@ class FakeSandboxController(SandboxController):
             return self.statuses.pop(0)
         return self.statuses[0]
 
-    def send_task(self, sandbox: SandboxRecord, task: WorkerTask) -> None:
-        self.calls.append("send_task")
-        self.sent_task = task
-
-    def events(self, sandbox: SandboxRecord) -> Iterable[NightShiftEvent]:
-        self.calls.append("events")
-        if self.block_events:
-            self.release_events.wait(timeout=2)
-        yield from self.worker_events
-
-    def retrieve_results(self, sandbox: SandboxRecord) -> WorkerResult:
-        self.calls.append("retrieve_results")
-        return self.result
-
     def pause(self, sandbox: SandboxRecord) -> None:
         self.calls.append("pause")
 
@@ -79,17 +55,39 @@ class FakeSandboxController(SandboxController):
 
 
 class FakeWorkerChannel:
-    def __init__(self, event: NightShiftEvent, result: WorkerResult) -> None:
+    def __init__(
+        self,
+        *,
+        event: NightShiftEvent | None = None,
+        result: WorkerResult | None = None,
+        block_events: bool = False,
+        event_error: str | None = None,
+        close_error: str | None = None,
+        release_events: threading.Event | None = None,
+    ) -> None:
         self.event = event
-        self.result = result
+        self.result = result or WorkerResult(
+            "job-1", WorkerOutcome.SUCCESS, "completed"
+        )
+        self.block_events = block_events
+        self.event_error = event_error
+        self.close_error = close_error
+        self.release_events = release_events or threading.Event()
         self.calls: list[str] = []
+        self.sent_task: WorkerTask | None = None
 
     def send_task(self, sandbox: SandboxRecord, task: WorkerTask) -> None:
         self.calls.append("send_task")
+        self.sent_task = task
 
     def events(self, sandbox: SandboxRecord) -> Iterable[NightShiftEvent]:
         self.calls.append("events")
-        yield self.event
+        if self.block_events:
+            self.release_events.wait(timeout=2)
+        if self.event_error is not None:
+            raise RuntimeError(self.event_error)
+        if self.event is not None:
+            yield self.event
 
     def retrieve_result(self, sandbox: SandboxRecord) -> WorkerResult:
         self.calls.append("retrieve_result")
@@ -97,41 +95,50 @@ class FakeWorkerChannel:
 
     def close(self, sandbox: SandboxRecord) -> None:
         self.calls.append("close")
+        self.release_events.set()
+        if self.close_error is not None:
+            raise RuntimeError(self.close_error)
 
 
 def task() -> WorkerTask:
     return WorkerTask("job-1", "Implement feature", "coding-worker")
 
 
+def components(**channel_options):
+    provider = FakeSandboxProvider()
+    channel = FakeWorkerChannel(release_events=provider.release_events, **channel_options)
+    return provider, channel
+
+
 def test_backend_composes_lifecycle_provider_and_independent_channel():
     event = NightShiftEvent("progress_updated", "worker", {}, "job-1")
     result = WorkerResult("job-1", WorkerOutcome.SUCCESS, "completed")
-    provider = FakeSandboxController()
-    channel = FakeWorkerChannel(event, result)
+    provider, channel = components(event=event, result=result)
     backend = SandboxWorkerBackend(provider, channel, poll_interval=0.001)
 
     observed = backend.run(task(), timeout_seconds=1)
 
     assert observed == result
     assert channel.calls == ["send_task", "events", "retrieve_result", "close"]
-    assert "send_task" not in provider.calls
-    assert "events" not in provider.calls
-    assert "retrieve_results" not in provider.calls
     assert provider.calls[-1] == "destroy"
+    assert not hasattr(provider, "send_task")
+    assert not hasattr(provider, "events")
+    assert not hasattr(provider, "retrieve_results")
 
 
 def test_sandbox_backend_runs_task_streams_events_and_destroys(tmp_path: Path):
     worker_event = NightShiftEvent(
         "progress_updated", "worker", {"percent": 50}, "job-1"
     )
-    controller = FakeSandboxController(
-        statuses=[SandboxStatus.STARTING, SandboxStatus.RUNNING],
-        events=[worker_event],
+    provider = FakeSandboxProvider(
+        statuses=[SandboxStatus.STARTING, SandboxStatus.RUNNING]
     )
+    channel = FakeWorkerChannel(event=worker_event, release_events=provider.release_events)
     store = EventStore(tmp_path / "operations.sqlite3")
     observed: list[NightShiftEvent] = []
     backend = SandboxWorkerBackend(
-        controller,
+        provider,
+        channel,
         event_store=store,
         poll_interval=0.001,
     )
@@ -139,17 +146,9 @@ def test_sandbox_backend_runs_task_streams_events_and_destroys(tmp_path: Path):
     result = backend.run(task(), timeout_seconds=1, on_event=observed.append)
 
     assert result.outcome is WorkerOutcome.SUCCESS
-    assert controller.sent_task == task()
-    assert controller.calls == [
-        "create",
-        "start",
-        "status",
-        "status",
-        "send_task",
-        "events",
-        "retrieve_results",
-        "destroy",
-    ]
+    assert channel.sent_task == task()
+    assert provider.calls == ["create", "start", "status", "status", "destroy"]
+    assert channel.calls == ["send_task", "events", "retrieve_result", "close"]
     event_types = [event.event_type for event in observed]
     assert event_types == [
         "sandbox_created",
@@ -165,8 +164,8 @@ def test_sandbox_backend_runs_task_streams_events_and_destroys(tmp_path: Path):
 
 
 def test_sandbox_backend_cancels_before_start_and_still_destroys():
-    controller = FakeSandboxController()
-    backend = SandboxWorkerBackend(controller)
+    provider, channel = components()
+    backend = SandboxWorkerBackend(provider, channel)
 
     result = backend.run(
         task(),
@@ -175,24 +174,26 @@ def test_sandbox_backend_cancels_before_start_and_still_destroys():
     )
 
     assert result.outcome is WorkerOutcome.CANCELLED
-    assert controller.calls == ["create", "destroy"]
+    assert provider.calls == ["create", "destroy"]
+    assert channel.calls == ["close"]
 
 
 def test_sandbox_backend_times_out_during_startup_and_destroys():
-    controller = FakeSandboxController(statuses=[SandboxStatus.STARTING])
-    backend = SandboxWorkerBackend(controller, poll_interval=0.001)
+    provider = FakeSandboxProvider(statuses=[SandboxStatus.STARTING])
+    channel = FakeWorkerChannel(release_events=provider.release_events)
+    backend = SandboxWorkerBackend(provider, channel, poll_interval=0.001)
 
     result = backend.run(task(), timeout_seconds=0.01)
 
     assert result.outcome is WorkerOutcome.TIMED_OUT
-    assert controller.calls[0:2] == ["create", "start"]
-    assert controller.calls[-1] == "destroy"
-    assert "send_task" not in controller.calls
+    assert provider.calls[0:2] == ["create", "start"]
+    assert provider.calls[-1] == "destroy"
+    assert "send_task" not in channel.calls
 
 
 def test_sandbox_backend_cancels_while_event_reader_is_blocked():
-    controller = FakeSandboxController(block_events=True)
-    backend = SandboxWorkerBackend(controller, poll_interval=0.001)
+    provider, channel = components(block_events=True)
+    backend = SandboxWorkerBackend(provider, channel, poll_interval=0.001)
     checks = 0
 
     def cancellation_requested() -> bool:
@@ -207,41 +208,50 @@ def test_sandbox_backend_cancels_while_event_reader_is_blocked():
     )
 
     assert result.outcome is WorkerOutcome.CANCELLED
-    assert "events" in controller.calls
-    assert controller.calls[-1] == "destroy"
-    assert controller.release_events.is_set()
+    assert "events" in channel.calls
+    assert channel.calls[-1] == "close"
+    assert provider.calls[-1] == "destroy"
+    assert provider.release_events.is_set()
 
 
 def test_sandbox_backend_reports_protocol_error_and_destroys():
-    class BrokenController(FakeSandboxController):
-        def events(self, sandbox: SandboxRecord) -> Iterable[NightShiftEvent]:
-            raise RuntimeError("invalid guest frame")
-            yield  # pragma: no cover
-
-    controller = BrokenController()
-    backend = SandboxWorkerBackend(controller, poll_interval=0.001)
+    provider, channel = components(event_error="invalid guest frame")
+    backend = SandboxWorkerBackend(provider, channel, poll_interval=0.001)
 
     result = backend.run(task(), timeout_seconds=1)
 
     assert result.outcome is WorkerOutcome.FAILED
     assert result.error == "invalid guest frame"
-    assert controller.calls[-1] == "destroy"
+    assert channel.calls[-1] == "close"
+    assert provider.calls[-1] == "destroy"
 
 
 def test_cleanup_failure_overrides_successful_worker_result():
-    controller = FakeSandboxController(destroy_error="could not remove VM")
-    backend = SandboxWorkerBackend(controller, poll_interval=0.001)
+    provider = FakeSandboxProvider(destroy_error="could not remove VM")
+    channel = FakeWorkerChannel(release_events=provider.release_events)
+    backend = SandboxWorkerBackend(provider, channel, poll_interval=0.001)
 
     result = backend.run(task(), timeout_seconds=1)
 
     assert result.outcome is WorkerOutcome.FAILED
     assert result.summary == "Sandbox cleanup failed."
-    assert result.error == "could not remove VM"
+    assert result.error == "sandbox destroy failed: could not remove VM"
+
+
+def test_channel_close_failure_does_not_bypass_sandbox_destruction():
+    provider, channel = components(close_error="could not close channel")
+    backend = SandboxWorkerBackend(provider, channel, poll_interval=0.001)
+
+    result = backend.run(task(), timeout_seconds=1)
+
+    assert result.outcome is WorkerOutcome.FAILED
+    assert result.error == "channel close failed: could not close channel"
+    assert provider.calls[-1] == "destroy"
 
 
 def test_callback_failure_cannot_bypass_sandbox_destruction():
-    controller = FakeSandboxController()
-    backend = SandboxWorkerBackend(controller)
+    provider, channel = components()
+    backend = SandboxWorkerBackend(provider, channel)
 
     def broken_callback(event: NightShiftEvent) -> None:
         raise RuntimeError("event sink failed")
@@ -249,4 +259,5 @@ def test_callback_failure_cannot_bypass_sandbox_destruction():
     with pytest.raises(RuntimeError, match="event sink failed"):
         backend.run(task(), timeout_seconds=1, on_event=broken_callback)
 
-    assert controller.calls == ["create", "destroy"]
+    assert channel.calls == ["close"]
+    assert provider.calls == ["create", "destroy"]

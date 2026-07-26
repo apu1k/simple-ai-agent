@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, Sequence
 
+from night_shifts.contracts.workspace import PreparedWorkspace
+
 
 class WorkspaceError(RuntimeError):
     """Raised when a trusted repository workspace cannot be prepared safely."""
@@ -24,14 +26,6 @@ class WorkspaceError(RuntimeError):
 class TrustedRepository:
     repository_id: str
     source: Path
-
-
-@dataclass(frozen=True)
-class PreparedWorkspace:
-    job_id: str
-    repository_id: str
-    revision: str
-    path: Path
 
 
 class GitRunner(Protocol):
