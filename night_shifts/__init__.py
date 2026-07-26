@@ -1,6 +1,12 @@
 """Trusted host-side orchestration primitives for night-shift jobs."""
 
 from night_shifts.artifacts import ArtifactCollector, ArtifactRetrievalError
+from night_shifts.channels import (
+    InMemoryWorkerChannel,
+    MarkdownMailboxChannel,
+    MarkdownMailboxError,
+)
+from night_shifts.contracts import SandboxProvider, WorkerChannel
 from night_shifts.models import (
     AgentPlan,
     ArtifactRecord,
@@ -31,17 +37,22 @@ __all__ = [
     "ArtifactCollector",
     "ArtifactRetrievalError",
     "ArtifactRecord",
+    "InMemoryWorkerChannel",
     "JobBudget",
     "JobStatus",
+    "MarkdownMailboxChannel",
+    "MarkdownMailboxError",
     "NightShiftEvent",
     "NightShiftJob",
     "NightShiftService",
     "SandboxController",
+    "SandboxProvider",
     "SandboxRecord",
     "SandboxSpec",
     "SandboxStatus",
     "ToolCallRecord",
     "ToolCallStatus",
+    "WorkerChannel",
     "WorkerOutcome",
     "WorkerResult",
     "WorkerTask",

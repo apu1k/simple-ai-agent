@@ -10,10 +10,8 @@ from night_shifts.protocol import (
     WorkerResult,
     WorkerTask,
     decode_task,
-    decode_worker_message,
     encode_event,
     encode_result,
-    encode_task,
 )
 
 
@@ -71,13 +69,12 @@ def test_serial_transport_round_trips_fragmented_jsonl_frames():
     record = sandbox()
     task = WorkerTask("job-1", "Work", "coding-worker")
 
-    transport.send(record, encode_task(task))
-    events = list(transport.event_messages(record))
-    result = decode_worker_message(transport.result_message(record))
+    transport.send_task(record, task)
+    events = list(transport.events(record))
+    result = transport.retrieve_result(record)
 
     assert decode_task(channel.written.decode().rstrip("\n")) == task
-    assert decode_worker_message(events[0]).event_type == "progress_updated"
-    assert isinstance(result, WorkerResult)
+    assert events[0].event_type == "progress_updated"
     assert result.outcome is WorkerOutcome.SUCCESS
     assert connector.calls == [(serial_pipe_path(record.sandbox_id), 30.0)]
 
@@ -89,26 +86,27 @@ def test_result_retrieval_preserves_events_not_consumed_yet():
     transport = HyperVSerialTransport(connector=FakeConnector(channel))
     record = sandbox()
 
-    result = decode_worker_message(transport.result_message(record))
-    events = list(transport.event_messages(record))
+    result = transport.retrieve_result(record)
+    events = list(transport.events(record))
 
     assert isinstance(result, WorkerResult)
-    assert decode_worker_message(events[0]).event_type == "check_passed"
+    assert events[0].event_type == "check_passed"
 
 
 def test_serial_transport_rejects_duplicate_tasks_and_oversized_frames():
-    channel = DuplexChannel([b"12345"])
+    channel = DuplexChannel([b"x" * 257])
     transport = HyperVSerialTransport(
         connector=FakeConnector(channel),
-        max_message_bytes=4,
+        max_message_bytes=256,
     )
     record = sandbox()
-    transport.send(record, "{}")
+    task = WorkerTask("job-1", "Work", "coding-worker")
+    transport.send_task(record, task)
 
     with pytest.raises(HyperVError, match="already been sent"):
-        transport.send(record, "{}")
+        transport.send_task(record, task)
     with pytest.raises(HyperVError, match="size limit"):
-        list(transport.event_messages(record))
+        list(transport.events(record))
 
     assert channel.closed
 
@@ -121,7 +119,7 @@ def test_serial_transport_rejects_untrusted_sandbox_ids_before_connecting():
     record.sandbox_id = "../../personal-pipe"
 
     with pytest.raises(HyperVError, match="trusted 32-character hexadecimal"):
-        transport.send(record, "{}")
+        transport.send_task(record, WorkerTask("job-1", "Work", "coding-worker"))
 
     assert connector.calls == []
 
@@ -130,7 +128,7 @@ def test_close_is_idempotent():
     channel = DuplexChannel([])
     transport = HyperVSerialTransport(connector=FakeConnector(channel))
     record = sandbox()
-    transport.send(record, "{}")
+    transport.send_task(record, WorkerTask("job-1", "Work", "coding-worker"))
 
     transport.close(record)
     transport.close(record)

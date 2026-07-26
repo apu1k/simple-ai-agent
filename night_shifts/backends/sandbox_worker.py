@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 
 from night_shifts.backends.base import WorkerBackend
+from night_shifts.contracts import SandboxProvider, WorkerChannel
 from night_shifts.models import NightShiftEvent, SandboxRecord, SandboxSpec, SandboxStatus
 from night_shifts.protocol import WorkerOutcome, WorkerResult, WorkerTask
 from night_shifts.sandboxes import SandboxController
@@ -21,7 +22,8 @@ class SandboxWorkerBackend(WorkerBackend):
 
     def __init__(
         self,
-        controller: SandboxController,
+        provider: SandboxProvider,
+        channel: WorkerChannel | None = None,
         *,
         spec: SandboxSpec | None = None,
         event_store: EventStore | None = None,
@@ -32,7 +34,12 @@ class SandboxWorkerBackend(WorkerBackend):
             raise ValueError("Sandbox poll interval must be positive")
         if reader_join_seconds < 0:
             raise ValueError("Sandbox reader join timeout must not be negative")
-        self.controller = controller
+        self.provider = provider
+        if channel is None:
+            if not isinstance(provider, SandboxController):
+                raise ValueError("A worker channel is required for this sandbox provider")
+            channel = _LegacyControllerChannel(provider)
+        self.channel = channel
         self.spec = spec or SandboxSpec()
         self.event_store = event_store
         self.poll_interval = poll_interval
@@ -57,7 +64,7 @@ class SandboxWorkerBackend(WorkerBackend):
         cleanup_error: str | None = None
         try:
             try:
-                sandbox = self.controller.create(job_id=task.job_id, spec=self.spec)
+                sandbox = self.provider.create(job_id=task.job_id, spec=self.spec)
                 self._record_host_event(
                     task.job_id,
                     "sandbox_created",
@@ -75,7 +82,7 @@ class SandboxWorkerBackend(WorkerBackend):
                 if abort is not None:
                     result = abort
                 else:
-                    self.controller.start(sandbox)
+                    self.provider.start(sandbox)
                     self._record_host_event(
                         task.job_id,
                         "sandbox_started",
@@ -131,7 +138,7 @@ class SandboxWorkerBackend(WorkerBackend):
             )
             if abort is not None:
                 return abort, None
-            status = self.controller.status(sandbox)
+            status = self.provider.status(sandbox)
             if status is SandboxStatus.RUNNING:
                 break
             if status in {
@@ -156,7 +163,7 @@ class SandboxWorkerBackend(WorkerBackend):
             {"sandbox_id": sandbox.sandbox_id},
             on_event,
         )
-        self.controller.send_task(sandbox, task)
+        self.channel.send_task(sandbox, task)
         self._record_host_event(
             task.job_id,
             "sandbox_task_sent",
@@ -167,7 +174,7 @@ class SandboxWorkerBackend(WorkerBackend):
         output: queue.Queue[_StreamItem] = queue.Queue()
         reader = threading.Thread(
             target=_pump_sandbox_events,
-            args=(self.controller, sandbox, output),
+            args=(self.channel, sandbox, output),
             daemon=True,
         )
         reader.start()
@@ -204,7 +211,7 @@ class SandboxWorkerBackend(WorkerBackend):
                     reader,
                 )
             else:
-                result = self.controller.retrieve_results(sandbox)
+                result = self.channel.retrieve_result(sandbox)
                 self._record_host_event(
                     task.job_id,
                     "worker_result_received",
@@ -250,10 +257,27 @@ class SandboxWorkerBackend(WorkerBackend):
     ) -> str | None:
         if sandbox is None:
             return None
+        channel_error: str | None = None
+        destroy_error: str | None = None
         try:
-            self.controller.destroy(sandbox)
+            self.channel.close(sandbox)
         except Exception as exc:
-            error = str(exc)
+            channel_error = str(exc)
+        try:
+            self.provider.destroy(sandbox)
+        except Exception as exc:
+            destroy_error = str(exc)
+        if channel_error is not None or destroy_error is not None:
+            if channel_error is not None and destroy_error is not None:
+                error = (
+                    f"channel close failed: {channel_error}; "
+                    f"sandbox destroy failed: {destroy_error}"
+                )
+            elif channel_error is not None:
+                error = f"channel close failed: {channel_error}"
+            else:
+                assert destroy_error is not None
+                error = destroy_error
             self._record_host_event(
                 task.job_id,
                 "sandbox_cleanup_failed",
@@ -317,13 +341,32 @@ class SandboxWorkerBackend(WorkerBackend):
             time.sleep(min(self.poll_interval, remaining))
 
 
+class _LegacyControllerChannel:
+    """Temporary adapter for controllers that still combine lifecycle and I/O."""
+
+    def __init__(self, controller: SandboxController) -> None:
+        self.controller = controller
+
+    def send_task(self, sandbox: SandboxRecord, task: WorkerTask) -> None:
+        self.controller.send_task(sandbox, task)
+
+    def events(self, sandbox: SandboxRecord):
+        return self.controller.events(sandbox)
+
+    def retrieve_result(self, sandbox: SandboxRecord) -> WorkerResult:
+        return self.controller.retrieve_results(sandbox)
+
+    def close(self, sandbox: SandboxRecord) -> None:
+        return None
+
+
 def _pump_sandbox_events(
-    controller: SandboxController,
+    channel: WorkerChannel,
     sandbox: SandboxRecord,
     output: queue.Queue[_StreamItem],
 ) -> None:
     try:
-        for event in controller.events(sandbox):
+        for event in channel.events(sandbox):
             output.put(("event", event))
     except Exception as exc:
         output.put(("error", exc))

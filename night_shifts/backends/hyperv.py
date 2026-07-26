@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from night_shifts.contracts import WorkerChannel
 from night_shifts.models import (
     NightShiftEvent,
     SandboxRecord,
@@ -22,13 +23,7 @@ from night_shifts.models import (
     SandboxStatus,
     utc_now,
 )
-from night_shifts.protocol import (
-    ProtocolError,
-    WorkerResult,
-    WorkerTask,
-    decode_worker_message,
-    encode_task,
-)
+from night_shifts.protocol import ProtocolError, WorkerResult, WorkerTask
 from night_shifts.sandboxes import SandboxController
 from night_shifts.storage import SandboxStore
 
@@ -47,18 +42,6 @@ _STATE_MAP = {
 
 class HyperVError(RuntimeError):
     """Raised when host validation or a Hyper-V operation fails."""
-
-
-class HyperVTransport(Protocol):
-    """Narrow JSONL transport implemented by the guest-channel adapter."""
-
-    def send(self, sandbox: SandboxRecord, message: str) -> None: ...
-
-    def event_messages(self, sandbox: SandboxRecord) -> Iterable[str]: ...
-
-    def result_message(self, sandbox: SandboxRecord) -> str: ...
-
-    def close(self, sandbox: SandboxRecord) -> None: ...
 
 
 class PowerShellCommandRunner(Protocol):
@@ -144,13 +127,13 @@ class UnavailableHyperVTransport:
 
     _MESSAGE = "No Hyper-V guest transport is configured"
 
-    def send(self, sandbox: SandboxRecord, message: str) -> None:
+    def send_task(self, sandbox: SandboxRecord, task: WorkerTask) -> None:
         raise HyperVError(self._MESSAGE)
 
-    def event_messages(self, sandbox: SandboxRecord) -> Iterable[str]:
+    def events(self, sandbox: SandboxRecord) -> Iterable[NightShiftEvent]:
         raise HyperVError(self._MESSAGE)
 
-    def result_message(self, sandbox: SandboxRecord) -> str:
+    def retrieve_result(self, sandbox: SandboxRecord) -> WorkerResult:
         raise HyperVError(self._MESSAGE)
 
     def close(self, sandbox: SandboxRecord) -> None:
@@ -166,7 +149,7 @@ class HyperVSandboxController(SandboxController):
         store: SandboxStore,
         *,
         runner: PowerShellCommandRunner | None = None,
-        transport: HyperVTransport | None = None,
+        transport: WorkerChannel | None = None,
         scripts_dir: Path | None = None,
     ):
         self.config = config
@@ -331,23 +314,18 @@ class HyperVSandboxController(SandboxController):
         self._validate_record(sandbox)
         if task.job_id != sandbox.job_id:
             raise HyperVError("Task job ID does not match sandbox job ID")
-        self.transport.send(sandbox, encode_task(task))
+        self.transport.send_task(sandbox, task)
 
     def events(self, sandbox: SandboxRecord) -> Iterable[NightShiftEvent]:
         self._validate_record(sandbox)
-        for line in self.transport.event_messages(sandbox):
-            message = decode_worker_message(line)
-            if not isinstance(message, NightShiftEvent):
-                raise ProtocolError("Guest transport returned a result in the event stream")
+        for message in self.transport.events(sandbox):
             if message.job_id != sandbox.job_id or message.actor != "worker":
                 raise ProtocolError("Guest event has a mismatched job ID or forbidden actor")
             yield message
 
     def retrieve_results(self, sandbox: SandboxRecord) -> WorkerResult:
         self._validate_record(sandbox)
-        message = decode_worker_message(self.transport.result_message(sandbox))
-        if not isinstance(message, WorkerResult):
-            raise ProtocolError("Guest transport returned an event instead of a result")
+        message = self.transport.retrieve_result(sandbox)
         if message.job_id != sandbox.job_id:
             raise ProtocolError("Guest result job ID does not match sandbox job ID")
         return message

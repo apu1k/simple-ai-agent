@@ -15,8 +15,7 @@ from night_shifts.protocol import (
     WorkerResult,
     WorkerTask,
     decode_task,
-    encode_event,
-    encode_result,
+    encode_task,
 )
 from night_shifts.storage import SandboxStore
 
@@ -40,23 +39,19 @@ class FakeTransport:
         self.sent: list[str] = []
         self.closed: list[str] = []
 
-    def send(self, sandbox: SandboxRecord, message: str) -> None:
-        self.sent.append(message)
+    def send_task(self, sandbox: SandboxRecord, task: WorkerTask) -> None:
+        self.sent.append(encode_task(task))
 
-    def event_messages(self, sandbox: SandboxRecord) -> Iterable[str]:
-        yield encode_event(
-            NightShiftEvent(
-                job_id=self.job_id,
-                event_type="progress_updated",
-                actor="worker",
-                payload={"percent": 50},
-            )
+    def events(self, sandbox: SandboxRecord) -> Iterable[NightShiftEvent]:
+        yield NightShiftEvent(
+            job_id=self.job_id,
+            event_type="progress_updated",
+            actor="worker",
+            payload={"percent": 50},
         )
 
-    def result_message(self, sandbox: SandboxRecord) -> str:
-        return encode_result(
-            WorkerResult(self.job_id, WorkerOutcome.SUCCESS, "completed")
-        )
+    def retrieve_result(self, sandbox: SandboxRecord) -> WorkerResult:
+        return WorkerResult(self.job_id, WorkerOutcome.SUCCESS, "completed")
 
     def close(self, sandbox: SandboxRecord) -> None:
         self.closed.append(sandbox.sandbox_id)

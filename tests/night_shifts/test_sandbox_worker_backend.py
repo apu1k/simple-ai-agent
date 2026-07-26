@@ -78,8 +78,46 @@ class FakeSandboxController(SandboxController):
             raise RuntimeError(self.destroy_error)
 
 
+class FakeWorkerChannel:
+    def __init__(self, event: NightShiftEvent, result: WorkerResult) -> None:
+        self.event = event
+        self.result = result
+        self.calls: list[str] = []
+
+    def send_task(self, sandbox: SandboxRecord, task: WorkerTask) -> None:
+        self.calls.append("send_task")
+
+    def events(self, sandbox: SandboxRecord) -> Iterable[NightShiftEvent]:
+        self.calls.append("events")
+        yield self.event
+
+    def retrieve_result(self, sandbox: SandboxRecord) -> WorkerResult:
+        self.calls.append("retrieve_result")
+        return self.result
+
+    def close(self, sandbox: SandboxRecord) -> None:
+        self.calls.append("close")
+
+
 def task() -> WorkerTask:
     return WorkerTask("job-1", "Implement feature", "coding-worker")
+
+
+def test_backend_composes_lifecycle_provider_and_independent_channel():
+    event = NightShiftEvent("progress_updated", "worker", {}, "job-1")
+    result = WorkerResult("job-1", WorkerOutcome.SUCCESS, "completed")
+    provider = FakeSandboxController()
+    channel = FakeWorkerChannel(event, result)
+    backend = SandboxWorkerBackend(provider, channel, poll_interval=0.001)
+
+    observed = backend.run(task(), timeout_seconds=1)
+
+    assert observed == result
+    assert channel.calls == ["send_task", "events", "retrieve_result", "close"]
+    assert "send_task" not in provider.calls
+    assert "events" not in provider.calls
+    assert "retrieve_results" not in provider.calls
+    assert provider.calls[-1] == "destroy"
 
 
 def test_sandbox_backend_runs_task_streams_events_and_destroys(tmp_path: Path):

@@ -17,7 +17,12 @@ from typing import BinaryIO, Protocol
 
 from night_shifts.backends.hyperv import HyperVError
 from night_shifts.models import NightShiftEvent, SandboxRecord
-from night_shifts.protocol import WorkerResult, decode_worker_message
+from night_shifts.protocol import (
+    WorkerResult,
+    WorkerTask,
+    decode_worker_message,
+    encode_task,
+)
 
 _SANDBOX_ID = re.compile(r"^[0-9a-f]{32}$")
 _PIPE_PREFIX = "night-shift-"
@@ -69,8 +74,8 @@ class WindowsNamedPipeConnector:
 class _SerialSession:
     channel: BinaryIO
     buffer: bytearray = field(default_factory=bytearray)
-    pending_events: deque[str] = field(default_factory=deque)
-    result: str | None = None
+    pending_events: deque[NightShiftEvent] = field(default_factory=deque)
+    result: WorkerResult | None = None
     task_sent: bool = False
 
 
@@ -95,12 +100,11 @@ class HyperVSerialTransport:
         self.read_size = read_size
         self._sessions: dict[str, _SerialSession] = {}
 
-    def send(self, sandbox: SandboxRecord, message: str) -> None:
+    def send_task(self, sandbox: SandboxRecord, task: WorkerTask) -> None:
         session = self._session(sandbox)
         if session.task_sent:
             raise HyperVError("A task has already been sent to this sandbox")
-        if not message or "\n" in message or "\r" in message:
-            raise HyperVError("Hyper-V serial messages must be one non-empty JSONL frame")
+        message = encode_task(task)
         payload = message.encode("utf-8")
         if len(payload) > self.max_message_bytes:
             raise HyperVError("Hyper-V serial message exceeds the configured size limit")
@@ -112,29 +116,27 @@ class HyperVSerialTransport:
             raise HyperVError(f"Could not write to Hyper-V serial pipe: {exc}") from exc
         session.task_sent = True
 
-    def event_messages(self, sandbox: SandboxRecord) -> Iterable[str]:
+    def events(self, sandbox: SandboxRecord) -> Iterable[NightShiftEvent]:
         session = self._session(sandbox)
         while session.pending_events:
             yield session.pending_events.popleft()
         while session.result is None:
-            line = self._read_message(sandbox, session)
-            message = decode_worker_message(line)
+            message = decode_worker_message(self._read_message(sandbox, session))
             if isinstance(message, WorkerResult):
-                session.result = line
+                session.result = message
                 return
             if not isinstance(message, NightShiftEvent):  # pragma: no cover - defensive
                 raise HyperVError("Unsupported message on Hyper-V serial transport")
-            yield line
+            yield message
 
-    def result_message(self, sandbox: SandboxRecord) -> str:
+    def retrieve_result(self, sandbox: SandboxRecord) -> WorkerResult:
         session = self._session(sandbox)
         while session.result is None:
-            line = self._read_message(sandbox, session)
-            message = decode_worker_message(line)
+            message = decode_worker_message(self._read_message(sandbox, session))
             if isinstance(message, WorkerResult):
-                session.result = line
+                session.result = message
             else:
-                session.pending_events.append(line)
+                session.pending_events.append(message)
         return session.result
 
     def close(self, sandbox: SandboxRecord) -> None:
