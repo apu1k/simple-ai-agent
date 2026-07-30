@@ -42,14 +42,6 @@ _MUTATION_TOOLS = (
     "create_folder",
 )
 
-_ARITHMETIC_TOOLS = (
-    "add",
-    "subtract",
-    "multiply",
-    "divide",
-    "power",
-)
-
 # Every profile is intentionally explicit. In particular, future orchestration
 # tools must be added only to HEAD and must never be inherited by workers.
 _PROFILE_TOOLS: dict[AgentProfile, tuple[str, ...]] = {
@@ -57,24 +49,20 @@ _PROFILE_TOOLS: dict[AgentProfile, tuple[str, ...]] = {
         *_INSPECTION_TOOLS,
         *_MUTATION_TOOLS,
         "knowledge_search",
-        *_ARITHMETIC_TOOLS,
         "http_get",
         "run_shell_command",
     ),
     AgentProfile.CODING_WORKER: (
         *_INSPECTION_TOOLS,
         *_MUTATION_TOOLS,
-        *_ARITHMETIC_TOOLS,
         "run_shell_command",
     ),
     AgentProfile.READ_ONLY_WORKER: (
         *_INSPECTION_TOOLS,
         "knowledge_search",
-        *_ARITHMETIC_TOOLS,
     ),
     AgentProfile.REVIEW_WORKER: (
         *_INSPECTION_TOOLS,
-        *_ARITHMETIC_TOOLS,
         "run_shell_command",
     ),
 }

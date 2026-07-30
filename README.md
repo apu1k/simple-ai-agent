@@ -14,7 +14,7 @@ The project is independent and is not affiliated with any university, research i
 - Bounded, fail-fast tool batches
 - Exact-match file edits that remain pending until explicitly approved
 - Pending create, replace, move, copy, and delete operations
-- Filesystem, Python AST, HTTP, safe shell, math, and knowledge-search tools
+- Filesystem, Python AST, HTTP, safe shell, and knowledge-search tools
 - Local knowledge routing and optional Qdrant-backed indexes
 - PDF-to-Markdown reading through PyMuPDF4LLM
 
@@ -163,7 +163,6 @@ The agent can:
 - propose file edits and filesystem operations for approval
 - run a small OS-specific shell-command allowlist
 - fetch public HTTP(S) URLs
-- perform arithmetic
 - search configured local knowledge sources and chat history
 
 Relative paths resolve against the active working directory. Absolute paths are supported.
