@@ -1,11 +1,23 @@
 import os
 
+from core.tool_registry import registry
+from llm.schema import tool_spec_to_openai_function
 from tools.system.shell import run_shell_command
 
 
 class _State:
     def __init__(self, cwd):
         self.cwd = cwd
+
+
+def test_shell_native_schema_uses_array_args_and_integer_timeout():
+    spec = registry.get("run_shell_command")
+    tool = tool_spec_to_openai_function(spec)
+    properties = tool["function"]["parameters"]["properties"]
+
+    assert properties["args"]["type"] == "array"
+    assert properties["args"]["items"] == {"type": "string"}
+    assert properties["timeout"]["type"] == "integer"
 
 
 def test_shell_rejects_empty_command(tmp_path):

@@ -59,8 +59,8 @@ def _build_shell_tool_description() -> str:
         f"Allowed standalone commands: {standalone}. "
         f"Allowed command subcommands: {subcommands_text}. "
         "Runs in the current working directory with no shell parsing. "
-        "Arguments must be passed as a list of strings. "
-        "A JSON-encoded list string is also accepted for compatibility. "
+        "Pass arguments as a JSON array of strings, for example "
+        "[\"status\", \"--short\"]. "
         f"Output is limited to {MAX_OUTPUT_BYTES} bytes. "
         f"Timeout must be 1-{MAX_TIMEOUT} seconds."
     )
@@ -96,8 +96,19 @@ def _normalize_args(args) -> list[str] | str:
     description=_build_shell_tool_description(),
     params={
         "command": "The command to run (e.g. 'git', 'ruff', 'pytest').",
-        "args": "Arguments to pass as a list of strings. A JSON-encoded list string is also accepted for compatibility.",
-        "timeout": "Maximum execution time in seconds (1-30). Defaults to 30.",
+        "args": {
+            "type": "array",
+            "description": "Arguments to pass as separate strings, e.g. ['status', '--short'].",
+            "items": {"type": "string"},
+            "default": [],
+        },
+        "timeout": {
+            "type": "integer",
+            "description": "Maximum execution time in seconds (1-30).",
+            "minimum": 1,
+            "maximum": MAX_TIMEOUT,
+            "default": 30,
+        },
     },
     requires_state=True,
     example={
