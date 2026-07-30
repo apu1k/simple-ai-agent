@@ -18,21 +18,27 @@ def _to_json_schema_parameters(spec: ToolSpec) -> dict:
         params = {}
 
     properties = {}
+    required = []
     for name, definition in params.items():
         if isinstance(definition, dict):
             # Copy explicit schemas so provider-specific processing cannot
-            # mutate the registry's ToolSpec.
-            properties[name] = dict(definition)
+            # mutate the registry's ToolSpec. A JSON Schema default marks the
+            # function parameter as optional in the containing object.
+            property_schema = dict(definition)
+            properties[name] = property_schema
+            if "default" not in property_schema:
+                required.append(name)
         else:
             properties[name] = {
                 "type": "string",
                 "description": str(definition),
             }
+            required.append(name)
 
     return {
         "type": "object",
         "properties": properties,
-        "required": list(properties.keys()),
+        "required": required,
         "additionalProperties": False,
     }
 

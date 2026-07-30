@@ -101,13 +101,15 @@ Screen.theme-light #input:focus {
     border: heavy #333333;
 }
 
-Screen.theme-light.model-select-mode #input {
+Screen.theme-light.model-select-mode #input,
+Screen.theme-light.model-settings-select-mode #input {
     background: #F0F5FA;
     color: #1A1A1A;
     border: round #336699;
 }
 
-Screen.theme-light.model-select-mode #input:focus {
+Screen.theme-light.model-select-mode #input:focus,
+Screen.theme-light.model-settings-select-mode #input:focus {
     border: heavy #1565A0;
 }
 

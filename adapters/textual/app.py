@@ -89,11 +89,13 @@ class AgentTextualApp(App):
         ("f9", "open_pending", "Pending"),
         ("f2", "open_models", "Models"),
         ("f3", "open_chats", "Chats"),
+        ("f4", "open_model_settings", "Settings"),
     ]
 
     COMMANDS = [
         "\\help",
         "\\models",
+        "\\settings",
         "\\pending",
         "\\chats",
         "\\new_chat",
@@ -113,7 +115,13 @@ class AgentTextualApp(App):
         self.agent = None
         self._theme_dark = True
         self._processing = False
-        self._mode: Literal["chat", "model_select", "pending_select", "chat_select"] = "chat"
+        self._mode: Literal[
+            "chat",
+            "model_select",
+            "model_settings_select",
+            "pending_select",
+            "chat_select",
+        ] = "chat"
 
         self._messages: list[tuple[str, str]] = []
         self._models_by_provider: dict[str, list[str]] = {}
@@ -122,6 +130,9 @@ class AgentTextualApp(App):
         self._model_tree_loading = False
         self._model_search = ""
         self._visible_model_matches: list[tuple[str, str]] = []
+
+        self._model_settings_search = ""
+        self._visible_model_setting_matches: list[bool | Literal["model"]] = []
 
         self._pending_search = ""
         self._visible_pending_ids: list[int] = []
@@ -145,6 +156,9 @@ class AgentTextualApp(App):
         with Container(id="model_select", classes="hidden"):
             yield Static("Model selection is loading...", id="model_header")
             yield Tree("Models", id="model_tree")
+        with Container(id="model_settings_select", classes="hidden"):
+            yield Static("Runtime settings", id="model_settings_header")
+            yield Tree("Settings", id="model_settings_tree")
         with Container(id="pending_select", classes="hidden"):
             yield Static("Pending edits", id="pending_header")
             with Container(id="pending_body"):
@@ -211,6 +225,10 @@ class AgentTextualApp(App):
             self._submit_model_selection()
             return
 
+        if self._mode == "model_settings_select":
+            self._submit_model_setting_selection()
+            return
+
         if self._mode == "pending_select":
             self._approve_selected_pending()
             return
@@ -245,6 +263,11 @@ class AgentTextualApp(App):
         if self._mode == "model_select":
             self._model_search = event.value.strip()
             self._render_model_tree()
+            return
+
+        if self._mode == "model_settings_select":
+            self._model_settings_search = event.value.strip()
+            self._render_model_settings_tree()
             return
 
         if self._mode == "pending_select":
@@ -343,12 +366,16 @@ class AgentTextualApp(App):
         if command == "\\help":
             self._append_chat(
                 "System",
-                "Supported Textual commands: \\help, \\models, \\pending, \\chats, \\new_chat, \\history, \\reset, \\pwd, \\cd, \\state, \\theme, \\quit",
+                "Supported Textual commands: \\help, \\models, \\settings, \\pending, \\chats, \\new_chat, \\history, \\reset, \\pwd, \\cd, \\state, \\theme, \\quit",
             )
             return
 
         if command == "\\models":
             self._enter_model_select_mode()
+            return
+
+        if command == "\\settings":
+            self._enter_model_settings_mode()
             return
 
         if command == "\\pending":
@@ -478,12 +505,102 @@ class AgentTextualApp(App):
         if self._mode == "model_select":
             self._exit_model_select_mode()
             return
+        if self._mode == "model_settings_select":
+            self._exit_model_settings_mode()
+            return
         if self._mode == "pending_select":
             self._exit_pending_select_mode()
             return
         if self._mode == "chat_select":
             self._exit_chat_select_mode()
             return
+
+    def _enter_model_settings_mode(self) -> None:
+        if self._processing:
+            self._append_chat("System", "Cannot change model settings while AI is processing.")
+            return
+
+        self._mode = "model_settings_select"
+        self._refresh_footer_bindings()
+        self._model_settings_search = ""
+        self.query_one("#chat_scroll", VerticalScroll).add_class("hidden")
+        self.query_one("#model_settings_select", Container).remove_class("hidden")
+        self.screen.add_class("model-settings-select-mode")
+
+        input_widget = self.query_one("#input", Input)
+        input_widget.value = ""
+        input_widget.placeholder = "Search settings... Enter selects one match, Ctrl+G cancels"
+        input_widget.focus()
+        self._render_model_settings_tree()
+
+    def _exit_model_settings_mode(self) -> None:
+        self._mode = "chat"
+        self._refresh_footer_bindings()
+        self.query_one("#model_settings_select", Container).add_class("hidden")
+        self.query_one("#chat_scroll", VerticalScroll).remove_class("hidden")
+        self.screen.remove_class("model-settings-select-mode")
+
+        input_widget = self.query_one("#input", Input)
+        input_widget.value = ""
+        input_widget.placeholder = "Type a message and press Enter..."
+        input_widget.focus()
+        self.query_one("#chat_scroll", VerticalScroll).scroll_end(animate=False)
+
+    def _render_model_settings_tree(self) -> None:
+        if self._mode != "model_settings_select":
+            return
+
+        options: list[tuple[bool | Literal["model"], str, str]] = [
+            (True, "Enabled (True)", "Always include generated diffs in proposal results."),
+            (
+                "model",
+                "Model choice",
+                "Include a diff only when the model requests it; each request defaults to disabled.",
+            ),
+            (False, "Disabled (False)", "Never include generated diffs in proposal results."),
+        ]
+        query = self._model_settings_search.lower()
+        visible = [
+            option for option in options
+            if not query or query in f"{option[1]} {option[2]}".lower()
+        ]
+        self._visible_model_setting_matches = [value for value, _, _ in visible]
+
+        tree = self.query_one("#model_settings_tree", Tree)
+        root = tree.root
+        root.set_label("Include diff in proposal tool results")
+        root.remove_children()
+        root.expand()
+
+        current = self.state.model_settings.include_diff
+        for value, label, description in visible:
+            marker = "✓ " if value == current else ""
+            node = root.add_leaf(f"{marker}{label} — {description}")
+            node.data = ("model_setting", value)
+
+        if visible:
+            self.query_one("#model_settings_header", Static).update(
+                "Choose how proposal diffs are returned to the model. Select an item, or narrow to one and press Enter."
+            )
+        else:
+            root.add_leaf("No settings match your search.")
+            self.query_one("#model_settings_header", Static).update(
+                "No matching settings. Change the search text or press Ctrl+G to cancel."
+            )
+
+    def _submit_model_setting_selection(self) -> None:
+        if len(self._visible_model_setting_matches) != 1:
+            self.query_one("#model_settings_header", Static).update(
+                f"{len(self._visible_model_setting_matches)} matches. Narrow the search to one or select a tree item."
+            )
+            return
+        self._set_include_diff_setting(self._visible_model_setting_matches[0])
+
+    def _set_include_diff_setting(self, value: bool | Literal["model"]) -> None:
+        self.state.model_settings.include_diff = value
+        label = "enabled" if value is True else "model choice" if value == "model" else "disabled"
+        self._exit_model_settings_mode()
+        self._append_chat("System", f"Proposal diff results set to {label}.")
 
     def _enter_pending_select_mode(self) -> None:
         self._mode = "pending_select"
@@ -1095,6 +1212,17 @@ class AgentTextualApp(App):
                 )
 
     def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+        data = getattr(event.node, "data", None)
+        if self._mode == "model_settings_select":
+            if data and data[0] == "model_setting":
+                self._set_include_diff_setting(data[1])
+            else:
+                try:
+                    event.node.toggle()
+                except Exception:
+                    pass
+            return
+
         if self._mode != "model_select":
             return
 
@@ -1186,11 +1314,22 @@ class AgentTextualApp(App):
             self._render_chat_detail()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        if action in {"toggle_theme", "open_pending", "open_models", "open_chats"}:
+        if action in {
+            "toggle_theme",
+            "open_pending",
+            "open_models",
+            "open_model_settings",
+            "open_chats",
+        }:
             return self._mode == "chat"
 
         if action == "cancel_overlay":
-            return self._mode in {"model_select", "pending_select", "chat_select"}
+            return self._mode in {
+                "model_select",
+                "model_settings_select",
+                "pending_select",
+                "chat_select",
+            }
 
         return True
 
@@ -1212,6 +1351,11 @@ class AgentTextualApp(App):
         if self._mode != "chat":
             return
         self._enter_model_select_mode()
+
+    def action_open_model_settings(self) -> None:
+        if self._mode != "chat":
+            return
+        self._enter_model_settings_mode()
 
     def action_open_chats(self) -> None:
         if self._mode != "chat":
@@ -1250,6 +1394,8 @@ class AgentTextualApp(App):
         input_widget.disabled = False
         if self._mode == "model_select":
             input_widget.placeholder = "Search models... Enter selects one match, Ctrl+G cancels"
+        elif self._mode == "model_settings_select":
+            input_widget.placeholder = "Search settings... Enter selects one match, Ctrl+G cancels"
         elif self._mode == "pending_select":
             input_widget.placeholder = "Search pending edits... Enter approve, Delete/Backspace reject, Ctrl+G cancels"
         elif self._mode == "chat_select":
@@ -1352,6 +1498,7 @@ class AgentTextualApp(App):
             f"provider: {self.state.model_config.provider_label}\n"
             f"model: {self.state.model_config.model}\n"
             f"api_type: {self.state.model_config.api_type}\n"
+            f"include_diff: {self.state.model_settings.include_diff}\n"
             f"chat_session: {session_text}"
         )
 

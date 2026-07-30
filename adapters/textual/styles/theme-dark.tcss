@@ -101,13 +101,15 @@ Screen.theme-dark #input:focus {
     border: heavy #D9904F;
 }
 
-Screen.theme-dark.model-select-mode #input {
+Screen.theme-dark.model-select-mode #input,
+Screen.theme-dark.model-settings-select-mode #input {
     background: #062B49;
     color: #E8F6FF;
     border: round #339CFF;
 }
 
-Screen.theme-dark.model-select-mode #input:focus {
+Screen.theme-dark.model-select-mode #input:focus,
+Screen.theme-dark.model-settings-select-mode #input:focus {
     border: heavy #66B8FF;
 }
 

@@ -19,6 +19,26 @@ from tools.fs._shared import parse_bool, resolve_path
 from editing.model import FileEdit
 
 
+def _should_include_diff(state, requested: bool) -> bool:
+    setting = getattr(getattr(state, "model_settings", None), "include_diff", False)
+    if setting is True:
+        return True
+    if setting == "model":
+        try:
+            return parse_bool(requested, default=False)
+        except ValueError:
+            return False
+    return False
+
+
+def _proposal_result(message: str, diff: str, include_diff: bool, instruction: str) -> str:
+    parts = [message]
+    if include_diff:
+        parts.append(f"Diff:\n{diff}")
+    parts.append(instruction)
+    return "\n\n".join(parts)
+
+
 @tool(
     description=(
         "Propose exact-match file edits without directly modifying the file. "
@@ -45,6 +65,14 @@ from editing.model import FileEdit
                 "additionalProperties": False,
             },
         },
+        "include_diff": {
+            "type": "boolean",
+            "description": (
+                "Request the generated diff in the result. Defaults to false and is "
+                "honored only when the runtime include-diff setting is 'model choice'."
+            ),
+            "default": False,
+        },
     },
     requires_state=True,
     example={
@@ -55,7 +83,12 @@ from editing.model import FileEdit
         },
     },
 )
-def propose_file_edit(state, path: str, edits: list) -> str:
+def propose_file_edit(
+    state,
+    path: str,
+    edits: list,
+    include_diff: bool = False,
+) -> str:
     if isinstance(edits, str):
         s = edits.strip()
         if not s:
@@ -111,10 +144,11 @@ def propose_file_edit(state, path: str, edits: list) -> str:
     except Exception as e:
         return f"Error: Failed to propose edit: {e}"
 
-    return (
-        f"Pending edit #{pending_edit.id} created for {resolved_path}\n\n"
-        f"Diff:\n{diff}\n\n"
-        f"Run \\approve {pending_edit.id} to apply or \\reject {pending_edit.id} to discard."
+    return _proposal_result(
+        f"Pending edit #{pending_edit.id} created for {resolved_path}.",
+        diff,
+        _should_include_diff(state, include_diff),
+        f"Run \\approve {pending_edit.id} to apply or \\reject {pending_edit.id} to discard.",
     )
 
 
@@ -131,6 +165,14 @@ def propose_file_edit(state, path: str, edits: list) -> str:
             "If true, propose creating the file when it does not exist. "
             "Defaults to false."
         ),
+        "include_diff": {
+            "type": "boolean",
+            "description": (
+                "Request the generated diff in the result. Defaults to false and is "
+                "honored only when the runtime include-diff setting is 'model choice'."
+            ),
+            "default": False,
+        },
     },
     requires_state=True,
     example={
@@ -147,6 +189,7 @@ def propose_file_replace(
     path: str,
     content: str = "",
     create_if_missing: bool = False,
+    include_diff: bool = False,
 ) -> str:
     resolved_path = resolve_path(state, path)
 
@@ -178,10 +221,11 @@ def propose_file_replace(
 
     action = "creation" if pending_edit.kind == "create" else "replacement"
 
-    return (
-        f"Pending file {action} #{pending_edit.id} created for {resolved_path}\n\n"
-        f"Diff:\n{diff}\n\n"
-        f"Run \\approve {pending_edit.id} to apply or \\reject {pending_edit.id} to discard."
+    return _proposal_result(
+        f"Pending file {action} #{pending_edit.id} created for {resolved_path}.",
+        diff,
+        _should_include_diff(state, include_diff),
+        f"Run \\approve {pending_edit.id} to apply or \\reject {pending_edit.id} to discard.",
     )
 
 
@@ -193,10 +237,23 @@ def propose_file_replace(
     params={
         "path": "Path of the file to create.",
         "content": "Initial UTF-8 content for the new file.",
+        "include_diff": {
+            "type": "boolean",
+            "description": (
+                "Request the generated diff in the result. Defaults to false and is "
+                "honored only when the runtime include-diff setting is 'model choice'."
+            ),
+            "default": False,
+        },
     },
     requires_state=True,
 )
-def create_file(state, path: str, content: str = "") -> str:
+def create_file(
+    state,
+    path: str,
+    content: str = "",
+    include_diff: bool = False,
+) -> str:
     resolved_path = resolve_path(state, path)
 
     if resolved_path.exists():
@@ -209,8 +266,9 @@ def create_file(state, path: str, content: str = "") -> str:
     except Exception as e:
         return f"Error: Failed to propose file creation: {e}"
 
-    return (
-        f"Pending file creation #{pending_edit.id} created for {resolved_path}\n\n"
-        f"Diff:\n{diff}\n\n"
-        f"Run \\approve {pending_edit.id} to create or \\reject {pending_edit.id} to discard."
+    return _proposal_result(
+        f"Pending file creation #{pending_edit.id} created for {resolved_path}.",
+        diff,
+        _should_include_diff(state, include_diff),
+        f"Run \\approve {pending_edit.id} to create or \\reject {pending_edit.id} to discard.",
     )

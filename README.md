@@ -143,6 +143,7 @@ python main_textual.py
 The main views support:
 
 - provider/model selection
+- runtime model settings, including proposal-diff output control
 - persistent chat selection
 - pending operation review and approval
 - working-directory navigation
@@ -185,6 +186,7 @@ Embedding and index data stay local unless you explicitly configure otherwise. T
 
 - `\help` — command overview
 - `\models` — select a provider/model
+- `\settings` — configure runtime behavior, including model-facing proposal-diff results
 - `\chats` — browse saved chats
 - `\new_chat` — start a new chat
 - `\history` — list recent chats

@@ -315,5 +315,6 @@ def _state_snapshot(state: "AgentState | None") -> dict[str, Any]:
         "provider_label": model_config.provider_label,
         "model": model_config.model,
         "api_type": model_config.api_type,
+        "include_diff": state.model_settings.include_diff,
         "pending_edit_count": len(state.edit_store.pending()),
     }

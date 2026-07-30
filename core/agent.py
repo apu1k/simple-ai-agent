@@ -158,11 +158,26 @@ class Agent:
                 self.messages.insert(0, {"role": "system", "content": system_prompt})
 
     def _runtime_context(self) -> str:
+        include_diff = getattr(
+            getattr(self.state, "model_settings", None),
+            "include_diff",
+            False,
+        )
+        if include_diff is True:
+            diff_setting = "enabled (proposal tools always return diffs)"
+        elif include_diff == "model":
+            diff_setting = (
+                "model choice (request per call with include_diff; defaults to false)"
+            )
+        else:
+            diff_setting = "disabled (proposal tools do not return diffs)"
+
         return (
             "Current local agent runtime state:\n"
             f"- current working directory: {self.state.cwd}\n"
             f"- selected provider: {self.state.model_config.provider_label}\n"
-            f"- selected model: {self.state.model_config.model}\n\n"
+            f"- selected model: {self.state.model_config.model}\n"
+            f"- proposal diff results: {diff_setting}\n\n"
             "Important:\n"
             "- You are controlling a local agent runtime through tools.\n"
             "- If the user asks where you are in the filesystem, use the current working directory.\n"

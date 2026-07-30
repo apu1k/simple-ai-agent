@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from editing.store import EditStore
+from runtime.state import ModelSettings
 from tools.fs.edit import propose_file_edit
 
 
@@ -16,6 +17,7 @@ from tools.fs.edit import propose_file_edit
 class FakeState:
     cwd: Path
     edit_store: EditStore = field(default_factory=EditStore)
+    model_settings: ModelSettings = field(default_factory=ModelSettings)
 
 
 def make_state(tmp_path):
@@ -35,11 +37,63 @@ def test_propose_creates_pending_edit(tmp_path):
 
     assert "Pending edit #1" in result
     assert "hello.py" in result
-    assert "-print('hello')" in result
-    assert "+print('world')" in result
+    assert "Diff:" not in result
+    assert "-print('hello')" not in result
+    assert "+print('world')" not in result
 
     # The file must NOT be written yet
     assert f.read_text(encoding="utf-8") == "print('hello')\n"
+
+
+def test_propose_includes_diff_when_runtime_setting_is_enabled(tmp_path):
+    state = make_state(tmp_path)
+    state.model_settings.include_diff = True
+    (tmp_path / "hello.py").write_text("print('hello')\n", encoding="utf-8")
+
+    result = propose_file_edit(
+        state,
+        path="hello.py",
+        edits=[{"find": "hello", "replace": "world"}],
+    )
+
+    assert "Diff:" in result
+    assert "-print('hello')" in result
+    assert "+print('world')" in result
+
+
+def test_model_choice_defaults_to_no_diff_and_honors_request(tmp_path):
+    state = make_state(tmp_path)
+    state.model_settings.include_diff = "model"
+    (tmp_path / "hello.py").write_text("print('hello')\n", encoding="utf-8")
+
+    default_result = propose_file_edit(
+        state,
+        path="hello.py",
+        edits=[{"find": "hello", "replace": "world"}],
+    )
+    requested_result = propose_file_edit(
+        state,
+        path="hello.py",
+        edits=[{"find": "hello", "replace": "world"}],
+        include_diff=True,
+    )
+
+    assert "Diff:" not in default_result
+    assert "Diff:" in requested_result
+
+
+def test_disabled_runtime_setting_ignores_model_request(tmp_path):
+    state = make_state(tmp_path)
+    (tmp_path / "hello.py").write_text("print('hello')\n", encoding="utf-8")
+
+    result = propose_file_edit(
+        state,
+        path="hello.py",
+        edits=[{"find": "hello", "replace": "world"}],
+        include_diff=True,
+    )
+
+    assert "Diff:" not in result
 
 
 def test_propose_then_approve_writes_file(tmp_path):

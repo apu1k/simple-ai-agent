@@ -4,11 +4,13 @@ runtime/state.py
 AgentState holds everything the agent needs at runtime:
   - cwd:             current working directory (updated by cd tool)
   - model_config:    currently selected LLM provider + model
+  - model_settings:  runtime controls for model-facing behavior
   - edit_store:      owns all pending file edits
   - chat_store:      owns persistent chat/session history
   - chat_session_id: current persistent chat session id (lazily created)
 
 ModelConfig is a plain dataclass; it's updated when the user runs \\models.
+ModelSettings is updated through the \\settings Textual UI.
 """
 
 from dataclasses import dataclass, field
@@ -21,6 +23,16 @@ from night_shifts.storage import ToolCallStore
 
 
 ApiType = Literal["chat_completions", "responses", "completions", "gemini_vertex"]
+IncludeDiffSetting = bool | Literal["model"]
+
+
+@dataclass
+class ModelSettings:
+    """Runtime settings that control model-facing behavior."""
+
+    # True: always return proposal diffs; False: never return them;
+    # "model": honor the tool call's include_diff request (default false).
+    include_diff: IncludeDiffSetting = False
 
 
 @dataclass
@@ -39,6 +51,7 @@ class ModelConfig:
 class AgentState:
     cwd: Path
     model_config: ModelConfig
+    model_settings: ModelSettings = field(default_factory=ModelSettings)
     edit_store: EditStore = field(default_factory=EditStore)
     chat_store: ChatStore = field(default_factory=ChatStore)
     chat_session_id: str | None = None

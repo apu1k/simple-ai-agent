@@ -44,3 +44,28 @@ def test_explicit_parameter_schema_is_preserved_for_responses():
 
     assert edits["type"] == "array"
     assert edits["items"]["required"] == ["find", "replace"]
+
+
+def test_parameter_with_default_is_typed_and_optional():
+    spec = ToolSpec(
+        name="optional_flag",
+        function=lambda: None,
+        description="Test an optional flag.",
+        parameters={
+            "path": "File path.",
+            "include_diff": {
+                "type": "boolean",
+                "description": "Include the diff.",
+                "default": False,
+            },
+        },
+    )
+
+    parameters = tool_spec_to_openai_function(spec)["function"]["parameters"]
+
+    assert parameters["properties"]["include_diff"] == {
+        "type": "boolean",
+        "description": "Include the diff.",
+        "default": False,
+    }
+    assert parameters["required"] == ["path"]
