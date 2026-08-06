@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import io
+import json
 import subprocess
 from pathlib import Path
 from typing import Any
 
-from night_shifts.guest.artifacts import ArtifactWriter
-from night_shifts.guest.commands import RestrictedCommandRunner
+from night_shifts.contracts.worker_tool import WorkerToolCall, WorkerToolProvider
 from night_shifts.guest.runtime import MAX_FRAME_BYTES, EmitEvent, run_once
 from night_shifts.protocol import (
     WorkerOutcome,
@@ -37,11 +37,10 @@ class OversizedExecutor:
     def execute(
         self,
         task: WorkerTask,
-        commands: RestrictedCommandRunner,
-        artifacts: ArtifactWriter,
+        tools: WorkerToolProvider,
         emit_event: EmitEvent,
     ) -> WorkerResult:
-        del commands, artifacts, emit_event
+        del tools, emit_event
         return WorkerResult(
             job_id=task.job_id,
             outcome=WorkerOutcome.SUCCESS,
@@ -56,23 +55,32 @@ class SuccessfulExecutor:
     def execute(
         self,
         task: WorkerTask,
-        commands: RestrictedCommandRunner,
-        artifacts: ArtifactWriter,
+        tools: WorkerToolProvider,
         emit_event: EmitEvent,
     ) -> WorkerResult:
         self.called = True
-        assert isinstance(commands, RestrictedCommandRunner)
-        artifact = artifacts.write_text(
-            name="checks.txt",
-            kind="test-log",
-            content="identity passed\n",
+        assert {spec.name for spec in tools.available_tools()} == {
+            "run_command",
+            "write_artifact",
+        }
+        tool_result = tools.invoke(
+            WorkerToolCall(
+                "write_artifact",
+                {
+                    "name": "checks.txt",
+                    "kind": "test-log",
+                    "content": "identity passed\n",
+                },
+            )
         )
+        assert not tool_result.is_error
+        artifact_reference = json.loads(tool_result.output)["reference"]
         emit_event("worker_check", {"name": "identity", "passed": True})
         return WorkerResult(
             job_id=task.job_id,
             outcome=WorkerOutcome.SUCCESS,
             summary="Injected restricted executor completed.",
-            artifacts=(artifact.reference,),
+            artifacts=(artifact_reference,),
         )
 
 

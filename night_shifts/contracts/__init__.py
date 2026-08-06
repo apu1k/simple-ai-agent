@@ -3,6 +3,12 @@
 from night_shifts.contracts.artifact import ArtifactRetriever, RetrievedArtifacts
 from night_shifts.contracts.channel import WorkerChannel
 from night_shifts.contracts.sandbox import SandboxProvider
+from night_shifts.contracts.worker_tool import (
+    WorkerToolCall,
+    WorkerToolProvider,
+    WorkerToolResult,
+    WorkerToolSpec,
+)
 from night_shifts.contracts.workspace import (
     PreparedWorkspace,
     WorkspaceInjector,
@@ -15,6 +21,10 @@ __all__ = [
     "RetrievedArtifacts",
     "SandboxProvider",
     "WorkerChannel",
+    "WorkerToolCall",
+    "WorkerToolProvider",
+    "WorkerToolResult",
+    "WorkerToolSpec",
     "WorkspaceInjector",
     "WorkspaceProvider",
 ]

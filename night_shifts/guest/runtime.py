@@ -19,8 +19,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Protocol
 
+from night_shifts.contracts.worker_tool import WorkerToolProvider
 from night_shifts.guest.artifacts import ArtifactWriter
 from night_shifts.guest.commands import RestrictedCommandRunner
+from night_shifts.guest.tools import GuestWorkerTools
 from night_shifts.models import NightShiftEvent
 from night_shifts.protocol import (
     WorkerOutcome,
@@ -30,11 +32,11 @@ from night_shifts.protocol import (
     encode_event,
     encode_result,
 )
+from night_shifts.worker_capabilities import SUPPORTED_WORKER_PROFILES
 from night_shifts.workspaces import WORKSPACE_ARTIFACTS, WORKSPACE_MANIFEST
 
 MAX_FRAME_BYTES = 1024 * 1024
 MAX_WORKER_EVENTS = 500
-_SUPPORTED_PROFILES = frozenset({"coding-worker", "read-only-worker", "review-worker"})
 
 
 class GuestRuntimeError(RuntimeError):
@@ -53,11 +55,12 @@ EmitEvent = Callable[[str, dict[str, Any]], None]
 
 
 class WorkerExecutor(Protocol):
+    """Replaceable model boundary with access only to guest-safe tools."""
+
     def execute(
         self,
         task: WorkerTask,
-        commands: RestrictedCommandRunner,
-        artifacts: ArtifactWriter,
+        tools: WorkerToolProvider,
         emit_event: EmitEvent,
     ) -> WorkerResult: ...
 
@@ -68,11 +71,10 @@ class UnavailableWorkerExecutor:
     def execute(
         self,
         task: WorkerTask,
-        commands: RestrictedCommandRunner,
-        artifacts: ArtifactWriter,
+        tools: WorkerToolProvider,
         emit_event: EmitEvent,
     ) -> WorkerResult:
-        del commands, artifacts
+        del tools
         emit_event("worker_executor_unavailable", {"profile": task.worker_profile})
         return WorkerResult(
             job_id=task.job_id,
@@ -123,8 +125,9 @@ def run_once(
         )
         commands = RestrictedCommandRunner(workspace, task.worker_profile)
         artifacts = ArtifactWriter(workspace_root.resolve() / WORKSPACE_ARTIFACTS)
+        tools = GuestWorkerTools(task.worker_profile, commands, artifacts)
         selected_executor = executor or UnavailableWorkerExecutor()
-        result = selected_executor.execute(task, commands, artifacts, emit)
+        result = selected_executor.execute(task, tools, emit)
         if result.job_id != task.job_id:
             raise GuestRuntimeError("worker executor returned a mismatched job ID")
     except Exception as exc:
@@ -184,7 +187,7 @@ def _validate_task_workspace(
     *,
     require_root_owned_manifest: bool,
 ) -> tuple[Path, WorkspaceIdentity]:
-    if task.worker_profile not in _SUPPORTED_PROFILES:
+    if task.worker_profile not in SUPPORTED_WORKER_PROFILES:
         raise GuestRuntimeError(f"unsupported worker profile: {task.worker_profile!r}")
     if task.repository_id is None or task.starting_revision is None:
         raise GuestRuntimeError("repository ID and starting revision are required")

@@ -14,6 +14,8 @@ Phase 4 is in progress. The repository now contains the fail-closed worker-runti
 - Independent `SandboxProvider`, `WorkerChannel`, `WorkspaceProvider`, `WorkspaceInjector`, and `ArtifactRetriever` contracts.
 - Lifecycle-only Hyper-V sandbox management, with serial communication selected separately at the trusted composition root.
 - Stable-ID trusted component selection with no dynamic imports, task-selected classes, host paths, or credentials.
+- A small `WorkerToolProvider` contract separating model adapters from command and artifact implementations.
+- Profile-scoped guest tool allowlists and a concrete adapter for policy-approved commands and bounded text artifacts.
 - Fail-safe backend ordering for workspace injection and artifact retrieval.
 - Default-off networking remains enforced by `SandboxSpec` and the Hyper-V controller.
 
@@ -22,6 +24,17 @@ Phase 4 is in progress. The repository now contains the fail-closed worker-runti
 Worker commands are argv vectors, never shell strings. The initial policy permits only narrow read/check operations such as selected `git` inspection commands, `pytest`, `ruff check`, `mypy`, and `python -m compileall`. Git publishing, remotes, credentials, orchestration, host management, arbitrary Python scripts, shell interpreters, absolute targets, and parent traversal are denied.
 
 This allowlist is defense in depth, not the complete sandbox. The reviewed Linux image must still enforce user identity, read-only system paths, workspace mount policy, cgroups, process limits, lifetime, and default-off networking.
+
+## Guest-safe model tool boundary
+
+Worker executors now receive only a `WorkerToolProvider`; they no longer receive the raw command runner or artifact writer. The provider publishes bounded JSON-style tool schemas and accepts structured calls. Its concrete guest adapter independently checks the assigned profile, validates argument shapes, routes command requests through `approve_worker_command`, and routes artifact requests through `ArtifactWriter`.
+
+The initial guest tool set is deliberately small:
+
+- `run_command` is available only to coding and review workers and remains restricted to the existing shell-free command policy.
+- `write_artifact` is available to all worker profiles but writes only to the separate bounded artifact staging directory, not the repository.
+
+Guest tool names are intentionally distinct from the head runtime's host-side tools. Tests explicitly align equivalent command access by profile, but no host tool implementation or registry is passed into a VM. Repository read/edit tools remain a future reviewed adapter slice; a model executor must not bypass this boundary with direct filesystem objects.
 
 ## Modular execution boundary
 
@@ -58,7 +71,7 @@ The command-line guest runtime intentionally uses `UnavailableWorkerExecutor`. T
 2. Run the executor under profile-specific OS filesystem policy. In particular, read-only and review workers must not be able to modify the repository even if model/tool policy fails.
 3. Install and harden the runtime in a reviewed, digest-pinned Linux VHDX.
 4. Implement reviewed Hyper-V `WorkspaceInjector` and `ArtifactRetriever` adapters for the existing backend boundaries.
-5. Define guest-safe worker tool contracts and reconcile them with the existing profile allowlists.
+5. Add reviewed guest repository read/edit tool adapters without exposing raw filesystem objects to the model executor.
 6. Add an opt-in harmless real-host repository task after Phase 3 host validation succeeds.
 
 Publishing, branch pushes, and pull requests remain out of scope until Phase 5 and must continue to require approval.

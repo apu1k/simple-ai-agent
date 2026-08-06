@@ -4,6 +4,7 @@ import pytest
 
 from core.tool_registry import ToolRegistry, ToolSpec
 from runtime.prompt import build_system_prompt
+from night_shifts.worker_capabilities import RUN_COMMAND_TOOL, worker_tool_names
 from runtime.tool_profiles import (
     AgentProfile,
     build_profile_registry,
@@ -94,6 +95,21 @@ def test_prompt_describes_only_tools_in_assigned_registry():
     assert "Knowledge response-mode policy" not in prompt
 
 
+def test_host_and_guest_worker_profiles_have_explicitly_aligned_command_access():
+    """Equivalent capabilities stay aligned without sharing implementations."""
+
+    for profile in (
+        AgentProfile.CODING_WORKER,
+        AgentProfile.READ_ONLY_WORKER,
+        AgentProfile.REVIEW_WORKER,
+    ):
+        host_has_shell_tool = "run_shell_command" in profile_tool_names(profile)
+        guest_has_command_tool = RUN_COMMAND_TOOL in worker_tool_names(profile.value)
+        assert host_has_shell_tool is guest_has_command_tool
+
+
 def test_unknown_profile_is_rejected():
     with pytest.raises(ValueError, match="Unknown agent profile"):
         profile_tool_names("administrator")
+    with pytest.raises(ValueError, match="Unknown worker profile"):
+        worker_tool_names("administrator")
