@@ -185,7 +185,7 @@ Embedding and index data stay local unless you explicitly configure otherwise. T
 
 - `\help` — command overview
 - `\models` — select a provider/model
-- `\settings` — configure runtime behavior, including model-facing proposal-diff results
+- `\settings` — configure runtime behavior, including proposal-diff results and OpenAI Flex processing
 - `\chats` — browse saved chats
 - `\new_chat` — start a new chat
 - `\history` — list recent chats
@@ -195,6 +195,26 @@ Embedding and index data stay local unless you explicitly configure otherwise. T
 - `\reset` — reset the active conversation
 - `\theme` — switch the color theme
 - `\quit` — quit
+
+### OpenAI Flex processing
+
+Open `\settings` (or press F4), search for `OpenAI Flex: Enabled`, and press
+Enter. Select `OpenAI Flex: Disabled` to restore the project's default service
+tier. The setting is off by default and lasts for the current application run,
+including model switches; it is not saved across restarts. `\state` shows the
+current preference.
+
+When enabled, direct requests to `https://api.openai.com` through Responses or
+Chat Completions include `service_tier="flex"`, including follow-up requests and
+Responses tool-output continuations. Flex requests use a 15-minute timeout
+instead of the normal 3-minute timeout. Other providers, OpenAI-compatible
+proxies, Vertex AI, and legacy Completions are unchanged.
+
+Flex trades lower cost for slower responses and occasional resource
+unavailability. Select a model/account with Flex support; OpenAI validates
+availability. Errors use the existing retry/error handling, without automatically
+falling back to a higher-cost standard tier. See the
+[OpenAI Flex guide](https://developers.openai.com/api/docs/guides/flex-processing).
 
 ## Development
 

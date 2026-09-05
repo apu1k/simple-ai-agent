@@ -34,6 +34,10 @@ class ModelSettings:
     # "model": honor the tool call's include_diff request (default false).
     include_diff: IncludeDiffSetting = False
 
+    # Opt in to Flex for direct OpenAI Responses/Chat Completions requests.
+    # Runtime-only preference; ignored by other providers and APIs.
+    openai_flex: bool = False
+
 
 @dataclass
 class ModelConfig:

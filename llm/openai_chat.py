@@ -8,12 +8,17 @@ Implements llm/base.py LLMClient protocol.
 import json
 import sys
 import time
+from typing import TYPE_CHECKING
 
 from openai import OpenAI
 
 from config.settings import DEBUG_LOGS
 from llm.base import LLMResponse, NativeToolCall
 from llm.providers import ProviderConfig
+from llm.openai_flex import flex_request_options
+
+if TYPE_CHECKING:
+    from runtime.state import ModelSettings
 
 REQUEST_TIMEOUT_SECONDS = 180.0
 
@@ -32,8 +37,14 @@ class OpenAIChatClient:
         else:
             self._client = OpenAI(api_key=provider.api_key)
         self._model = provider.default_model
+        self._base_url = str(self._client.base_url)
+        self._model_settings: ModelSettings | None = None
         self._provider_key = provider.key
         self._provider_label = provider.label
+
+    def configure_model_settings(self, settings: "ModelSettings | None") -> None:
+        """Bind live runtime preferences without rebuilding the client."""
+        self._model_settings = settings
 
     @property
     def supports_native_tools(self) -> bool:
@@ -79,6 +90,8 @@ class OpenAIChatClient:
             "messages": messages,
             "timeout": REQUEST_TIMEOUT_SECONDS,
         }
+
+        kwargs.update(flex_request_options(self._base_url, self._model_settings))
 
         if tools is not None:
             kwargs["tools"] = tools

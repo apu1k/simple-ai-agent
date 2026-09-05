@@ -119,6 +119,12 @@ class Agent:
 
         Must be called whenever self.llm changes (e.g. model/provider switch).
         """
+        # Optional client capability: keep live preferences across model switches
+        # without imposing OpenAI-specific settings on other LLM clients.
+        configure_settings = getattr(self.llm, "configure_model_settings", None)
+        if callable(configure_settings):
+            configure_settings(getattr(self.state, "model_settings", None))
+
         self._use_native_tools = getattr(self.llm, 'supports_native_tools', False)
         self._api_type = getattr(self.llm, 'api_type', 'chat_completions')
         self._debug(f"NATIVE TOOLS: {self._use_native_tools}")

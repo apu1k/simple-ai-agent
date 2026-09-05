@@ -132,7 +132,7 @@ class AgentTextualApp(App):
         self._visible_model_matches: list[tuple[str, str]] = []
 
         self._model_settings_search = ""
-        self._visible_model_setting_matches: list[bool | Literal["model"]] = []
+        self._visible_model_setting_matches: list[tuple[str, bool | Literal["model"]]] = []
 
         self._pending_search = ""
         self._visible_pending_ids: list[int] = []
@@ -550,37 +550,42 @@ class AgentTextualApp(App):
         if self._mode != "model_settings_select":
             return
 
-        options: list[tuple[bool | Literal["model"], str, str]] = [
-            (True, "Enabled (True)", "Always include generated diffs in proposal results."),
-            (
-                "model",
-                "Model choice",
-                "Include a diff only when the model requests it; each request defaults to disabled.",
-            ),
-            (False, "Disabled (False)", "Never include generated diffs in proposal results."),
+        options: list[tuple[str, bool | Literal["model"], str, str]] = [
+            ("include_diff", True, "Include diff: Enabled (True)",
+             "Always include generated diffs in proposal results."),
+            ("include_diff", "model", "Include diff: Model choice",
+             "Include a diff only when the model requests it; each request defaults to disabled."),
+            ("include_diff", False, "Include diff: Disabled (False)",
+             "Never include generated diffs in proposal results."),
+            ("openai_flex", True, "OpenAI Flex: Enabled (True)",
+             "Lower cost, slower responses; requires a Flex-supported OpenAI model. "
+             "15-minute timeout; no automatic standard-tier fallback."),
+            ("openai_flex", False, "OpenAI Flex: Disabled (False)",
+             "Use the project's default service tier and normal request timeout."),
         ]
         query = self._model_settings_search.lower()
         visible = [
             option for option in options
-            if not query or query in f"{option[1]} {option[2]}".lower()
+            if not query or query in f"{option[0]} {option[2]} {option[3]}".lower()
         ]
-        self._visible_model_setting_matches = [value for value, _, _ in visible]
+        self._visible_model_setting_matches = [(key, value) for key, value, _, _ in visible]
 
         tree = self.query_one("#model_settings_tree", Tree)
         root = tree.root
-        root.set_label("Include diff in proposal tool results")
+        root.set_label("Runtime settings")
         root.remove_children()
         root.expand()
 
-        current = self.state.model_settings.include_diff
-        for value, label, description in visible:
+        for key, value, label, description in visible:
+            current = getattr(self.state.model_settings, key)
             marker = "✓ " if value == current else ""
             node = root.add_leaf(f"{marker}{label} — {description}")
-            node.data = ("model_setting", value)
+            node.data = ("model_setting", key, value)
 
         if visible:
             self.query_one("#model_settings_header", Static).update(
-                "Choose how proposal diffs are returned to the model. Select an item, or narrow to one and press Enter."
+                "Select an item, or narrow to one and press Enter. "
+                "Flex applies only to direct OpenAI Responses/Chat Completions; other providers are unchanged."
             )
         else:
             root.add_leaf("No settings match your search.")
@@ -594,7 +599,25 @@ class AgentTextualApp(App):
                 f"{len(self._visible_model_setting_matches)} matches. Narrow the search to one or select a tree item."
             )
             return
-        self._set_include_diff_setting(self._visible_model_setting_matches[0])
+        self._set_model_setting(*self._visible_model_setting_matches[0])
+
+    def _set_model_setting(self, key: str, value: bool | Literal["model"]) -> None:
+        if self._processing:
+            self._append_chat("System", "Cannot change model settings while AI is processing.")
+            return
+        if key == "include_diff":
+            self._set_include_diff_setting(value)
+        elif key == "openai_flex" and isinstance(value, bool):
+            self.state.model_settings.openai_flex = value
+            self._exit_model_settings_mode()
+            label = "enabled" if value else "disabled"
+            self._append_chat(
+                "System",
+                f"OpenAI Flex processing {label}. Applies to subsequent direct OpenAI "
+                "Responses/Chat Completions requests only; model support is required. "
+                "Other providers are unchanged.",
+            )
+        self._refresh_state()
 
     def _set_include_diff_setting(self, value: bool | Literal["model"]) -> None:
         self.state.model_settings.include_diff = value
@@ -1215,7 +1238,7 @@ class AgentTextualApp(App):
         data = getattr(event.node, "data", None)
         if self._mode == "model_settings_select":
             if data and data[0] == "model_setting":
-                self._set_include_diff_setting(data[1])
+                self._set_model_setting(data[1], data[2])
             else:
                 try:
                     event.node.toggle()
@@ -1499,6 +1522,7 @@ class AgentTextualApp(App):
             f"model: {self.state.model_config.model}\n"
             f"api_type: {self.state.model_config.api_type}\n"
             f"include_diff: {self.state.model_settings.include_diff}\n"
+            f"openai_flex (OpenAI only): {self.state.model_settings.openai_flex}\n"
             f"chat_session: {session_text}"
         )
 

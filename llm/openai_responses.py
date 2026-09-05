@@ -7,10 +7,15 @@ Implements llm/base.py LLMClient protocol.
 
 import json
 import sys
+from typing import TYPE_CHECKING
 
 from openai import OpenAI
 from llm.base import LLMResponse, NativeToolCall, NativeToolOutput
 from llm.providers import ProviderConfig
+from llm.openai_flex import flex_request_options
+
+if TYPE_CHECKING:
+    from runtime.state import ModelSettings
 from config.settings import DEBUG_LOGS
 
 REQUEST_TIMEOUT_SECONDS = 180.0
@@ -25,9 +30,15 @@ class OpenAIResponsesClient:
         else:
             self._client = OpenAI(api_key=provider.api_key)
         self._model = provider.default_model
+        self._base_url = str(self._client.base_url)
+        self._model_settings: ModelSettings | None = None
         self._last_response_id: str | None = None
         self._last_tools: list[dict] | None = None
         self._last_tool_choice: str | dict | None = None
+
+    def configure_model_settings(self, settings: "ModelSettings | None") -> None:
+        """Bind live runtime preferences without resetting the response chain."""
+        self._model_settings = settings
 
     @property
     def supports_native_tools(self) -> bool:
@@ -103,6 +114,7 @@ class OpenAIResponsesClient:
         # so tool results can be submitted back with the response ID
         kwargs["store"] = True
         
+        kwargs.update(flex_request_options(self._base_url, self._model_settings))
         self._debug_log_response_request_tools("chat", kwargs)
         response = self._client.responses.create(**kwargs)
         self._last_response_id = response.id
@@ -138,6 +150,7 @@ class OpenAIResponsesClient:
         if self._last_tool_choice is not None:
             kwargs["tool_choice"] = self._last_tool_choice
 
+        kwargs.update(flex_request_options(self._base_url, self._model_settings))
         self._debug_log_response_request_tools("submit_tool_outputs", kwargs)
         response = self._client.responses.create(**kwargs)
         self._last_response_id = response.id
