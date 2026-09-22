@@ -16,6 +16,7 @@ from config.settings import DEBUG_LOGS
 from llm.base import LLMResponse, NativeToolCall
 from llm.providers import ProviderConfig
 from llm.openai_flex import flex_request_options
+from llm.openai_reasoning import reasoning_request_options
 
 if TYPE_CHECKING:
     from runtime.state import ModelSettings
@@ -92,6 +93,9 @@ class OpenAIChatClient:
         }
 
         kwargs.update(flex_request_options(self._base_url, self._model_settings))
+        kwargs.update(reasoning_request_options(
+            self._base_url, self._model_settings, "chat_completions",
+        ))
 
         if tools is not None:
             kwargs["tools"] = tools

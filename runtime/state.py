@@ -24,6 +24,11 @@ from night_shifts.storage import ToolCallStore
 
 ApiType = Literal["chat_completions", "responses", "completions", "gemini_vertex"]
 IncludeDiffSetting = bool | Literal["model"]
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+OPENAI_REASONING_EFFORTS: tuple[ReasoningEffort, ...] = (
+    "none", "minimal", "low", "medium", "high", "xhigh",
+)
+ModelSettingValue = IncludeDiffSetting | ReasoningEffort | None
 
 
 @dataclass
@@ -37,6 +42,10 @@ class ModelSettings:
     # Opt in to Flex for direct OpenAI Responses/Chat Completions requests.
     # Runtime-only preference; ignored by other providers and APIs.
     openai_flex: bool = False
+
+    # None omits the parameter (API default); "none" explicitly disables reasoning
+    # where supported. Runtime-only; direct OpenAI Responses/Chat Completions only.
+    openai_reasoning_effort: ReasoningEffort | None = None
 
 
 @dataclass

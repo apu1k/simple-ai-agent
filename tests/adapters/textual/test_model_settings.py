@@ -4,10 +4,11 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+from textual.events import Mount
 from textual.widgets import Input, Tree
 
 from adapters.textual.app import AgentTextualApp
-from runtime.state import ModelSettings
+from runtime.state import ModelSettings, OPENAI_REASONING_EFFORTS
 
 
 class SettingsTestApp(AgentTextualApp):
@@ -17,8 +18,10 @@ class SettingsTestApp(AgentTextualApp):
         for path in AgentTextualApp.CSS_PATH
     ]
 
-    def on_mount(self) -> None:
+    def on_mount(self, event: Mount) -> None:
+        # Textual dispatches base-class handlers too unless default is prevented.
         # No agent, API requests, tools or chat storage needed for UI tests.
+        event.prevent_default()
         self._refresh_state()
         self.query_one("#input", Input).focus()
 
@@ -50,7 +53,7 @@ def test_settings_command_search_and_tree_selection(tmp_path):
             await pilot.press("enter")
             await pilot.pause()
             assert app._mode == "model_settings_select"
-            assert len(app._visible_model_setting_matches) == 5
+            assert len(app._visible_model_setting_matches) == 12
 
             input_widget.value = "OpenAI Flex: Enabled"
             await pilot.pause()
@@ -83,6 +86,61 @@ def test_settings_command_search_and_tree_selection(tmp_path):
     asyncio.run(run_test())
 
 
+def test_reasoning_search_tree_selection_and_default(tmp_path):
+    async def run_test():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            app._handle_command("\\settings")
+            input_widget = app.query_one("#input", Input)
+            input_widget.value = "OpenAI reasoning effort: low"
+            await pilot.pause()
+            assert app._visible_model_setting_matches == [("openai_reasoning_effort", "low")]
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.state.model_settings.openai_reasoning_effort == "low"
+            assert app._mode == "chat"
+            assert "openai_reasoning_effort (OpenAI only): low" in app._state_text()
+
+            current = "low"
+            for effort in (*OPENAI_REASONING_EFFORTS, None):
+                app._handle_command("\\settings")
+                await pilot.pause()
+                tree = app.query_one("#model_settings_tree", Tree)
+                selected = next(n for n in tree.root.children
+                                if n.data == ("model_setting", "openai_reasoning_effort", current))
+                assert str(selected.label).startswith("✓ ")
+                target = next(n for n in tree.root.children
+                              if n.data == ("model_setting", "openai_reasoning_effort", effort))
+                app.on_tree_node_selected(Tree.NodeSelected(target))
+                await pilot.pause()
+                assert app._mode == "chat"
+                assert app.state.model_settings.openai_reasoning_effort == effort
+                assert app.state.model_settings.openai_flex is False
+                assert app.state.model_settings.include_diff is False
+                current = effort
+            assert "openai_reasoning_effort (OpenAI only): default" in app._state_text()
+
+            app._handle_command("\\settings")
+            input_widget.value = "reasoning"
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app._mode == "model_settings_select"
+            assert app.state.model_settings.openai_reasoning_effort is None
+            await pilot.press("ctrl+g")
+            await pilot.pause()
+            assert app._mode == "chat"
+            assert app.state.model_settings.openai_reasoning_effort is None
+
+            # Values belonging to other settings must not corrupt include_diff.
+            app._set_model_setting("include_diff", "high")
+            app._set_model_setting("openai_reasoning_effort", True)
+            assert app.state.model_settings.include_diff is False
+            assert app.state.model_settings.openai_reasoning_effort is None
+
+    asyncio.run(run_test())
+
+
 def test_settings_cancel_ambiguous_search_and_processing_guard(tmp_path):
     async def run_test():
         app = make_app(tmp_path)
@@ -109,6 +167,8 @@ def test_settings_cancel_ambiguous_search_and_processing_guard(tmp_path):
             assert app._mode == "chat"
             app._set_model_setting("openai_flex", True)
             assert app.state.model_settings.openai_flex is False
+            app._set_model_setting("openai_reasoning_effort", "high")
+            assert app.state.model_settings.openai_reasoning_effort is None
             app._processing = False
 
     asyncio.run(run_test())

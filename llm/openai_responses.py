@@ -13,6 +13,7 @@ from openai import OpenAI
 from llm.base import LLMResponse, NativeToolCall, NativeToolOutput
 from llm.providers import ProviderConfig
 from llm.openai_flex import flex_request_options
+from llm.openai_reasoning import reasoning_request_options
 
 if TYPE_CHECKING:
     from runtime.state import ModelSettings
@@ -115,6 +116,9 @@ class OpenAIResponsesClient:
         kwargs["store"] = True
         
         kwargs.update(flex_request_options(self._base_url, self._model_settings))
+        kwargs.update(reasoning_request_options(
+            self._base_url, self._model_settings, "responses",
+        ))
         self._debug_log_response_request_tools("chat", kwargs)
         response = self._client.responses.create(**kwargs)
         self._last_response_id = response.id
@@ -151,6 +155,9 @@ class OpenAIResponsesClient:
             kwargs["tool_choice"] = self._last_tool_choice
 
         kwargs.update(flex_request_options(self._base_url, self._model_settings))
+        kwargs.update(reasoning_request_options(
+            self._base_url, self._model_settings, "responses",
+        ))
         self._debug_log_response_request_tools("submit_tool_outputs", kwargs)
         response = self._client.responses.create(**kwargs)
         self._last_response_id = response.id

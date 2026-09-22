@@ -14,7 +14,7 @@ Phase 2 goals:
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, cast
 
 from rich.console import Group
 from rich.markdown import Markdown
@@ -33,6 +33,7 @@ from llm.providers import PROVIDERS, list_provider_models
 from runtime.bootstrap import build_model_config_and_client, create_agent
 from runtime.chat_store import record_final_turn, start_new_chat
 from runtime.prompt import build_system_prompt
+from runtime.state import ModelSettingValue, OPENAI_REASONING_EFFORTS, ReasoningEffort
 
 
 class ClipboardInput(Input):
@@ -132,7 +133,7 @@ class AgentTextualApp(App):
         self._visible_model_matches: list[tuple[str, str]] = []
 
         self._model_settings_search = ""
-        self._visible_model_setting_matches: list[tuple[str, bool | Literal["model"]]] = []
+        self._visible_model_setting_matches: list[tuple[str, ModelSettingValue]] = []
 
         self._pending_search = ""
         self._visible_pending_ids: list[int] = []
@@ -550,7 +551,7 @@ class AgentTextualApp(App):
         if self._mode != "model_settings_select":
             return
 
-        options: list[tuple[str, bool | Literal["model"], str, str]] = [
+        options: list[tuple[str, ModelSettingValue, str, str]] = [
             ("include_diff", True, "Include diff: Enabled (True)",
              "Always include generated diffs in proposal results."),
             ("include_diff", "model", "Include diff: Model choice",
@@ -562,7 +563,14 @@ class AgentTextualApp(App):
              "15-minute timeout; no automatic standard-tier fallback."),
             ("openai_flex", False, "OpenAI Flex: Disabled (False)",
              "Use the project's default service tier and normal request timeout."),
+            ("openai_reasoning_effort", None, "OpenAI reasoning effort: Default",
+             "Omit the effort parameter and use the API default; not the same as none."),
         ]
+        options.extend(
+            ("openai_reasoning_effort", effort, f"OpenAI reasoning effort: {effort}",
+             "Requires a model that supports this level; unsupported choices return an API error.")
+            for effort in OPENAI_REASONING_EFFORTS
+        )
         query = self._model_settings_search.lower()
         visible = [
             option for option in options
@@ -585,7 +593,8 @@ class AgentTextualApp(App):
         if visible:
             self.query_one("#model_settings_header", Static).update(
                 "Select an item, or narrow to one and press Enter. "
-                "Flex applies only to direct OpenAI Responses/Chat Completions; other providers are unchanged."
+                "Flex and reasoning effort apply only to direct OpenAI Responses/Chat Completions. "
+                "Supported levels vary by model; other providers are unchanged."
             )
         else:
             root.add_leaf("No settings match your search.")
@@ -601,11 +610,11 @@ class AgentTextualApp(App):
             return
         self._set_model_setting(*self._visible_model_setting_matches[0])
 
-    def _set_model_setting(self, key: str, value: bool | Literal["model"]) -> None:
+    def _set_model_setting(self, key: str, value: ModelSettingValue) -> None:
         if self._processing:
             self._append_chat("System", "Cannot change model settings while AI is processing.")
             return
-        if key == "include_diff":
+        if key == "include_diff" and (isinstance(value, bool) or value == "model"):
             self._set_include_diff_setting(value)
         elif key == "openai_flex" and isinstance(value, bool):
             self.state.model_settings.openai_flex = value
@@ -616,6 +625,16 @@ class AgentTextualApp(App):
                 f"OpenAI Flex processing {label}. Applies to subsequent direct OpenAI "
                 "Responses/Chat Completions requests only; model support is required. "
                 "Other providers are unchanged.",
+            )
+        elif key == "openai_reasoning_effort" and (value is None or value in OPENAI_REASONING_EFFORTS):
+            self.state.model_settings.openai_reasoning_effort = cast(ReasoningEffort | None, value)
+            self._exit_model_settings_mode()
+            label = "API default" if value is None else value
+            self._append_chat(
+                "System",
+                f"OpenAI reasoning effort set to {label}. Applies to subsequent direct OpenAI "
+                "Responses/Chat Completions requests only. Supported levels vary by model; "
+                "unsupported choices return an API error. Other providers are unchanged.",
             )
         self._refresh_state()
 
@@ -1523,6 +1542,8 @@ class AgentTextualApp(App):
             f"api_type: {self.state.model_config.api_type}\n"
             f"include_diff: {self.state.model_settings.include_diff}\n"
             f"openai_flex (OpenAI only): {self.state.model_settings.openai_flex}\n"
+            f"openai_reasoning_effort (OpenAI only): "
+            f"{self.state.model_settings.openai_reasoning_effort or 'default'}\n"
             f"chat_session: {session_text}"
         )
 
