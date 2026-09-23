@@ -118,6 +118,14 @@ def test_sdk_environment_endpoint_override_is_respected(client_type, monkeypatch
 
 
 @pytest.mark.parametrize("client_type", CLIENTS)
+def test_max_effort_is_forwarded_unchanged(client_type):
+    client, endpoint = make_client(client_type)
+    client.configure_model_settings(ModelSettings(openai_reasoning_effort="max"))
+    client.chat(MESSAGES)
+    assert_effort(endpoint.call_args.kwargs, client_type, "max")
+
+
+@pytest.mark.parametrize("client_type", CLIENTS)
 def test_unsupported_effort_errors_are_not_silently_retried(client_type):
     client, endpoint = make_client(client_type)
     client.configure_model_settings(ModelSettings(openai_reasoning_effort="xhigh"))

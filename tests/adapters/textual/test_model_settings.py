@@ -53,7 +53,7 @@ def test_settings_command_search_and_tree_selection(tmp_path):
             await pilot.press("enter")
             await pilot.pause()
             assert app._mode == "model_settings_select"
-            assert len(app._visible_model_setting_matches) == 12
+            assert len(app._visible_model_setting_matches) == 13
 
             input_widget.value = "OpenAI Flex: Enabled"
             await pilot.pause()
@@ -101,7 +101,15 @@ def test_reasoning_search_tree_selection_and_default(tmp_path):
             assert app._mode == "chat"
             assert "openai_reasoning_effort (OpenAI only): low" in app._state_text()
 
-            current = "low"
+            app._handle_command("\\settings")
+            input_widget.value = "OpenAI reasoning effort: max"
+            await pilot.pause()
+            assert app._visible_model_setting_matches == [("openai_reasoning_effort", "max")]
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.state.model_settings.openai_reasoning_effort == "max"
+
+            current = "max"
             for effort in (*OPENAI_REASONING_EFFORTS, None):
                 app._handle_command("\\settings")
                 await pilot.pause()

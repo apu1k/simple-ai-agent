@@ -24,9 +24,9 @@ from night_shifts.storage import ToolCallStore
 
 ApiType = Literal["chat_completions", "responses", "completions", "gemini_vertex"]
 IncludeDiffSetting = bool | Literal["model"]
-ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 OPENAI_REASONING_EFFORTS: tuple[ReasoningEffort, ...] = (
-    "none", "minimal", "low", "medium", "high", "xhigh",
+    "none", "minimal", "low", "medium", "high", "xhigh", "max",
 )
 ModelSettingValue = IncludeDiffSetting | ReasoningEffort | None
 
