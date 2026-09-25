@@ -110,10 +110,13 @@ def _task(objective: str) -> WorkerTask:
 
 def _assert_destroyed(controller: HyperVSandboxController) -> None:
     records = controller.store.list()
-    assert records
-    record = records[-1]
+    assert len(records) == 1  # a fresh store belongs to this test only
+    record = records[0]
     assert record.status is SandboxStatus.DESTROYED
-    assert not (controller.config.workspace_root / record.sandbox_id).exists()
+    assert controller.status(record) is SandboxStatus.DESTROYED  # host Get-VM reports missing
+    disk = controller.config.workspace_root / record.sandbox_id / "worker.vhdx"
+    assert not disk.exists()  # differencing disk removed
+    assert not disk.parent.exists()
 
 
 def test_real_host_prerequisites(real_controller: HyperVSandboxController):
@@ -139,6 +142,58 @@ def test_real_host_serial_round_trip_and_cleanup(
     assert result.outcome is WorkerOutcome.SUCCESS
     assert "protocol validation succeeded" in result.summary
     assert any(event.event_type == "protocol_test_echo" for event in events)
+    _assert_destroyed(real_controller)
+
+
+def test_real_host_unsupported_objective_fails_and_cleans_up(
+    real_controller: HyperVSandboxController,
+    real_channel: HyperVSerialTransport,
+    sandbox_spec: SandboxSpec,
+):
+    backend = SandboxWorkerBackend(
+        real_controller, real_channel, spec=sandbox_spec, poll_interval=0.1
+    )
+
+    result = backend.run(
+        _task("phase3-unsupported-objective"),
+        timeout_seconds=_positive_environment("NIGHT_SHIFT_HYPERV_JOB_TIMEOUT_SECONDS", "180"),
+    )
+
+    assert result.outcome is WorkerOutcome.FAILED
+    assert "fixed Phase 3" in (result.error or "")
+    _assert_destroyed(real_controller)
+
+
+def test_real_host_guest_disconnect_cleans_up_only_its_vm(
+    real_controller: HyperVSandboxController,
+    real_channel: HyperVSerialTransport,
+    sandbox_spec: SandboxSpec,
+):
+    """Stop our own VM after its sleep event to break the serial channel."""
+    created_id: list[str] = []
+    disconnected: list[bool] = []
+
+    def on_event(event: NightShiftEvent) -> None:
+        if event.event_type == "sandbox_created":
+            created_id.append(event.payload["sandbox_id"])
+        if event.event_type == "protocol_test_sleeping":
+            assert len(created_id) == 1
+            sandbox = real_controller.store.get(created_id[0])
+            assert sandbox is not None
+            real_controller.stop(sandbox)  # fixed script checks the owner marker
+            disconnected.append(True)
+
+    backend = SandboxWorkerBackend(
+        real_controller, real_channel, spec=sandbox_spec, poll_interval=0.1
+    )
+    result = backend.run(
+        _task("phase3-protocol-sleep:600"),
+        timeout_seconds=_positive_environment("NIGHT_SHIFT_HYPERV_JOB_TIMEOUT_SECONDS", "180"),
+        on_event=on_event,
+    )
+
+    assert disconnected, "the test did not exercise a guest disconnect"
+    assert result.outcome is WorkerOutcome.FAILED, result
     _assert_destroyed(real_controller)
 
 
@@ -209,4 +264,6 @@ def test_real_host_reconciliation_removes_only_the_generated_orphan(
 
     assert report.succeeded
     assert report.orphaned_destroyed == (sandbox.sandbox_id,)
-    assert not (host_config.workspace_root / sandbox.sandbox_id).exists()
+    # Inspect via the original per-test store: the fresh orphan store has no row.
+    assert real_controller.status(sandbox) is SandboxStatus.DESTROYED
+    _assert_destroyed(real_controller)

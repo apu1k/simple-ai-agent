@@ -9,6 +9,10 @@
 - `git diff --check`: exit 0, no output on the initial clean tree.
 - No real VM, real-host validation, image inspection, model call, host reconfiguration, or paid inference was run. These results do **not** establish isolation or an end-to-end coding result.
 
+## Commit 02 offline preparation
+
+The [Gate A preflight and resource-enforcement matrix](night_shift_hyperv_preflight.md) records what must be reviewed and observed on an approved real host. The opt-in suite is extended to check rejected-objective failure, deliberate disconnect after the guest sleep event, host-observed VM absence, differencing-disk removal, and exact-ID reconciliation. No VM/image has been launched or inspected as part of this preparation. The test file remains opt-in; local/fake tests do not complete Gate A. Post-edit offline checks: `python -m pytest -q tests/night_shifts --ignore=tests/night_shifts/test_hyperv_real_host.py` — **109 passed, 1 skipped**; `python -c "import os, pytest; os.environ.pop('NIGHT_SHIFT_HYPERV_INTEGRATION', None); raise SystemExit(pytest.main(['-q', 'tests/night_shifts']))"` — **109 passed, 2 skipped** (the opt-in module was skipped); `python -m ruff check .` — **All checks passed!**; `python -m mypy night_shifts` — **Success: no issues found in 37 source files**; `git diff --check` — exit 0. The opt-in file was AST-parsed, not exercised against Hyper-V. Record any real-host outcomes in a later status update; do not replace **BLOCKED** with PASS without operator-authorized evidence.
+
 ## What exists versus what is blocked
 
 | Gate | State | Evidence needed / operator action |
@@ -29,4 +33,4 @@ Existing code provides a Hyper-V lifecycle controller and whole-task COM1 JSONL 
 - Existing `SandboxWorkerBackend` collects only worker-referenced artifacts; collecting a deterministic patch, validation checks and cleanup state independently of the model is not yet wired. Its existing `WorkerOutcome.SUCCESS` and `NightShiftService` completed state are not evidence of semantic task completion.
 - Real-host `test_hyperv_real_host.py` is opt-in. Its exact-ID orphan reconciliation is appropriate for a dedicated test sandbox; do not run unscoped `reconcile()` alongside another runner. Record ownership and limits at the next gate, not inferred guarantees.
 
-Next step: Commit 02 offline preflight/test hardening. **Stop for operator approval and reviewed image/host configuration before launching a real VM.** Keep this file updated with commands/results, image identity and cleanup status whenever a gate is attempted.
+Next step: complete Commit 02 offline review, then obtain operator approval and reviewed image/host configuration before launching a real VM. Commit 03 contract work may proceed offline while Gate A remains blocked, but live jobs must not. Keep this file updated with commands/results, image identity and cleanup status whenever a gate is attempted.

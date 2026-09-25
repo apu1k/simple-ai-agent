@@ -13,7 +13,7 @@ Task, event, and result handling uses the existing versioned JSONL protocol thro
 - Windows 11 Pro, Enterprise, or Education with hardware virtualization enabled in firmware.
 - Hyper-V and its PowerShell management module enabled.
 - An administrator-managed, generation-2 Linux base image stored outside the repository.
-- A dedicated Hyper-V virtual switch. Start with no external network connectivity; network access must be an explicit policy exception.
+- No switch attachment for the protocol-test VM (`switch_name=None`, `network_enabled=False`); any future network profile requires a separately reviewed switch and explicit policy exception.
 - Enough host capacity for the configured CPU, memory, and differencing-disk limits.
 - The orchestrator host process must have narrowly scoped permission to manage only VMs carrying the night-shift ownership marker. Do not expose raw Hyper-V commands to either agent.
 
@@ -60,7 +60,7 @@ The plan is persisted with the job and included in the version-1 worker task. It
 3. Verify ownership markers before every start, pause, stop, or destroy operation.
 4. Deny networking unless the persisted policy explicitly enables an approved switch/profile.
 5. Persist the external VM ID immediately after creation so controller restart cleanup can find it.
-6. Make stop and destroy idempotent and reconcile orphaned records at startup.
+6. Make stop and destroy idempotent. Scope reconciliation to precisely owned IDs; an unscoped startup sweep is unsafe while another runner may be active.
 7. Destroy differencing disks after completion, cancellation, timeout, and failed provisioning while retaining operational records and approved artifacts.
 
 ## Trusted configuration example
@@ -103,13 +103,13 @@ The serial channel is transport isolation, not the complete worker sandbox. The 
 
 ## VM-backed execution adapter
 
-`SandboxWorkerBackend` connects the backend-independent worker interface to any `SandboxController`, including Hyper-V. One overall deadline covers provisioning, startup, task transport, event streaming, and result retrieval. The adapter continues checking cancellation and timeout while guest events are read on a daemon thread, persists both guest and orchestrator events when an `EventStore` is supplied, and attempts sandbox destruction on success, cancellation, timeout, startup failure, protocol failure, or result failure.
+`SandboxWorkerBackend` connects the backend-independent worker interface to a `SandboxProvider` such as Hyper-V. It polls a monotonic deadline during startup and guest-event streaming, but synchronous provisioning, task send, result retrieval, callbacks and cleanup are **not** fully covered by that deadline. It reads guest events on a daemon thread, persists guest/orchestrator events when an `EventStore` is supplied, and attempts destruction on success, cancellation, timeout and most failures. This prototype does not yet guarantee interruptible I/O or failure-proof cleanup.
 
-A cleanup failure is returned as a failed worker result rather than allowing an apparently successful job to hide a VM that was not destroyed. Fixed controller operations are still bounded separately by the trusted Hyper-V PowerShell command timeout.
+A caught cleanup failure becomes a failed worker result; an event logging/callback exception can still interrupt later cleanup and must be fixed before live work. Individual fixed PowerShell commands have their own timeout, not a global cleanup deadline.
 
 ## Restart reconciliation
 
-Call `controller.reconcile()` once during trusted orchestrator startup, before accepting new jobs. The reconciliation pass inventories Hyper-V through a fixed script and recognizes a VM only when both its strict `night-shift-<32 lowercase hex characters>` name and its exact `night-shift-owner:<sandbox-id>` marker agree. It validates the complete inventory before changing anything.
+The legacy controller's `reconcile()` inventories Hyper-V through a fixed script and recognizes a VM only when both its strict `night-shift-<32 lowercase hex characters>` name and its exact `night-shift-owner:<sandbox-id>` marker agree. It validates the complete inventory before changing anything. Do **not** run unscoped startup reconciliation alongside another runner; the controller does not prove which runner owns a live VM.
 
 Because guest transport sessions cannot be resumed safely after the orchestrator process is lost, reconciliation destroys every non-final persisted Hyper-V sandbox, cleans its trusted workspace, and marks its durable record destroyed. It also removes strictly owned host VMs that have no database record. VMs with unrelated names, missing or mismatched markers, or conflicting persisted backend identities are never touched.
 
@@ -148,7 +148,7 @@ Image checklist:
 
 ## Opt-in real-host tests
 
-Normal runs skip `test_hyperv_real_host.py`. On a dedicated host:
+Follow the [Gate A preflight, enforcement matrix and observation record](night_shift_hyperv_preflight.md) first. Normal runs skip `test_hyperv_real_host.py`. On an operator-approved dedicated host:
 
 ```powershell
 $env:NIGHT_SHIFT_HYPERV_INTEGRATION = '1'
@@ -158,8 +158,7 @@ $env:NIGHT_SHIFT_HYPERV_WORKSPACE = 'C:\ProgramData\NightShift\integration-sandb
 python -m pytest -q tests/night_shifts/test_hyperv_real_host.py
 ```
 
-The suite keeps networking off and covers prerequisites, serial exchange,
-timeout/cancellation cleanup, disk removal, and exact-ID orphan reconciliation.
+The suite configures networking off and covers prerequisites, successful and rejected-objective serial exchanges, timeout/cancellation, forced-stop disconnect cleanup, host-observed VM absence, disk removal, and exact-ID orphan reconciliation. Actual adapter state and pipe ACLs require separate host inspection.
 It never enables Hyper-V, elevates, restarts, creates switches, or downloads an
 image. Optional timeout/resource variables are listed in the test file.
 
