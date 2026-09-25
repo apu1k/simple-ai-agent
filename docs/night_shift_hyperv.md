@@ -1,6 +1,6 @@
 # Night-shift Hyper-V backend
 
-Phase 3 uses **Hyper-V on Windows** as the first local VM backend. The process backend remains available only for fast protocol tests and is not a security boundary. The in-progress Phase 4 guest/workspace contract is documented in [`night_shift_worker_runtime.md`](night_shift_worker_runtime.md).
+Phase 3 uses **Hyper-V on Windows** as the first local VM backend. The process backend remains available only for fast protocol tests and is not a security boundary. The current host-managed worker MVP decision and verified gates are in [`night_shift_plan.md`](night_shift_plan.md) and [`night_shift_status.md`](night_shift_status.md); [`night_shift_worker_runtime.md`](night_shift_worker_runtime.md) documents the existing guest/workspace prototype.
 
 ## Implementation status
 
@@ -42,7 +42,7 @@ Pin and record the image SHA-256 digest. `HyperVSandboxController` verifies it b
 
 ## Default sandbox policy
 
-`SandboxSpec` currently defaults to 2 virtual CPUs, 4096 MiB memory, a 20 GiB disposable disk, and networking disabled. These are host-enforced limits, not instructions to the model.
+`SandboxSpec` currently defaults to 2 virtual CPUs, 4096 MiB startup memory, a 20 GiB virtual disk size, and networking disabled. `create.ps1` sets CPU count, disables dynamic memory, resizes the differencing disk when applicable, and omits a switch when networking is off. Virtual disk size is **not** a verified host-storage quota; cgroup/process/lifetime and disk growth enforcement must be reviewed on a real host before treating resource limits as comprehensive.
 
 ## Agent plan
 
@@ -84,10 +84,12 @@ config = HyperVConfig(
 controller = HyperVSandboxController(
     config,
     SandboxStore(Path(".agent_runtime/operations.sqlite3")),
-    transport=HyperVSerialTransport(),
 )
+channel = HyperVSerialTransport()  # separate whole-task WorkerChannel, not a controller argument
 controller.check_prerequisites()
 ```
+
+`SandboxWorkerBackend(controller, channel)` composes the old whole-task execution path; the planned host-managed tool session is not yet implemented. The example does not create a VM or enable real jobs.
 
 Run the host process with only the permissions needed for its owned VMs and workspace. Do not accept these paths, the image digest, switch name, PowerShell executable, or pipe name from an agent task.
 
@@ -114,8 +116,7 @@ Because guest transport sessions cannot be resumed safely after the orchestrator
 Cleanup continues after an individual failure and returns a `HyperVReconciliationReport`. The caller must check `report.succeeded` (and log/alert on `report.errors`) before enabling job execution. Reconciliation deliberately does not require the base-image digest to pass: a missing or changed creation image must not prevent removal of already-running disposable VMs. Hyper-V prerequisites and ownership checks still fail closed.
 
 For targeted recovery/tests, `reconcile(sandbox_ids=frozenset({...}))`
-restricts cleanup to exact sandbox IDs. Production startup uses unscoped
-`reconcile()`.
+restricts cleanup to exact sandbox IDs. The legacy startup guidance to use unscoped `reconcile()` must **not** be applied while another runner may own live VMs: the current controller cannot distinguish a different live runner's owned sandboxes. Implement durable runner ownership before production startup reconciliation.
 
 ## Phase 3 protocol-test image
 
@@ -162,5 +163,4 @@ timeout/cancellation cleanup, disk removal, and exact-ID orphan reconciliation.
 It never enables Hyper-V, elevates, restarts, creates switches, or downloads an
 image. Optional timeout/resource variables are listed in the test file.
 
-Real-host results remain pending until a reviewed VHDX and host configuration
-are supplied. Mocked tests and the fail-closed default transport remain active.
+Real-host results remain pending until a reviewed VHDX, approved host configuration, and operator authorization are supplied. Mocked tests and the fail-closed default transport remain active. The named-pipe ACL and session/VM binding have not yet been validated as a secure per-tool channel.

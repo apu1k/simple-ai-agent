@@ -1,6 +1,6 @@
 # Restricted night-shift worker runtime
 
-Phase 4 is in progress. The repository now contains the fail-closed worker-runtime foundation; it does **not** yet enable untrusted real work.
+The repository contains a fail-closed guest-worker prototype; it does **not** enable untrusted real work. The current host-managed model-loop direction supersedes the old guest-to-host inference transport next step: see [`night_shift_plan.md`](night_shift_plan.md) and [`night_shift_status.md`](night_shift_status.md). This document describes existing contracts and historical guest-loop behavior, not instructions to deploy a live worker.
 
 ## Implemented
 
@@ -36,13 +36,13 @@ The initial guest tool set is deliberately small:
 
 Guest tool names are intentionally distinct from the head runtime's host-side tools. Tests explicitly align equivalent command access by profile, but no host tool implementation or registry is passed into a VM. Repository read/edit tools remain a future reviewed adapter slice; a model executor must not bypass this boundary with direct filesystem objects.
 
-## Host-mediated model inference boundary
+## Historical guest-mediated inference boundary (deferred)
 
-The next modular layer uses provider-neutral `InferenceRequest` and `InferenceResponse` records. A `TrustedInferenceGateway` runs on the trusted host and creates short-lived clients bound to one job, worker profile, administrator-selected stable model ID, request budget, payload limits, and expiry. Worker requests cannot select a provider, model, endpoint, or credential.
+The existing modular layer uses provider-neutral `InferenceRequest` and `InferenceResponse` records. A `TrustedInferenceGateway` runs on the trusted host and creates short-lived clients bound to one job, worker profile, administrator-selected stable model ID, request budget, payload limits, and expiry. Worker requests cannot select a provider, model, endpoint, or credential.
 
-`LLMInferenceModel` owns the existing provider client on the host and requires native tool support. `MediatedModelExecutor` runs the bounded tool loop in the guest through a pre-authenticated `WorkerInferenceClient`. The gateway independently checks job/profile identity, exact profile tool schemas, transcript shape, tool-call authorization, request count, and input/output limits. Model-requested tools are still executed only by `GuestWorkerTools`, so inference mediation does not grant filesystem, shell, publication, or orchestration authority.
+`LLMInferenceModel` owns the existing provider client on the host and requires native tool support. The current `MediatedModelExecutor` prototype runs the bounded tool loop in the guest through a pre-authenticated `WorkerInferenceClient`. The gateway independently checks job/profile identity, exact profile tool schemas, transcript shape, tool-call authorization, request count, and input/output limits. Model-requested tools are still executed only by `GuestWorkerTools`, so inference mediation does not grant filesystem, shell, publication, or orchestration authority.
 
-The semantic boundary and local bound-client adapter are implemented and tested independently of delivery. A reviewed VM transport still needs to carry authenticated inference requests between the guest and host; no provider credential belongs in that transport or VM. The command-line guest therefore continues to select `UnavailableWorkerExecutor` by default.
+The semantic boundary and local bound-client adapter are implemented and tested independently of delivery. The earlier proposal to carry guest-to-host inference requests through a new transport is **deferred**, not a prerequisite for the current MVP. Instead, adapt the loop to the trusted host with only a sandbox-backed `WorkerToolProvider`; no provider credential or regular host tool belongs in the VM. The command-line guest continues to select `UnavailableWorkerExecutor` by default.
 
 ## Modular execution boundary
 
@@ -73,13 +73,4 @@ The backend now invokes an `ArtifactRetriever` after channel close and before sa
 
 ## Fail-closed status and remaining work
 
-The command-line guest runtime intentionally uses `UnavailableWorkerExecutor`. Therefore a real coding/review task returns a structured failure unless the mediated executor and a reviewed transport are injected. Remaining Phase 4 work includes:
-
-1. Implement and review the VM transport for the authenticated inference boundary; keep provider credentials and trusted model selection on the host.
-2. Add reviewed guest repository read/edit tool adapters without exposing raw filesystem objects to the model executor.
-3. Run the executor under profile-specific OS filesystem policy. In particular, read-only and review workers must not be able to modify the repository even if model/tool policy fails.
-4. Install and harden the runtime in a reviewed, digest-pinned Linux VHDX.
-5. Implement reviewed Hyper-V `WorkspaceInjector` and `ArtifactRetriever` adapters for the existing backend boundaries.
-6. Add an opt-in harmless real-host repository task after Phase 3 host validation succeeds.
-
-Publishing, branch pushes, and pull requests remain out of scope until Phase 5 and must continue to require approval.
+The command-line guest runtime intentionally uses `UnavailableWorkerExecutor`. Therefore a real coding/review task returns a structured failure unless the mediated executor and a reviewed transport are injected. For the current MVP, first validate lifecycle on a real host, then implement a bounded host-to-guest **tool** session, reviewed guest repository tools, safe workspace/result transfer, OS confinement, host-managed execution and independently collected patch/check evidence. A reviewed, digest-pinned Linux VHDX and operator approval are required for real-host work. The old guest inference transport remains deferred; keep the historical code and tests working. Publishing, branch pushes, and pull requests remain out of scope and require a separate approval-gated design.
