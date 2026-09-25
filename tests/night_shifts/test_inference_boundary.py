@@ -27,13 +27,14 @@ from night_shifts.inference import (
     TrustedInferenceGateway,
 )
 from night_shifts.protocol import WorkerOutcome, WorkerTask
+from night_shifts.worker_capabilities import worker_tool_names
 
 
 def _specs() -> tuple[WorkerToolSpec, ...]:
     schema = {"type": "object", "properties": {}, "additionalProperties": False}
-    return (
-        WorkerToolSpec("run_command", "Run a bounded command.", schema),
-        WorkerToolSpec("write_artifact", "Write a bounded artifact.", schema),
+    return tuple(
+        WorkerToolSpec(name, f"Fixture tool: {name}", schema)
+        for name in worker_tool_names("coding-worker")
     )
 
 
@@ -267,5 +268,7 @@ def test_llm_adapter_keeps_provider_client_on_trusted_host_boundary() -> None:
     response = model.infer((InferenceMessage("user", "task"),), _specs())
 
     assert response.tool_calls[0].name == "run_command"
-    assert client.tools[0]["function"]["name"] == "run_command"
+    assert tuple(tool["function"]["name"] for tool in client.tools) == worker_tool_names(
+        "coding-worker"
+    )
     assert client.messages == [{"role": "user", "content": "task"}]

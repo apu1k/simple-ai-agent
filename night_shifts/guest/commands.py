@@ -71,7 +71,10 @@ class RestrictedCommandRunner:
         *,
         timeout_seconds: int = 300,
         max_output_bytes: int = 1024 * 1024,
+        cancel: threading.Event | None = None,
     ) -> CommandResult:
+        if cancel is not None and cancel.is_set():
+            raise WorkerExecutionError("command cancelled before launch")
         approved = approve_worker_command(
             self._profile,
             argv,
@@ -104,7 +107,12 @@ class RestrictedCommandRunner:
         reader.start()
         deadline = started + approved.timeout_seconds
         timed_out = False
+        cancelled = False
         while process.poll() is None:
+            if cancel is not None and cancel.is_set():
+                cancelled = True
+                self._terminate(process)
+                break
             if output_exceeded.is_set():
                 self._terminate(process)
                 break
@@ -119,9 +127,18 @@ class RestrictedCommandRunner:
         except subprocess.TimeoutExpired:
             self._kill(process)
             process.wait(timeout=self._termination_grace_seconds)
+        reader.join(timeout=self._termination_grace_seconds)
+        # A child can retain stdout after its leader exits. Kill the process
+        # group rather than leaving a daemonized writer and a stuck reader.
+        if reader.is_alive() or cancelled:
+            self._kill(process)
+            reader.join(timeout=self._termination_grace_seconds)
+        if reader.is_alive():
+            raise WorkerExecutionError("command descendants did not release stdout")
         if process.stdout is not None:
             process.stdout.close()
-        reader.join(timeout=self._termination_grace_seconds)
+        if cancelled:
+            raise WorkerExecutionError("command cancelled")
         duration = time.monotonic() - started
         return CommandResult(
             argv=approved.argv,

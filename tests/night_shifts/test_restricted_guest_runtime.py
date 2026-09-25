@@ -60,8 +60,7 @@ class SuccessfulExecutor:
     ) -> WorkerResult:
         self.called = True
         assert {spec.name for spec in tools.available_tools()} == {
-            "run_command",
-            "write_artifact",
+            "list_files", "read_file", "search_text", "run_command", "write_artifact",
         }
         tool_result = tools.invoke(
             WorkerToolCall(

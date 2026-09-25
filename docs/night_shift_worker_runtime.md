@@ -15,7 +15,7 @@ The repository contains a fail-closed guest-worker prototype; it does **not** en
 - Lifecycle-only Hyper-V sandbox management, with serial communication selected separately at the trusted composition root.
 - Stable-ID trusted component selection with no dynamic imports, task-selected classes, host paths, or credentials.
 - A small `WorkerToolProvider` contract separating model adapters from command and artifact implementations.
-- Profile-scoped guest tool allowlists and a concrete adapter for policy-approved commands and bounded text artifacts.
+- Profile-scoped guest tool allowlists and a concrete adapter for policy-approved commands, bounded text artifacts, and proposed bounded guest-only repository tools (Commit 05; verify after approval).
 - Fail-safe backend ordering for workspace injection and artifact retrieval.
 - Default-off networking remains enforced by `SandboxSpec` and the Hyper-V controller.
 
@@ -29,12 +29,14 @@ This allowlist is defense in depth, not the complete sandbox. The reviewed Linux
 
 Worker executors now receive only a `WorkerToolProvider`; they no longer receive the raw command runner or artifact writer. The provider publishes bounded JSON-style tool schemas and accepts structured calls. Its concrete guest adapter independently checks the assigned profile, validates argument shapes, routes command requests through `approve_worker_command`, and routes artifact requests through `ArtifactWriter`.
 
-The initial guest tool set is deliberately small:
+The proposed guest tool set is deliberately small:
 
-- `run_command` is available only to coding and review workers and remains restricted to the existing shell-free command policy.
+- `list_files`, `read_file` and `search_text` are available to all profiles: portable text paths only, no links or special files; bounded recursion, reads, search results and response frames. Unsupported files fail explicitly.
+- `apply_patch` is available only to coding workers: one exact unique span replacement guarded by SHA-256, or exclusive text-file creation. It does not accept a unified diff or delete files; independently exported patch generation is later work. External concurrent guest writers are not supported by this stale-content guard.
+- `run_command` is available only to coding and review workers and remains restricted to the existing shell-free command policy. Review is **not** filesystem read-only: its test commands may write caches or execute repository code inside the guest. The read-only profile has no command or repository-write tool.
 - `write_artifact` is available to all worker profiles but writes only to the separate bounded artifact staging directory, not the repository.
 
-Guest tool names are intentionally distinct from the head runtime's host-side tools. Tests explicitly align equivalent command access by profile, but no host tool implementation or registry is passed into a VM. Repository read/edit tools remain a future reviewed adapter slice; a model executor must not bypass this boundary with direct filesystem objects.
+Guest tool names are intentionally distinct from the head runtime's host-side tools. Linux dirfd/no-follow operations are required for the repository facade on a real guest; its Windows fallback serves offline tests only and must never be used as VM isolation. The model receives no host tool implementation or registry. The guest service must be root-owned with a root-owned parent, unprivileged repository subprocesses, writable workspace/artifact paths only, disabled networking and cgroup-enforced process lifetimes. The current runtime and test fixtures are not that deployed service; do not enable live work on these tests.
 
 ## Historical guest-mediated inference boundary (deferred)
 

@@ -103,6 +103,32 @@ def test_bound_handshake_model_facade_and_orchestrator_only_transfer() -> None:
     assert transport.closed
 
 
+def test_repository_tool_arguments_are_rejected_on_host_before_transport() -> None:
+    transport = FakeTransport()
+    worker = _ready(transport).model_tools()
+    initial = len(transport.sent)
+    for name, arguments in (
+        ("read_file", {"path": "../secret"}),
+        ("list_files", {"path": "/tmp"}),
+        ("search_text", {"query": "x" * 257}),
+        ("apply_patch", {"path": "x.txt", "expected_sha256": "no",
+                         "find": "x", "replace": "y"}),
+        ("apply_patch", {"path": "x.txt", "expected_sha256": None,
+                         "find": "x", "replace": "y"}),
+        ("run_command", {"argv": ["git", "status"], "max_output_bytes": 65536}),
+    ):
+        assert worker.invoke(WorkerToolCall(name, arguments)).is_error
+    assert len(transport.sent) == initial
+    assert not worker.invoke(WorkerToolCall("read_file", {"path": "x.txt"})).is_error
+    assert not worker.invoke(WorkerToolCall("apply_patch", {
+        "path": "x.txt", "expected_sha256": None, "find": "", "replace": "new",
+    })).is_error
+    read_only = _ready(FakeTransport(), "read-only-worker").model_tools()
+    assert read_only.invoke(WorkerToolCall("apply_patch", {
+        "path": "x.txt", "expected_sha256": None, "find": "", "replace": "new",
+    })).is_error
+
+
 def test_unauthorized_and_invalid_model_calls_do_not_reach_guest() -> None:
     transport = FakeTransport()
     session = _ready(transport, "read-only-worker")

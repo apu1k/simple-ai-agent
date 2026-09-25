@@ -12,8 +12,13 @@ from night_shifts.contracts.worker_tool import (
 )
 from night_shifts.guest.artifacts import ArtifactPolicyError, ArtifactWriter
 from night_shifts.guest.commands import RestrictedCommandRunner, WorkerExecutionError
+from night_shifts.guest.repository import GuestRepository, RepositoryToolError
 from night_shifts.worker_capabilities import (
+    APPLY_PATCH_TOOL,
+    LIST_FILES_TOOL,
+    READ_FILE_TOOL,
     RUN_COMMAND_TOOL,
+    SEARCH_TEXT_TOOL,
     WRITE_ARTIFACT_TOOL,
     worker_tool_names,
 )
@@ -30,7 +35,7 @@ _RUN_COMMAND_SPEC = WorkerToolSpec(
             "max_output_bytes": {
                 "type": "integer",
                 "minimum": 1,
-                "maximum": 4 * 1024 * 1024,
+                "maximum": 16 * 1024,
             },
         },
         "required": ["argv"],
@@ -57,6 +62,31 @@ _WRITE_ARTIFACT_SPEC = WorkerToolSpec(
 _SPECS = {
     RUN_COMMAND_TOOL: _RUN_COMMAND_SPEC,
     WRITE_ARTIFACT_TOOL: _WRITE_ARTIFACT_SPEC,
+    LIST_FILES_TOOL: WorkerToolSpec(
+        LIST_FILES_TOOL, "List bounded workspace files (no links).",
+        {"type": "object", "properties": {"path": {"type": "string", "maxLength": 240}},
+         "additionalProperties": False},
+    ),
+    READ_FILE_TOOL: WorkerToolSpec(
+        READ_FILE_TOOL, "Read one bounded UTF-8 workspace file with its SHA-256.",
+        {"type": "object", "properties": {"path": {"type": "string", "maxLength": 240}},
+         "required": ["path"], "additionalProperties": False},
+    ),
+    SEARCH_TEXT_TOOL: WorkerToolSpec(
+        SEARCH_TEXT_TOOL, "Search bounded UTF-8 workspace files for a literal line fragment.",
+        {"type": "object", "properties": {"query": {"type": "string", "maxLength": 256}},
+         "required": ["query"], "additionalProperties": False},
+    ),
+    APPLY_PATCH_TOOL: WorkerToolSpec(
+        APPLY_PATCH_TOOL, "Create or replace one exact text span with a stale-content guard.",
+        {"type": "object", "properties": {
+            "path": {"type": "string", "maxLength": 240},
+            "expected_sha256": {"type": ["string", "null"]},
+            "find": {"type": "string", "maxLength": 16384},
+            "replace": {"type": "string", "maxLength": 16384},
+        }, "required": ["path", "expected_sha256", "find", "replace"],
+         "additionalProperties": False},
+    ),
 }
 
 
@@ -68,10 +98,12 @@ class GuestWorkerTools:
         profile: str,
         commands: RestrictedCommandRunner,
         artifacts: ArtifactWriter,
+        repository: GuestRepository | None = None,
     ) -> None:
         self._allowed = worker_tool_names(profile)
         self._commands = commands
         self._artifacts = artifacts
+        self._repository = repository
 
     def available_tools(self) -> tuple[WorkerToolSpec, ...]:
         return tuple(_SPECS[name] for name in self._allowed)
@@ -85,11 +117,17 @@ class GuestWorkerTools:
                 output = self._run_command(arguments)
             elif call.name == WRITE_ARTIFACT_TOOL:
                 output = self._write_artifact(arguments)
+            elif call.name in (LIST_FILES_TOOL, READ_FILE_TOOL, SEARCH_TEXT_TOOL, APPLY_PATCH_TOOL):
+                output = self._repository_tool(call.name, arguments)
             else:  # The allowlist and implementation registry must agree.
                 return self._error(call.name, "approved worker tool has no implementation")
-        except (ArtifactPolicyError, WorkerExecutionError, WorkerPolicyError, ValueError) as exc:
+        except (ArtifactPolicyError, WorkerExecutionError, WorkerPolicyError,
+                RepositoryToolError, ValueError) as exc:
             return self._error(call.name, str(exc) or exc.__class__.__name__)
-        return WorkerToolResult(call.name, json.dumps(output, sort_keys=True))
+        encoded = json.dumps(output, sort_keys=True)
+        if len(encoded.encode("utf-8")) > 16 * 1024:
+            return self._error(call.name, "tool response exceeds 16 KiB limit")
+        return WorkerToolResult(call.name, encoded)
 
     def _run_command(self, arguments: dict[str, Any]) -> dict[str, Any]:
         self._require_keys(
@@ -102,9 +140,11 @@ class GuestWorkerTools:
             raise ValueError("argv must be an array of strings")
         timeout = self._integer(arguments.get("timeout_seconds", 300), "timeout_seconds")
         output_limit = self._integer(
-            arguments.get("max_output_bytes", 1024 * 1024),
+            arguments.get("max_output_bytes", 16 * 1024),
             "max_output_bytes",
         )
+        if output_limit <= 0 or output_limit > 16 * 1024:
+            raise ValueError("tool output must be between 1 byte and 16 KiB")
         result = self._commands.run(
             argv,
             timeout_seconds=timeout,
@@ -118,6 +158,25 @@ class GuestWorkerTools:
             "timed_out": result.timed_out,
             "output_truncated": result.output_truncated,
         }
+
+    def _repository_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self._repository is None:
+            raise RepositoryToolError("guest repository tools are not configured")
+        if name == LIST_FILES_TOOL:
+            self._require_keys(arguments, required=frozenset(), optional=frozenset({"path"}))
+            return self._repository.list_files(self._text(arguments.get("path", "."), "path"))
+        if name == READ_FILE_TOOL:
+            self._require_keys(arguments, required=frozenset({"path"}), optional=frozenset())
+            return self._repository.read_file(self._text(arguments["path"], "path"))
+        if name == SEARCH_TEXT_TOOL:
+            self._require_keys(arguments, required=frozenset({"query"}), optional=frozenset())
+            return self._repository.search_text(self._text(arguments["query"], "query"))
+        self._require_keys(arguments, required=frozenset({"path", "expected_sha256",
+                                                           "find", "replace"}), optional=frozenset())
+        if not all(isinstance(arguments[key], str) for key in ("path", "find", "replace")):
+            raise ValueError("patch path and text must be strings")
+        return self._repository.apply_patch(arguments["path"], arguments["expected_sha256"],
+                                            arguments["find"], arguments["replace"])
 
     def _write_artifact(self, arguments: dict[str, Any]) -> dict[str, Any]:
         self._require_keys(

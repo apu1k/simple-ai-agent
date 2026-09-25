@@ -25,12 +25,33 @@ from night_shifts.contracts.worker_tool import (
     WorkerToolSpec,
 )
 from night_shifts.models import SandboxRecord
-from night_shifts.worker_capabilities import RUN_COMMAND_TOOL, WRITE_ARTIFACT_TOOL, worker_tool_names
+from night_shifts.worker_capabilities import (
+    APPLY_PATCH_TOOL, LIST_FILES_TOOL, READ_FILE_TOOL, RUN_COMMAND_TOOL,
+    SEARCH_TEXT_TOOL, WRITE_ARTIFACT_TOOL, worker_tool_names,
+)
 from night_shifts.worker_policy import WorkerPolicyError, approve_worker_command
 
 VERSION = 1
 _SANDBOX_ID = re.compile(r"[0-9a-f]{32}\Z")
 _ARTIFACT_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
+_REPO_PART = re.compile(r"[A-Za-z0-9._-]{1,100}\Z")
+_DIGEST = re.compile(r"[0-9a-f]{64}\Z")
+_RESERVED = frozenset({"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
+                       *(f"LPT{i}" for i in range(1, 10))})
+
+
+def _repo_path(value: Any, *, root: bool = False) -> None:
+    if root and value == ".":
+        return
+    if (not isinstance(value, str) or not value or len(value) > 240
+            or value.startswith("/") or "\\" in value):
+        raise ValueError("repository path must be a bounded relative POSIX path")
+    parts = value.split("/")
+    if len(parts) > 8 or any(
+        not _REPO_PART.fullmatch(part) or part.endswith(".") or part.lower() == ".git"
+        or part.upper().split(".")[0] in _RESERVED for part in parts
+    ):
+        raise ValueError("repository path is not portable or escapes the workspace")
 _ARTIFACT_KINDS = frozenset({"test-log", "analysis", "report", "metadata"})
 _ERROR_CODES = frozenset({"invalid_request", "policy_denied", "operation_failed", "tool_error"})
 
@@ -245,9 +266,9 @@ class SandboxToolSession:
             if not isinstance(argv, list) or not all(isinstance(item, str) for item in argv):
                 raise ValueError("command argv must be an array of strings")
             timeout = arguments.get("timeout_seconds", 300)
-            output = arguments.get("max_output_bytes", 1024 * 1024)
-            if type(timeout) is not int or type(output) is not int:
-                raise ValueError("command limits must be integers")
+            output = arguments.get("max_output_bytes", 16 * 1024)
+            if type(timeout) is not int or type(output) is not int or not 1 <= output <= 16 * 1024:
+                raise ValueError("command limits must be bounded integers")
             approve_worker_command(self._profile, argv, timeout_seconds=timeout, max_output_bytes=output)
         elif call.name == WRITE_ARTIFACT_TOOL:
             if set(arguments) != {"name", "kind", "content"} or not all(
@@ -257,6 +278,33 @@ class SandboxToolSession:
             if (not _ARTIFACT_NAME.fullmatch(arguments["name"])
                     or arguments["kind"] not in _ARTIFACT_KINDS):
                 raise ValueError("artifact name or kind is not approved")
+        elif call.name == LIST_FILES_TOOL:
+            if set(arguments) - {"path"}:
+                raise ValueError("unexpected list arguments")
+            _repo_path(arguments.get("path", "."), root=True)
+        elif call.name == READ_FILE_TOOL:
+            if set(arguments) != {"path"}:
+                raise ValueError("read_file needs a path")
+            _repo_path(arguments["path"])
+        elif call.name == SEARCH_TEXT_TOOL:
+            if set(arguments) != {"query"} or not isinstance(arguments["query"], str):
+                raise ValueError("search_text needs a literal query")
+            query = arguments["query"]
+            if not query or len(query.encode("utf-8")) > 256 or "\n" in query or "\r" in query:
+                raise ValueError("search query is invalid or too large")
+        elif call.name == APPLY_PATCH_TOOL:
+            if set(arguments) != {"path", "expected_sha256", "find", "replace"}:
+                raise ValueError("apply_patch needs path, digest, find and replace")
+            _repo_path(arguments["path"])
+            digest = arguments["expected_sha256"]
+            if digest is not None and (not isinstance(digest, str) or not _DIGEST.fullmatch(digest)):
+                raise ValueError("patch digest is invalid")
+            find, replace = arguments["find"], arguments["replace"]
+            if (not isinstance(find, str) or not isinstance(replace, str)
+                    or len(find.encode("utf-8")) > 16 * 1024
+                    or len(replace.encode("utf-8")) > 16 * 1024
+                    or (digest is None and find) or (digest is not None and not find)):
+                raise ValueError("patch text or creation context is invalid")
         else:
             raise ValueError("approved tool has no host-side validator")
         self._encode({"type": "request", "operation": "tool", "payload": dict(arguments), **self._identity(), "request_id": self._next_id})

@@ -10,6 +10,7 @@ import pytest
 from night_shifts.contracts.worker_tool import WorkerToolCall, WorkerToolProvider
 from night_shifts.guest.artifacts import ArtifactWriter
 from night_shifts.guest.commands import RestrictedCommandRunner
+from night_shifts.guest.repository import GuestRepository
 from night_shifts.guest.tools import GuestWorkerTools
 from night_shifts.worker_capabilities import worker_tool_names
 
@@ -23,6 +24,7 @@ def _tools(tmp_path: Path, profile: str) -> GuestWorkerTools:
         profile,
         RestrictedCommandRunner(repository, profile),
         ArtifactWriter(artifacts),
+        GuestRepository(repository),
     )
 
 
@@ -33,8 +35,12 @@ def test_guest_tool_provider_contract_and_profile_allowlists(tmp_path: Path) -> 
     assert tuple(spec.name for spec in coding.available_tools()) == worker_tool_names(
         "coding-worker"
     )
-    assert worker_tool_names("read-only-worker") == ("write_artifact",)
-    assert worker_tool_names("review-worker") == ("run_command", "write_artifact")
+    assert worker_tool_names("read-only-worker") == (
+        "list_files", "read_file", "search_text", "write_artifact",
+    )
+    assert worker_tool_names("review-worker") == (
+        "list_files", "read_file", "search_text", "run_command", "write_artifact",
+    )
 
 
 def test_read_only_profile_cannot_invoke_command_tool(tmp_path: Path) -> None:

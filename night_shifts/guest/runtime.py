@@ -22,6 +22,7 @@ from typing import Any, BinaryIO, Callable, Protocol
 from night_shifts.contracts.worker_tool import WorkerToolProvider
 from night_shifts.guest.artifacts import ArtifactWriter
 from night_shifts.guest.commands import RestrictedCommandRunner
+from night_shifts.guest.repository import GuestRepository
 from night_shifts.guest.tools import GuestWorkerTools
 from night_shifts.models import NightShiftEvent
 from night_shifts.protocol import (
@@ -125,7 +126,8 @@ def run_once(
         )
         commands = RestrictedCommandRunner(workspace, task.worker_profile)
         artifacts = ArtifactWriter(workspace_root.resolve() / WORKSPACE_ARTIFACTS)
-        tools = GuestWorkerTools(task.worker_profile, commands, artifacts)
+        tools = GuestWorkerTools(task.worker_profile, commands, artifacts,
+                                 GuestRepository(workspace))
         selected_executor = executor or UnavailableWorkerExecutor()
         result = selected_executor.execute(task, tools, emit)
         if result.job_id != task.job_id:

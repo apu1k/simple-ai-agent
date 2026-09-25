@@ -9,15 +9,22 @@ from __future__ import annotations
 
 RUN_COMMAND_TOOL = "run_command"
 WRITE_ARTIFACT_TOOL = "write_artifact"
+LIST_FILES_TOOL = "list_files"
+READ_FILE_TOOL = "read_file"
+SEARCH_TEXT_TOOL = "search_text"
+APPLY_PATCH_TOOL = "apply_patch"
 
 SUPPORTED_WORKER_PROFILES = frozenset(
     {"coding-worker", "read-only-worker", "review-worker"}
 )
 
 _PROFILE_TOOLS: dict[str, tuple[str, ...]] = {
-    "coding-worker": (RUN_COMMAND_TOOL, WRITE_ARTIFACT_TOOL),
-    "read-only-worker": (WRITE_ARTIFACT_TOOL,),
-    "review-worker": (RUN_COMMAND_TOOL, WRITE_ARTIFACT_TOOL),
+    "coding-worker": (LIST_FILES_TOOL, READ_FILE_TOOL, SEARCH_TEXT_TOOL,
+                      APPLY_PATCH_TOOL, RUN_COMMAND_TOOL, WRITE_ARTIFACT_TOOL),
+    "read-only-worker": (LIST_FILES_TOOL, READ_FILE_TOOL, SEARCH_TEXT_TOOL,
+                         WRITE_ARTIFACT_TOOL),
+    "review-worker": (LIST_FILES_TOOL, READ_FILE_TOOL, SEARCH_TEXT_TOOL,
+                      RUN_COMMAND_TOOL, WRITE_ARTIFACT_TOOL),
 }
 
 
