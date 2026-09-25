@@ -17,12 +17,16 @@ The [Gate A preflight and resource-enforcement matrix](night_shift_hyperv_prefli
 
 The [tool-session protocol contract](night_shift_tool_session.md) and fake-transport tests define a host-managed, job/sandbox/session-bound model tool facade separate from the old whole-task channel. There is no real serial tool adapter or guest responder yet. Do not infer VM confinement or real transport timeout behavior from fake-transport tests. Post-edit checks: `python -m pytest -q tests/night_shifts --ignore=tests/night_shifts/test_hyperv_real_host.py` — **138 passed, 1 skipped**; `python -m ruff check .` — **All checks passed!**; `python -m mypy night_shifts` — **Success: no issues found in 38 source files**; `git diff --check` — exit 0. These are offline tests only; Gates A and B remain **BLOCKED**.
 
+## Commit 04 offline implementation (proposed; validation pending approval)
+
+The [fixture snapshot transfer design and limits](night_shift_snapshot_transfer.md) describe an exact, approved-Git-object snapshot, fake-serial guest load/fixed check/report and exact-sandbox cleanup attempt. These are **not** a deployed guest image, safe real serial adapter, real-host demonstration, or durable artifact bundle. Proposed files have not been applied or tested yet; record observed post-approval commands/results here before treating offline work as validated. Gate A and Gate B remain **BLOCKED** pending authorized real-host evidence.
+
 ## What exists versus what is blocked
 
 | Gate | State | Evidence needed / operator action |
 | --- | --- | --- |
 | A: real lifecycle | **BLOCKED — not run** | Operator-approved dedicated Windows Hyper-V host/permissions, reviewed provenance and SHA-256 of network-off protocol-test Linux VHDX with serial bootstrap, storage/resource settings and pipe access review. Run only opt-in real-host tests after review; capture VM/differencing-disk cleanup and sanitized results. The existing test includes fixed protocol exchange, timeout/cancel and exact-ID orphan cleanup; disconnect/failure cleanup and actual resource-limit guarantees still require verification. |
-| B: real transfer | **BLOCKED — not implemented** | Safe revision export/guest injection/retrieval adapters, bounded negative tests, then operator-approved real VM boot/inject/check/retrieve/destroy and failed-retrieval cleanup. No arbitrary checkout transfer or live model work. |
+| B: real transfer | **BLOCKED — no real data-path evidence** | Proposed offline fixture transfer and fake transport require approval/testing. Then review/deploy the guest image, implement an interruptible bounded serial adapter and run operator-approved real VM boot/inject/check/retrieve/destroy including failed-retrieval cleanup. No arbitrary checkout transfer or live model work. |
 | C: first model result | **BLOCKED by A/B** | Approved model/settings and paid-call consent; reproduce a fixture patch in a separate disposable workspace, report checks, usage and cleanup. |
 | D: unattended queue | **BLOCKED by C** | Durable claiming, supervised runner, multi-job/restart evaluation with retained review bundles and owner-safe reconciliation. |
 
