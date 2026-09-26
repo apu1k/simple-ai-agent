@@ -19,7 +19,8 @@ from night_shifts.contracts.worker_tool import (
     WorkerToolResult,
     WorkerToolSpec,
 )
-from night_shifts.guest.executor import MediatedModelExecutor, ModelExecutorLimits
+from night_shifts.executor import MediatedModelExecutor, ModelExecutorLimits
+from night_shifts.guest.executor import MediatedModelExecutor as LegacyMediatedModelExecutor
 from night_shifts.inference import (
     InferenceBoundaryError,
     InferenceLimits,
@@ -194,10 +195,11 @@ def test_mediated_executor_runs_bounded_tool_loop_and_collects_artifacts() -> No
         lambda name, payload: events.append((name, payload)),
     )
 
-    assert result.outcome is WorkerOutcome.SUCCESS
+    assert LegacyMediatedModelExecutor is MediatedModelExecutor
+    assert result.outcome is WorkerOutcome.SUBMITTED
     assert result.summary == "Completed the bounded task."
     assert result.artifacts == ("guest-artifact/report.txt",)
-    assert result.metrics == {"inference_turns": 2, "tool_calls": 1}
+    assert result.metrics == {"inference_turns": 2, "tool_calls": 1, "tool_errors": 0}
     assert [name for name, _ in events] == [
         "worker_inference_requested",
         "worker_inference_completed",

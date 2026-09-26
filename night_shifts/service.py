@@ -109,7 +109,9 @@ class NightShiftService:
             )
 
         target = {
-            WorkerOutcome.SUCCESS: JobStatus.COMPLETED,
+            WorkerOutcome.SUCCESS: JobStatus.COMPLETED,  # Legacy whole-task outcome.
+            WorkerOutcome.SUBMITTED: JobStatus.COMPLETED,  # Submitted, not verified or approved.
+            WorkerOutcome.BLOCKED: JobStatus.FAILED,  # No interactive mailbox in this MVP.
             WorkerOutcome.CANCELLED: JobStatus.CANCELLED,
             WorkerOutcome.TIMED_OUT: JobStatus.FAILED,
             WorkerOutcome.FAILED: JobStatus.FAILED,
@@ -118,7 +120,13 @@ class NightShiftService:
             job_id,
             target,
             actor="orchestrator",
-            payload={"outcome": result.outcome.value, "error": result.error},
+            payload={
+                "outcome": result.outcome.value,
+                "error": result.error,
+                "check_status": result.check_status.value,
+                "review_status": result.review_status.value,
+                "cleanup_status": result.cleanup_status.value,
+            },
             result_summary=result.summary,
         )
         return result

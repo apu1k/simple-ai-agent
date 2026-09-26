@@ -17,10 +17,31 @@ class ProtocolError(ValueError):
 
 
 class WorkerOutcome(str, Enum):
-    SUCCESS = "success"
+    SUCCESS = "success"  # Legacy whole-task executors; not proof of task acceptance.
+    SUBMITTED = "submitted"  # Model submitted a summary; verification still pending.
+    BLOCKED = "blocked"  # Model reported that it cannot proceed.
     FAILED = "failed"
     CANCELLED = "cancelled"
     TIMED_OUT = "timed_out"
+
+
+class CheckStatus(str, Enum):
+    NOT_RUN = "not_run"
+    PASSED = "passed"
+    FAILED = "failed"
+    INCOMPLETE = "incomplete"
+
+
+class ReviewStatus(str, Enum):
+    NOT_REVIEWED = "not_reviewed"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class CleanupStatus(str, Enum):
+    UNKNOWN = "unknown"
+    CLEAN = "clean"
+    FAILED = "failed"
 
 
 @dataclass(frozen=True)
@@ -55,6 +76,9 @@ class WorkerResult:
     checks: tuple[dict[str, Any], ...] = ()
     artifacts: tuple[str, ...] = ()
     metrics: dict[str, Any] = field(default_factory=dict)
+    check_status: CheckStatus = CheckStatus.NOT_RUN
+    review_status: ReviewStatus = ReviewStatus.NOT_REVIEWED
+    cleanup_status: CleanupStatus = CleanupStatus.UNKNOWN
 
 
 def encode_task(task: WorkerTask) -> str:
@@ -103,6 +127,9 @@ def encode_result(result: WorkerResult) -> str:
         "checks": list(result.checks),
         "artifacts": list(result.artifacts),
         "metrics": result.metrics,
+        "check_status": result.check_status.value,
+        "review_status": result.review_status.value,
+        "cleanup_status": result.cleanup_status.value,
     })
 
 
@@ -135,6 +162,9 @@ def decode_worker_message(line: str) -> NightShiftEvent | WorkerResult:
         if not isinstance(checks, list) or not all(isinstance(item, dict) for item in checks):
             raise ProtocolError("result checks must be a list of objects")
         metrics = _object(payload.get("metrics", {}), "result metrics")
+        check_status = _result_status(payload, "check_status", CheckStatus, CheckStatus.NOT_RUN)
+        review_status = _result_status(payload, "review_status", ReviewStatus, ReviewStatus.NOT_REVIEWED)
+        cleanup_status = _result_status(payload, "cleanup_status", CleanupStatus, CleanupStatus.UNKNOWN)
         return WorkerResult(
             job_id=_text(payload, "job_id"),
             outcome=outcome,
@@ -143,6 +173,9 @@ def decode_worker_message(line: str) -> NightShiftEvent | WorkerResult:
             checks=tuple(checks),
             artifacts=tuple(_text_list(payload.get("artifacts", []))),
             metrics=metrics,
+            check_status=check_status,
+            review_status=review_status,
+            cleanup_status=cleanup_status,
         )
     raise ProtocolError(f"Expected worker event or result, got {kind!r}")
 
@@ -197,6 +230,13 @@ def _text_list(value: Any) -> list[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ProtocolError("Expected a list of strings")
     return value
+
+
+def _result_status(payload: dict[str, Any], key: str, kind: type[Enum], default: Enum) -> Any:
+    try:
+        return kind(payload.get(key, default.value))
+    except (TypeError, ValueError) as exc:
+        raise ProtocolError(f"Invalid result {key}: {payload.get(key)!r}") from exc
 
 
 def _agent_plan(value: Any) -> AgentPlan:
