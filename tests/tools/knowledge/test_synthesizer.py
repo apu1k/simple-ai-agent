@@ -3,7 +3,9 @@ from types import SimpleNamespace
 import pytest
 
 from llm.base import LLMResponse, NativeToolCall
+from llm.providers import ProviderConfig
 from runtime.state import ModelConfig
+from tools.knowledge import synthesizer as synthesizer_module
 from tools.knowledge.config import KnowledgeSynthesisConfig
 from tools.knowledge.models import EvidenceBundle, EvidenceItem, KnowledgeSearchResult
 from tools.knowledge.synthesizer import KnowledgeSynthesizer
@@ -91,14 +93,14 @@ def test_synthesizer_uses_strict_structured_output_and_returns_citation_catalog(
         return client
 
     synthesizer = KnowledgeSynthesizer(
-        KnowledgeSynthesisConfig(model="gpt-5.6-luna"),
+        KnowledgeSynthesisConfig(model="test-synthesis-model"),
         client_factory=client_factory,
     )
 
     output = synthesizer.synthesize(_result(), _state())
 
-    assert captured["model"] == "gpt-5.6-luna"
-    assert captured["provider"].default_model == "gpt-5.6-luna"
+    assert captured["model"] == "test-synthesis-model"
+    assert captured["provider"].default_model == "test-synthesis-model"
     assert client.tools[0]["name"] == "submit_knowledge_synthesis"
     assert client.tools[0]["strict"] is True
     assert client.tool_choice == {
@@ -116,6 +118,64 @@ def test_synthesizer_uses_strict_structured_output_and_returns_citation_catalog(
             "metadata": {"path": "decision.md", "line": 4},
         }
     ]
+
+
+def test_synthesizer_uses_selected_model_without_override():
+    captured = {}
+
+    def client_factory(provider, model):
+        captured["provider"] = provider
+        captured["model"] = model
+        return FakeStructuredClient(
+            {"answer": "", "key_facts": [], "conflicts": [], "missing_information": []}
+        )
+
+    synthesizer = KnowledgeSynthesizer(
+        KnowledgeSynthesisConfig(), client_factory=client_factory
+    )
+    synthesizer.synthesize(_result(), _state())
+
+    assert captured["model"] == "large-model"
+    assert captured["provider"].default_model == "large-model"
+
+
+@pytest.mark.parametrize(
+    ("configured_model", "expected_model"),
+    [
+        ("", "provider-default-model"),
+        ("test-synthesis-model", "test-synthesis-model"),
+    ],
+)
+def test_synthesizer_uses_configured_or_default_dedicated_model(
+    monkeypatch, configured_model, expected_model
+):
+    provider = ProviderConfig(
+        key="test-synthesis-provider",
+        label="Test Synthesis Provider",
+        api_key="test-key",
+        base_url="http://localhost:1234/v1",
+        api_type="responses",
+        default_model="provider-default-model",
+        supports_model_listing=False,
+    )
+    monkeypatch.setitem(synthesizer_module.PROVIDERS, provider.key, provider)
+    captured = {}
+
+    def client_factory(selected_provider, model):
+        captured["provider"] = selected_provider
+        captured["model"] = model
+        return FakeStructuredClient(
+            {"answer": "", "key_facts": [], "conflicts": [], "missing_information": []}
+        )
+
+    synthesizer = KnowledgeSynthesizer(
+        KnowledgeSynthesisConfig(provider_key=provider.key, model=configured_model),
+        client_factory=client_factory,
+    )
+    synthesizer.synthesize(_result(), _state())
+
+    assert captured["provider"] is provider
+    assert captured["model"] == expected_model
 
 
 def test_synthesizer_rejects_unknown_citation_ids():

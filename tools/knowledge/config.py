@@ -20,7 +20,8 @@ class KnowledgeSynthesisConfig:
 
     enabled: bool = True
     provider_key: str = ""
-    model: str = "gpt-6-luna"
+    # An empty override uses the selected model or configured provider's default.
+    model: str = ""
     fallback_to_raw: bool = True
 
 
@@ -96,7 +97,7 @@ def _parse_synthesis_config(data: Any) -> KnowledgeSynthesisConfig:
     return KnowledgeSynthesisConfig(
         enabled=bool(data.get("enabled", True)),
         provider_key=str(data.get("provider_key", "")).strip(),
-        model=str(data.get("model", "gpt-6-luna")).strip() or "gpt-6-luna",
+        model=str(data.get("model") or "").strip(),
         fallback_to_raw=bool(data.get("fallback_to_raw", True)),
     )
 

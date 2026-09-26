@@ -74,7 +74,11 @@ class KnowledgeSynthesizer:
         state: AgentState,
     ) -> dict[str, Any]:
         evidence = _number_evidence(result)
-        client = self._client_factory(self._provider_for_state(state), self.config.model)
+        provider = self._provider_for_state(state)
+        model = self.config.model or provider.default_model
+        if not model:
+            raise ValueError("No model configured for knowledge synthesis.")
+        client = self._client_factory(provider, model)
         messages = _build_messages(result.query, evidence)
 
         if getattr(client, "supports_native_tools", False):
@@ -105,7 +109,7 @@ class KnowledgeSynthesizer:
                 api_key=selected.api_key,
                 base_url=selected.base_url,
                 api_type=selected.api_type,
-                default_model=self.config.model,
+                default_model=self.config.model or selected.model,
                 supports_model_listing=False,
             )
 

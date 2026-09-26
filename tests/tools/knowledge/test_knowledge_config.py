@@ -70,7 +70,7 @@ def test_load_knowledge_synthesis_config(tmp_path):
                 "synthesis:",
                 "  enabled: false",
                 "  provider_key: luna_provider",
-                "  model: gpt-5.6-luna",
+                "  model: test-synthesis-model",
                 "  fallback_to_raw: false",
             ]
         ),
@@ -81,7 +81,7 @@ def test_load_knowledge_synthesis_config(tmp_path):
 
     assert config.synthesis.enabled is False
     assert config.synthesis.provider_key == "luna_provider"
-    assert config.synthesis.model == "gpt-5.6-luna"
+    assert config.synthesis.model == "test-synthesis-model"
     assert config.synthesis.fallback_to_raw is False
 
 
@@ -90,8 +90,20 @@ def test_missing_config_uses_default_enabled_synthesis(tmp_path):
 
     assert config.synthesis.enabled is True
     assert config.synthesis.provider_key == ""
-    assert config.synthesis.model == "gpt-5.6-luna"
+    assert config.synthesis.model == ""
     assert config.synthesis.fallback_to_raw is True
+
+
+def test_blank_or_missing_synthesis_model_has_no_override(tmp_path):
+    config_path = tmp_path / "knowledge.yaml"
+    for contents in (
+        "synthesis:\n  provider_key: test-provider\n",
+        "synthesis:\n  model:\n",
+        'synthesis:\n  model: ""\n',
+        "synthesis:\n  model: '  '\n",
+    ):
+        config_path.write_text(contents, encoding="utf-8")
+        assert load_knowledge_config(config_path).synthesis.model == ""
 
 
 def test_invalid_qdrant_mode_falls_back_to_local(tmp_path):
