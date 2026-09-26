@@ -29,7 +29,8 @@ from night_shifts.models import JobStatus
     {"max_tool_calls": 0}, {"max_tool_calls": 501},
     {"max_model_requests": 0}, {"max_model_requests": 129},
     {"timeout_seconds": float("inf")}, {"max_input_bytes": False},
-    {"max_output_bytes": -1}, {"max_command_seconds": 0},
+    {"max_output_bytes": -1}, {"max_output_tokens": 0},
+    {"max_output_tokens": 16_385}, {"max_command_seconds": 0},
 ])
 def test_invalid_budget_limits_fail_closed(kwargs: dict) -> None:
     with pytest.raises(ValueError):
@@ -126,6 +127,7 @@ def test_budget_sqlite_round_trip_and_legacy_json_defaults(tmp_path: Path) -> No
     old = store.get(job.job_id)
     assert old is not None
     assert old.budget.max_model_requests == 24
+    assert old.budget.max_output_tokens == 4096
     assert old.budget.max_command_seconds == 300
 
 

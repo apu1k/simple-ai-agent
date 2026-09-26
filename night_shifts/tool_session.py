@@ -124,6 +124,7 @@ class SandboxToolSession:
         *,
         deadline: float,
         operation_timeout_seconds: float = 30.0,
+        max_command_seconds: int = 300,
         max_frame_bytes: int = 64 * 1024,
         max_chunk_bytes: int = 16 * 1024,
         max_transfer_bytes: int = 4 * 1024 * 1024,
@@ -138,6 +139,8 @@ class SandboxToolSession:
                 or not math.isfinite(operation_timeout_seconds)
                 or not 0 < operation_timeout_seconds <= 120):
             raise ValueError("session deadline or operation timeout is invalid")
+        if type(max_command_seconds) is not int or not 1 <= max_command_seconds <= 300:
+            raise ValueError("command timeout must be a bounded integer")
         if (not 4096 <= max_frame_bytes <= 1024 * 1024
                 or not 1 <= max_chunk_bytes <= max_frame_bytes // 4
                 or not max_chunk_bytes <= max_transfer_bytes <= 64 * 1024 * 1024):
@@ -149,6 +152,7 @@ class SandboxToolSession:
         self._transport = transport
         self._deadline = deadline
         self._timeout = operation_timeout_seconds
+        self._max_command_seconds = max_command_seconds
         self._max_frame = max_frame_bytes
         self._max_chunk = max_chunk_bytes
         self._max_transfer = max_transfer_bytes
@@ -160,6 +164,22 @@ class SandboxToolSession:
         self._closed = False
         self._state_lock = threading.Lock()
         self._operation_lock = threading.Lock()
+
+    @property
+    def job_id(self) -> str:
+        return self._job_id
+
+    @property
+    def profile(self) -> str:
+        return self._profile
+
+    @property
+    def deadline(self) -> float:
+        return self._deadline
+
+    @property
+    def max_command_seconds(self) -> int:
+        return self._max_command_seconds
 
     def model_tools(self) -> WorkerToolProvider:
         return _ModelTools(self)
@@ -242,6 +262,13 @@ class SandboxToolSession:
         self.cancel()
 
     def _invoke(self, call: WorkerToolCall) -> WorkerToolResult:
+        if (isinstance(call, WorkerToolCall) and call.name == RUN_COMMAND_TOOL
+                and isinstance(call.arguments, Mapping)
+                and self._max_command_seconds < 300
+                and "timeout_seconds" not in call.arguments):
+            call = WorkerToolCall(call.name, {
+                **call.arguments, "timeout_seconds": self._max_command_seconds,
+            })
         try:
             self._validate_call(call)
         except (ValueError, WorkerPolicyError) as exc:
@@ -269,6 +296,8 @@ class SandboxToolSession:
             output = arguments.get("max_output_bytes", 16 * 1024)
             if type(timeout) is not int or type(output) is not int or not 1 <= output <= 16 * 1024:
                 raise ValueError("command limits must be bounded integers")
+            if timeout > self._max_command_seconds:
+                raise ValueError("command exceeds job timeout policy")
             approve_worker_command(self._profile, argv, timeout_seconds=timeout, max_output_bytes=output)
         elif call.name == WRITE_ARTIFACT_TOOL:
             if set(arguments) != {"name", "kind", "content"} or not all(

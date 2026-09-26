@@ -98,17 +98,20 @@ class WorkerExecutionPolicy:
             ttl_seconds=min(self.budget.timeout_seconds, 86_400),
         )
 
-    def require_live_guarantees(self) -> None:
-        """Fail closed: current sync SDK has no hard cancellation or price reservation.
+    def require_live_guarantees(
+        self, *, inference_cancellable: bool = False, tool_cancellable: bool = False
+    ) -> None:
+        """Trusted composition must prove BOTH cancellation boundaries before dispatch.
 
-        Do not override this method or interpret fake-clock tests as live readiness.
-        A future trusted backend must replace it only after implementing and
-        testing interruptible inference, retry-aware reservations and usage.
+        A real backend must not treat caller-provided booleans as proof: these
+        describe administrator-constructed components, not task-selected values.
+        Strict USD remains unsupported without audited pricing and reservations.
         """
         if self.budget.max_cost_usd is not None:
             raise ExecutionPolicyBlocked(
                 "strict USD ceiling has no trusted pricing and pre-call reservation"
             )
-        raise ExecutionPolicyBlocked(
-            "host inference and tool transport are not hard-cancellable yet"
-        )
+        if not inference_cancellable or not tool_cancellable:
+            raise ExecutionPolicyBlocked(
+                "host inference and tool transport are not hard-cancellable yet"
+            )

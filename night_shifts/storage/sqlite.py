@@ -394,6 +394,7 @@ def _job_values(job: NightShiftJob) -> tuple[Any, ...]:
             "max_model_requests": job.budget.max_model_requests,
             "max_input_bytes": job.budget.max_input_bytes,
             "max_output_bytes": job.budget.max_output_bytes,
+            "max_output_tokens": job.budget.max_output_tokens,
             "max_command_seconds": job.budget.max_command_seconds,
         }),
         job.status.value,

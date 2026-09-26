@@ -144,13 +144,43 @@ class TrustedInferenceGateway:
             self._sessions[token] = session
         return BoundInferenceClient(self, token)
 
+    def authorize_client(
+        self, client: WorkerInferenceClient, *, job_id: str,
+        worker_profile: str, model_id: str,
+    ) -> None:
+        """Verify the trusted job snapshot before the first model dispatch."""
+        if not isinstance(client, BoundInferenceClient) or client._gateway is not self:
+            raise InferenceBoundaryError("inference client is not owned by this gateway")
+        with self._lock:
+            session = self._sessions.get(client._token)
+        if (session is None or session.job_id != job_id
+                or session.worker_profile != worker_profile or session.model_id != model_id):
+            raise InferenceBoundaryError("inference client does not match approved job policy")
+
     def close_client(self, client: WorkerInferenceClient) -> None:
         """Revoke a locally bound client without accepting a token from task text."""
 
         if not isinstance(client, BoundInferenceClient) or client._gateway is not self:
             raise InferenceBoundaryError("inference client is not owned by this gateway")
         with self._lock:
-            self._sessions.pop(client._token, None)
+            session = self._sessions.pop(client._token, None)
+        if session is not None:
+            close = getattr(session.model, "close", None)
+            if callable(close):
+                close()  # Do not wait for session.lock: a model call may be stalled.
+
+    def cancel_client(self, client: WorkerInferenceClient) -> None:
+        """Revoke and interrupt a process-backed session without waiting for infer."""
+        if not isinstance(client, BoundInferenceClient) or client._gateway is not self:
+            raise InferenceBoundaryError("inference client is not owned by this gateway")
+        with self._lock:
+            session = self._sessions.pop(client._token, None)
+        if session is None:
+            return
+        cancel = getattr(session.model, "cancel", None)
+        if not callable(cancel):
+            raise InferenceBoundaryError("inference model has no hard cancellation capability")
+        cancel()
 
     def infer(self, token: str, request: InferenceRequest) -> InferenceResponse:
         with self._lock:

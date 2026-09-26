@@ -14,6 +14,7 @@ from llm.base import LLMResponse, NativeToolCall, NativeToolOutput
 from llm.providers import ProviderConfig
 from llm.openai_flex import flex_request_options
 from llm.openai_reasoning import reasoning_request_options
+from llm.worker_limits import WorkerRequestLimits
 
 if TYPE_CHECKING:
     from runtime.state import ModelSettings
@@ -37,10 +38,18 @@ class OpenAIResponsesClient:
         self._last_tools: list[dict] | None = None
         self._last_tool_choice: str | dict | None = None
         self.last_usage = None  # Usage from the most recent provider response, if present.
+        self._worker_limits: WorkerRequestLimits | None = None
 
     def configure_model_settings(self, settings: "ModelSettings | None") -> None:
         """Bind live runtime preferences without resetting the response chain."""
         self._model_settings = settings
+
+    def configure_worker_limits(self, limits: WorkerRequestLimits) -> None:
+        """Bind one job's remaining deadline, output bound and zero SDK retries."""
+        if not isinstance(limits, WorkerRequestLimits):
+            raise ValueError("worker limits are required")
+        self._client = self._client.with_options(max_retries=0)
+        self._worker_limits = limits
 
     @property
     def supports_native_tools(self) -> bool:
@@ -120,6 +129,9 @@ class OpenAIResponsesClient:
         kwargs.update(reasoning_request_options(
             self._base_url, self._model_settings, "responses",
         ))
+        if self._worker_limits is not None:
+            kwargs["max_output_tokens"] = self._worker_limits.max_output_tokens
+            kwargs["timeout"] = self._worker_limits.timeout(float(kwargs["timeout"]))
         self._debug_log_response_request_tools("chat", kwargs)
         self.last_usage = None
         response = self._client.responses.create(**kwargs)
@@ -161,6 +173,9 @@ class OpenAIResponsesClient:
         kwargs.update(reasoning_request_options(
             self._base_url, self._model_settings, "responses",
         ))
+        if self._worker_limits is not None:
+            kwargs["max_output_tokens"] = self._worker_limits.max_output_tokens
+            kwargs["timeout"] = self._worker_limits.timeout(float(kwargs["timeout"]))
         self._debug_log_response_request_tools("submit_tool_outputs", kwargs)
         self.last_usage = None
         response = self._client.responses.create(**kwargs)

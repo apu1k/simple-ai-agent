@@ -70,6 +70,7 @@ class JobBudget:
     max_model_requests: int = 24
     max_input_bytes: int = 512 * 1024
     max_output_bytes: int = 128 * 1024
+    max_output_tokens: int = 4096
     max_command_seconds: int = 300
 
     def __post_init__(self) -> None:
@@ -79,6 +80,7 @@ class JobBudget:
             "max_model_requests": (self.max_model_requests, 128),
             "max_input_bytes": (self.max_input_bytes, 4 * 1024 * 1024),
             "max_output_bytes": (self.max_output_bytes, 1024 * 1024),
+            "max_output_tokens": (self.max_output_tokens, 16_384),
             "max_command_seconds": (self.max_command_seconds, 3_600),
         }
         for name, (value, maximum) in bounds.items():

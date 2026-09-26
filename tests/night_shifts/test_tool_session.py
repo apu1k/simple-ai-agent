@@ -103,6 +103,20 @@ def test_bound_handshake_model_facade_and_orchestrator_only_transfer() -> None:
     assert transport.closed
 
 
+def test_job_command_budget_is_applied_even_when_model_omits_timeout() -> None:
+    transport = FakeTransport()
+    session = _ready(transport, max_command_seconds=5)
+    tools = session.model_tools()
+    assert not tools.invoke(WorkerToolCall("run_command", {"argv": ["git", "status"]})).is_error
+    assert transport.sent[-1]["payload"]["arguments"]["timeout_seconds"] == 5
+    previous = len(transport.sent)
+    assert tools.invoke(WorkerToolCall("run_command", {
+        "argv": ["git", "status"], "timeout_seconds": 6,
+    })).is_error
+    assert len(transport.sent) == previous
+    session.cancel()
+
+
 def test_repository_tool_arguments_are_rejected_on_host_before_transport() -> None:
     transport = FakeTransport()
     worker = _ready(transport).model_tools()

@@ -17,6 +17,7 @@ from llm.base import LLMResponse, NativeToolCall
 from llm.providers import ProviderConfig
 from llm.openai_flex import flex_request_options
 from llm.openai_reasoning import reasoning_request_options
+from llm.worker_limits import WorkerRequestLimits
 
 if TYPE_CHECKING:
     from runtime.state import ModelSettings
@@ -43,10 +44,18 @@ class OpenAIChatClient:
         self._provider_key = provider.key
         self._provider_label = provider.label
         self.last_usage = None  # Last parsed request only; missing/retried usage stays unknown.
+        self._worker_limits: WorkerRequestLimits | None = None
 
     def configure_model_settings(self, settings: "ModelSettings | None") -> None:
         """Bind live runtime preferences without rebuilding the client."""
         self._model_settings = settings
+
+    def configure_worker_limits(self, limits: WorkerRequestLimits) -> None:
+        """Disable SDK/empty-result retries and cap generation for this job only."""
+        if not isinstance(limits, WorkerRequestLimits):
+            raise ValueError("worker limits are required")
+        self._client = self._client.with_options(max_retries=0)
+        self._worker_limits = limits
 
     @property
     def supports_native_tools(self) -> bool:
@@ -98,6 +107,8 @@ class OpenAIChatClient:
             self._base_url, self._model_settings, "chat_completions",
         ))
 
+        if self._worker_limits is not None:
+            kwargs["max_completion_tokens"] = self._worker_limits.max_output_tokens
         if tools is not None:
             kwargs["tools"] = tools
         if tool_choice is not None:
@@ -106,7 +117,10 @@ class OpenAIChatClient:
         last_result: str | LLMResponse = ""
         self.last_usage = None
 
-        for attempt in range(MAX_EMPTY_RESPONSE_RETRIES + 1):
+        retries = 0 if self._worker_limits is not None else MAX_EMPTY_RESPONSE_RETRIES
+        for attempt in range(retries + 1):
+            if self._worker_limits is not None:
+                kwargs["timeout"] = self._worker_limits.timeout(float(kwargs["timeout"]))
             response = self._client.chat.completions.create(**kwargs)
             # An empty-response retry may already have incurred unknown charges.
             self.last_usage = getattr(response, "usage", None) if attempt == 0 else None
@@ -117,7 +131,7 @@ class OpenAIChatClient:
 
             last_result = result
 
-            if attempt < MAX_EMPTY_RESPONSE_RETRIES:
+            if attempt < retries:
                 self._debug_empty_response(
                     reason="empty parsed chat_completions response; retrying once",
                     response=response,
