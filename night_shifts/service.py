@@ -83,6 +83,26 @@ class NightShiftService:
                 outcome=WorkerOutcome.CANCELLED,
                 summary="Job was cancelled before worker startup.",
             )
+        if job.budget.max_cost_usd is not None:
+            # Historical backends have no retry-aware price reservation either.
+            result = WorkerResult(
+                job_id=job_id,
+                outcome=WorkerOutcome.BLOCKED,
+                summary="Strict USD budget cannot be enforced by this runner.",
+                error="No trusted pre-call pricing and retry-aware reservation",
+            )
+            self.transition(
+                job_id, JobStatus.FAILED, actor="orchestrator",
+                payload={
+                    "outcome": result.outcome.value,
+                    "error": result.error,
+                    "check_status": result.check_status.value,
+                    "review_status": result.review_status.value,
+                    "cleanup_status": result.cleanup_status.value,
+                },
+                result_summary=result.summary,
+            )
+            return result
 
         self.transition(job_id, JobStatus.PROVISIONING, actor="orchestrator")
         running = self.transition(job_id, JobStatus.RUNNING, actor="orchestrator")

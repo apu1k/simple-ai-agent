@@ -199,7 +199,14 @@ def test_mediated_executor_runs_bounded_tool_loop_and_collects_artifacts() -> No
     assert result.outcome is WorkerOutcome.SUBMITTED
     assert result.summary == "Completed the bounded task."
     assert result.artifacts == ("guest-artifact/report.txt",)
-    assert result.metrics == {"inference_turns": 2, "tool_calls": 1, "tool_errors": 0}
+    assert result.metrics == {
+        "inference_turns": 2, "tool_calls": 1, "tool_errors": 0,
+        "usage": {
+            "input_tokens": None, "output_tokens": None,
+            "cached_input_tokens": None, "reasoning_output_tokens": None,
+            "unknown_requests": 2,
+        },
+    }
     assert [name for name, _ in events] == [
         "worker_inference_requested",
         "worker_inference_completed",

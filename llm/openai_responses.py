@@ -36,6 +36,7 @@ class OpenAIResponsesClient:
         self._last_response_id: str | None = None
         self._last_tools: list[dict] | None = None
         self._last_tool_choice: str | dict | None = None
+        self.last_usage = None  # Usage from the most recent provider response, if present.
 
     def configure_model_settings(self, settings: "ModelSettings | None") -> None:
         """Bind live runtime preferences without resetting the response chain."""
@@ -120,7 +121,9 @@ class OpenAIResponsesClient:
             self._base_url, self._model_settings, "responses",
         ))
         self._debug_log_response_request_tools("chat", kwargs)
+        self.last_usage = None
         response = self._client.responses.create(**kwargs)
+        self.last_usage = getattr(response, "usage", None)
         self._last_response_id = response.id
         return self._parse_response(response)
 
@@ -159,7 +162,9 @@ class OpenAIResponsesClient:
             self._base_url, self._model_settings, "responses",
         ))
         self._debug_log_response_request_tools("submit_tool_outputs", kwargs)
+        self.last_usage = None
         response = self._client.responses.create(**kwargs)
+        self.last_usage = getattr(response, "usage", None)
         self._last_response_id = response.id
         return self._parse_response(response)
 

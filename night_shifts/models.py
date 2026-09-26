@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -61,17 +62,35 @@ class SandboxStatus(str, Enum):
 
 @dataclass(frozen=True)
 class JobBudget:
-    """Limits enforced by a future worker backend."""
+    """Persisted upper bounds; strict spending requires a trusted pricing adapter."""
 
     timeout_seconds: int = 14_400
     max_tool_calls: int = 500
     max_cost_usd: float | None = None
+    max_model_requests: int = 24
+    max_input_bytes: int = 512 * 1024
+    max_output_bytes: int = 128 * 1024
+    max_command_seconds: int = 300
 
     def __post_init__(self) -> None:
-        if self.timeout_seconds <= 0 or self.max_tool_calls <= 0:
-            raise ValueError("Job timeout and tool-call budget must be positive")
-        if self.max_cost_usd is not None and self.max_cost_usd < 0:
-            raise ValueError("Job cost budget must not be negative")
+        bounds = {
+            "timeout_seconds": (self.timeout_seconds, 86_400),
+            "max_tool_calls": (self.max_tool_calls, 500),
+            "max_model_requests": (self.max_model_requests, 128),
+            "max_input_bytes": (self.max_input_bytes, 4 * 1024 * 1024),
+            "max_output_bytes": (self.max_output_bytes, 1024 * 1024),
+            "max_command_seconds": (self.max_command_seconds, 3_600),
+        }
+        for name, (value, maximum) in bounds.items():
+            if type(value) is not int or not 1 <= value <= maximum:
+                raise ValueError(f"{name} must be an integer between 1 and {maximum}")
+        if self.max_cost_usd is not None and (
+            isinstance(self.max_cost_usd, bool)
+            or not isinstance(self.max_cost_usd, (int, float))
+            or not math.isfinite(self.max_cost_usd)
+            or self.max_cost_usd < 0
+        ):
+            raise ValueError("Job cost budget must be finite and non-negative")
 
 
 @dataclass

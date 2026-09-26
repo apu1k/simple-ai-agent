@@ -83,7 +83,14 @@ def test_inspect_edit_test_then_submit_is_not_verified_success() -> None:
     assert result.check_status is CheckStatus.NOT_RUN  # Model's check claim is not trusted evidence.
     assert result.review_status is ReviewStatus.NOT_REVIEWED
     assert result.cleanup_status is CleanupStatus.UNKNOWN
-    assert result.metrics == {"inference_turns": 4, "tool_calls": 3, "tool_errors": 0}
+    assert result.metrics == {
+        "inference_turns": 4, "tool_calls": 3, "tool_errors": 0,
+        "usage": {
+            "input_tokens": None, "output_tokens": None,
+            "cached_input_tokens": None, "reasoning_output_tokens": None,
+            "unknown_requests": 4,
+        },
+    }
     assert [message.role for message in model.requests[-1].messages] == [
         "system", "user", "assistant", "tool", "assistant", "tool", "assistant", "tool",
     ]

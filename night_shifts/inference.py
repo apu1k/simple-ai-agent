@@ -17,6 +17,7 @@ from night_shifts.contracts.inference import (
     InferenceRequest,
     InferenceResponse,
     InferenceToolCall,
+    InferenceUsage,
     WorkerInferenceClient,
 )
 from night_shifts.contracts.worker_tool import WorkerToolSpec
@@ -232,6 +233,8 @@ class TrustedInferenceGateway:
     def _validate_response(cls, session: _Session, response: InferenceResponse) -> None:
         if not isinstance(response, InferenceResponse):
             raise InferenceBoundaryError("inference model returned an invalid response")
+        if response.usage is not None and not isinstance(response.usage, InferenceUsage):
+            raise InferenceBoundaryError("inference model returned invalid usage")
         output_bytes = len(response.content.encode("utf-8"))
         if len(response.tool_calls) > session.limits.max_tool_calls_per_response:
             raise InferenceBoundaryError("inference tool call count exceeds the session limit")
@@ -272,6 +275,49 @@ class TrustedInferenceGateway:
             raise InferenceBoundaryError("inference tool arguments exceed the limit")
 
 
+def _field(value: object, name: str) -> object:
+    if isinstance(value, Mapping):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
+def _token(value: object) -> int | None:
+    if value is None:
+        return None
+    if type(value) is not int or value < 0:
+        raise InferenceBoundaryError("provider reported invalid token usage")
+    return value
+
+
+def openai_usage(value: object) -> InferenceUsage | None:
+    """Read OpenAI and compatible usage shapes, without treating absent data as zero."""
+    if value is None:
+        return None
+    input_total = _field(value, "input_tokens")
+    output_total = _field(value, "output_tokens")
+    input_details = _field(value, "input_tokens_details")
+    output_details = _field(value, "output_tokens_details")
+    if input_total is None:
+        input_total = _field(value, "prompt_tokens")
+        input_details = _field(value, "prompt_tokens_details")
+    if output_total is None:
+        output_total = _field(value, "completion_tokens")
+        output_details = _field(value, "completion_tokens_details")
+    cached = _field(input_details, "cached_tokens")
+    reasoning = _field(output_details, "reasoning_tokens")
+    if all(item is None for item in (input_total, output_total, cached, reasoning)):
+        return None
+    try:
+        return InferenceUsage(
+            input_tokens=_token(input_total),
+            output_tokens=_token(output_total),
+            cached_input_tokens=_token(cached),
+            reasoning_output_tokens=_token(reasoning),
+        )
+    except ValueError as exc:
+        raise InferenceBoundaryError("provider reported inconsistent token usage") from exc
+
+
 class LLMInferenceModel:
     """Host-only adapter from the existing LLM client to inference contracts."""
 
@@ -307,15 +353,16 @@ class LLMInferenceModel:
                 tools=native_tools,
                 tool_choice="auto",
             )
+        usage = openai_usage(getattr(self._client, "last_usage", None))
         if isinstance(reply, str):
-            return InferenceResponse(content=reply)
+            return InferenceResponse(content=reply, usage=usage)
         if not isinstance(reply, LLMResponse):
             raise InferenceBoundaryError("LLM client returned an unsupported response")
         calls = tuple(
             InferenceToolCall(call.id, call.name, call.arguments or {})
             for call in (reply.tool_calls or [])
         )
-        return InferenceResponse(content=reply.content or "", tool_calls=calls)
+        return InferenceResponse(content=reply.content or "", tool_calls=calls, usage=usage)
 
     def _tool_schema(self, tool: WorkerToolSpec) -> dict[str, object]:
         function = {

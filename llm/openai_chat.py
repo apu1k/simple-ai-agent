@@ -42,6 +42,7 @@ class OpenAIChatClient:
         self._model_settings: ModelSettings | None = None
         self._provider_key = provider.key
         self._provider_label = provider.label
+        self.last_usage = None  # Last parsed request only; missing/retried usage stays unknown.
 
     def configure_model_settings(self, settings: "ModelSettings | None") -> None:
         """Bind live runtime preferences without rebuilding the client."""
@@ -103,9 +104,12 @@ class OpenAIChatClient:
             kwargs["tool_choice"] = tool_choice
 
         last_result: str | LLMResponse = ""
+        self.last_usage = None
 
         for attempt in range(MAX_EMPTY_RESPONSE_RETRIES + 1):
             response = self._client.chat.completions.create(**kwargs)
+            # An empty-response retry may already have incurred unknown charges.
+            self.last_usage = getattr(response, "usage", None) if attempt == 0 else None
             result = self._parse_response(response, attempt=attempt)
 
             if not self._is_empty_result(result):

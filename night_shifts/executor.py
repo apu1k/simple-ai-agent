@@ -7,7 +7,9 @@ loop has no filesystem, regular agent tool registry, or sandbox lifecycle access
 from __future__ import annotations
 
 import json
+import math
 import re
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -17,6 +19,7 @@ from night_shifts.contracts.inference import (
     InferenceRequest,
     InferenceResponse,
     InferenceToolCall,
+    InferenceUsage,
     WorkerInferenceClient,
 )
 from night_shifts.contracts.worker_tool import WorkerToolCall, WorkerToolProvider, WorkerToolResult
@@ -43,6 +46,26 @@ class ModelExecutorLimits:
             raise ValueError("max_summary_bytes must be between 1 byte and 256 KiB")
 
 
+@dataclass(frozen=True)
+class ExecutionControl:
+    """Cooperative inter-call guard; cannot interrupt a stalled synchronous call."""
+
+    deadline: float
+    cancellation_requested: Callable[[], bool]
+    monotonic: Callable[[], float] = time.monotonic
+
+    def __post_init__(self) -> None:
+        if type(self.deadline) not in (float, int) or not math.isfinite(self.deadline):
+            raise ValueError("deadline must be a finite monotonic timestamp")
+
+    def stop_outcome(self) -> WorkerOutcome | None:
+        if self.cancellation_requested():
+            return WorkerOutcome.CANCELLED
+        if self.monotonic() >= self.deadline:
+            return WorkerOutcome.TIMED_OUT
+        return None
+
+
 class MediatedModelExecutor:
     """Run a model/tool loop; a final model message is an unverified submission."""
 
@@ -60,6 +83,8 @@ class MediatedModelExecutor:
         task: WorkerTask,
         tools: WorkerToolProvider,
         emit_event: EmitEvent,
+        *,
+        control: ExecutionControl | None = None,
     ) -> WorkerResult:
         messages = [
             InferenceMessage("system", self._system_prompt(task.worker_profile)),
@@ -71,8 +96,17 @@ class MediatedModelExecutor:
         tool_errors = 0
         seen_calls: set[str] = set()
         artifact_references: list[str] = []
+        usage_fields = (
+            "input_tokens", "output_tokens", "cached_input_tokens", "reasoning_output_tokens"
+        )
+        usage_totals = dict.fromkeys(usage_fields, 0)
+        usage_unknown: set[str] = set()
+        unknown_requests = 0
 
         for turn in range(1, self._limits.max_turns + 1):
+            abort = self._abort(task, control)
+            if abort is not None:
+                return abort
             emit_event("worker_inference_requested", {"turn": turn})
             response = self._inference.infer(
                 InferenceRequest(
@@ -82,8 +116,19 @@ class MediatedModelExecutor:
                     tools=specifications,
                 )
             )
+            abort = self._abort(task, control)
+            if abort is not None:
+                return abort
             if not self._valid_response(response, allowed, seen_calls):
                 return self._failure(task, "worker model returned an invalid tool call or response")
+            if response.usage is None:
+                unknown_requests += 1
+            for field_name in usage_fields:
+                amount = getattr(response.usage, field_name) if response.usage else None
+                if amount is None:
+                    usage_unknown.add(field_name)
+                else:
+                    usage_totals[field_name] += amount
             emit_event(
                 "worker_inference_completed",
                 {"turn": turn, "tool_call_count": len(response.tool_calls)},
@@ -95,12 +140,18 @@ class MediatedModelExecutor:
                     InferenceMessage("assistant", response.content, tool_calls=response.tool_calls)
                 )
                 for call in response.tool_calls:
+                    abort = self._abort(task, control)
+                    if abort is not None:
+                        return abort
                     # Even with a validating inference gateway, never trust a model tool request.
                     seen_calls.add(call.call_id)
                     try:
                         result = tools.invoke(WorkerToolCall(call.name, call.arguments))
                     except Exception:
                         return self._failure(task, "worker tool provider failed")
+                    abort = self._abort(task, control)
+                    if abort is not None:
+                        return abort
                     if (
                         not isinstance(result, WorkerToolResult)
                         or result.tool_name != call.name
@@ -140,10 +191,28 @@ class MediatedModelExecutor:
                     "inference_turns": turn,
                     "tool_calls": tool_calls_used,
                     "tool_errors": tool_errors,
+                    "usage": {
+                        **{
+                            key: None if key in usage_unknown else value
+                            for key, value in usage_totals.items()
+                        },
+                        "unknown_requests": unknown_requests,
+                    },
                 },
             )
 
         return self._failure(task, "worker model inference-turn limit exceeded")
+
+    @staticmethod
+    def _abort(task: WorkerTask, control: ExecutionControl | None) -> WorkerResult | None:
+        outcome = control.stop_outcome() if control is not None else None
+        if outcome is None:
+            return None
+        return WorkerResult(
+            job_id=task.job_id,
+            outcome=outcome,
+            summary="Worker execution was cancelled or exceeded its deadline.",
+        )
 
     @staticmethod
     def _valid_response(
@@ -152,6 +221,8 @@ class MediatedModelExecutor:
         if not isinstance(response, InferenceResponse) or not isinstance(response.content, str):
             return False
         if not isinstance(response.tool_calls, tuple):
+            return False
+        if response.usage is not None and not isinstance(response.usage, InferenceUsage):
             return False
         ids: set[str] = set()
         for call in response.tool_calls:
