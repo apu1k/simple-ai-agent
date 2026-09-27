@@ -170,6 +170,15 @@ class SandboxToolSession:
         return self._job_id
 
     @property
+    def sandbox_id(self) -> str:
+        return self._sandbox_id
+
+    @property
+    def session_id(self) -> str:
+        """Opaque host nonce for binding an orchestrator-only export."""
+        return self._session_id
+
+    @property
     def profile(self) -> str:
         return self._profile
 

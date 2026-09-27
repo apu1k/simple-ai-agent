@@ -15,6 +15,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from night_shifts.snapshot import (
+    MAX_CONTENT_BYTES, MAX_FILES, SnapshotFile, validate_workspace_files,
+)
+
 
 class RepositoryToolError(ValueError):
     """An unsafe, stale or oversized repository operation."""
@@ -147,7 +151,36 @@ class GuestRepository:
                 raise RepositoryToolError("repository traversal failed") from exc
 
         visit(directory)
-        return results
+        return sorted(results)
+
+    def export_workspace(self) -> tuple[SnapshotFile, ...]:
+        """Guest-only complete bounded text snapshot; never skip unknown entries.
+
+        The result belongs to the orchestrator export path, not to model tools.
+        The caller binds it to a particular job/sandbox/session on the wire.
+        """
+        paths = self._walk()
+        if len(paths) > MAX_FILES:
+            raise RepositoryToolError("final workspace file count exceeds export limit")
+        files: list[SnapshotFile] = []
+        total = 0
+        for path in paths:
+            parts = _parts(path)
+            content = self._read(parts)
+            total += len(content)
+            if total > MAX_CONTENT_BYTES:
+                raise RepositoryToolError("final workspace content exceeds export limit")
+            with self._parent(parts[:-1]) as parent:
+                if isinstance(parent, int):
+                    mode = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False).st_mode
+                else:
+                    mode = (parent / parts[-1]).lstat().st_mode
+            if not stat.S_ISREG(mode):
+                raise RepositoryToolError("final workspace contains a link or special file")
+            files.append(SnapshotFile(path, "100755" if mode & 0o111 else "100644", content))
+        result = tuple(files)
+        validate_workspace_files(result)
+        return result
 
     def list_files(self, path: str = ".") -> dict[str, object]:
         paths = self._walk(_parts(path, root=True))
