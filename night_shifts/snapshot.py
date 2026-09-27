@@ -74,8 +74,8 @@ def _object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _files_valid(files: Sequence[SnapshotFile]) -> None:
-    if not 0 < len(files) <= MAX_FILES:
+def _files_valid(files: Sequence[SnapshotFile], *, allow_empty: bool = False) -> None:
+    if not (0 <= len(files) <= MAX_FILES if allow_empty else 0 < len(files) <= MAX_FILES):
         raise SnapshotError("snapshot file count is invalid")
     seen: set[str] = set()
     total = 0
@@ -94,6 +94,22 @@ def _files_valid(files: Sequence[SnapshotFile]) -> None:
         total += len(item.content)
         if total > MAX_CONTENT_BYTES:
             raise SnapshotError("snapshot content is too large")
+
+
+def validate_workspace_files(files: Sequence[SnapshotFile]) -> None:
+    """Validate a complete final workspace, including the all-deleted case.
+
+    This checks content and path policy, not provenance; retrieval must also
+    bind the bytes to the approved sandbox and fail if enumeration is incomplete.
+    """
+    _files_valid(files, allow_empty=True)
+    if tuple(sorted(files, key=lambda item: item.path)) != tuple(files):
+        raise SnapshotError("workspace entries must be sorted")
+    paths = {item.path for item in files}
+    if any(part in paths for path in paths for part in (
+        "/".join(path.split("/")[:count]) for count in range(1, len(path.split("/")))
+    )):
+        raise SnapshotError("workspace file conflicts with a directory")
 
 
 def encode_snapshot(snapshot: Snapshot) -> bytes:
