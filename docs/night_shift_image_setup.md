@@ -1,6 +1,8 @@
 # One-time Hyper-V protocol-test image setup (not yet automated)
 
 **Current state: no reviewed bootable Linux VHDX and no unattended image builder.**
+An offline guest-asset bundle can now be generated, but it does not install an OS,
+transfer files into a VM, or remove the need to review the resulting image.
 The `hyperv_image_preflight` command added here is read-only. It checks an
 *already prepared* image's filename, eight-byte VHDX signature and pinned
 SHA-256, an initially empty test-only workspace outside this checkout, and
@@ -51,6 +53,34 @@ approved.
    Verify disk space, account privileges, no concurrent runner, serial-pipe
    permissions and network-off configuration with the [Gate A
    checklist](night_shift_hyperv_preflight.md).
+
+## Optional offline guest-asset bundle
+
+After reviewing the fixed sources, an operator may write a deterministic ZIP to
+a **new path** in an existing directory outside the checkout:
+
+```powershell
+python -m night_shifts.protocol_image_bundle `
+  --output 'C:\ProgramData\NightShift\staging\protocol-test-assets.zip'
+```
+
+The command neither downloads an OS nor invokes Hyper-V. It bundles exactly the
+repository-owned protocol bootstrap, systemd unit and Linux guest installer,
+plus a file-hash list and manifest; it prints the ZIP SHA-256 for independent
+review. The staging parent must already exist. Existing output is never
+overwritten. Compare the ZIP hash to the reviewed output before transferring
+it by an explicitly approved medium to a *separate image-preparation VM*;
+never mount host directories into the final runtime guest. Extract only the
+verified fixed-file bundle into a fresh guest directory. After reviewing its
+contents, an operator may choose to run `sudo sh install_protocol_test.sh`
+**inside that Linux guest**, not on the Windows host. The installer refuses
+non-root/non-Linux/non-Microsoft-virtual guests, checks asset hashes and
+Python syntax, creates a locked service account and root-owned files, masks
+the serial login service and enables the fixed protocol unit. It does not
+install Linux, download dependencies, remove guest credentials, shut down the
+VM, check pipe ACLs, inspect guest networking, or freeze/verify the VHDX.
+The installer is not executed in offline tests. Even with a bundle, a bootable
+Linux system and explicit transfer mechanism are still required.
 
 No unattended Hyper-V image creation is implemented in this repository.
 A future opt-in builder should pin the OS input, keep image-preparation VM and
