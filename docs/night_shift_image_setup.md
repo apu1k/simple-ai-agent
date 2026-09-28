@@ -119,6 +119,28 @@ keep a preparation VM separate from runtime VMs, prove exact-ID cleanup, and
 be tested on the *actual reviewed ISO*; none of that is yet implemented. Do
 not assume a passing ISO input check means unattended image creation works.
 
+## Candidate NoCloud configuration (offline only)
+
+`night_shifts.ubuntu_seed.render_ubuntu_seed` produces bounded in-memory
+`user-data` and `meta-data` for a generated image-preparation VM ID. It asks
+Subiquity for an offline fallback, disables installer refresh and SSH,
+uses a direct single-disk layout, refuses disk setup when more than one disk
+is visible, and requests no login accounts or passwords. Canonical's
+[autoinstall reference](https://canonical-subiquity.readthedocs-hosted.com/en/latest/reference/autoinstall-reference.html)
+permits omitting `identity` when `user-data` is provided. The first install
+may **still require a human confirmation before erasing the new VM disk**;
+this is acceptable for one-time base-image preparation, never for ordinary
+background jobs. The kernel `autoinstall` flag is not added automatically.
+
+No seed ISO is currently generated or attached, and no guest bundle is copied
+into Ubuntu. There is **no actual unattended installer yet**. Offline YAML
+parsing cannot prove Subiquity accepts this on the reviewed 24.04.5 ISO;
+verify the disk guard and installed user state in the real guest. Since
+there is no login, failure recovery should discard the exact-owned disposable
+image instead of adding a generic password or enabling networking. Do not
+power up the create-only VM with the expectation that this code has installed
+Ubuntu or the protocol service.
+
 ## Opt-in create-only preparation VM (offline-tested, not authorized to run)
 
 `night_shifts.ubuntu_image_preparation.create_image_preparation_vm` composes a
