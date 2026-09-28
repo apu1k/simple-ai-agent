@@ -82,6 +82,43 @@ VM, check pipe ACLs, inspect guest networking, or freeze/verify the VHDX.
 The installer is not executed in offline tests. Even with a bundle, a bootable
 Linux system and explicit transfer mechanism are still required.
 
+## Ubuntu Server 24.04 ISO input gate (offline)
+
+Ubuntu Server 24.04 LTS amd64 is the selected **candidate** for the protocol
+image. The operator does not have to supply a finished VM; an official installer
+ISO will be needed for an actual build. Obtain the exact point-release ISO from
+an independently reviewed Canonical source and verify the publisher's checksum
+(and its authenticity) independently. No ISO download is authorized by the
+choice of distribution. The checker deliberately requires a local ISO **and**
+a separately supplied expected digest; hashing an arbitrary file and accepting
+its own digest is not a provenance check.
+
+With a previously created and reviewed fixed guest bundle, run from the repo
+root using your actual paths and independently obtained hashes:
+
+```powershell
+python -m night_shifts.ubuntu_iso_inputs `
+  --iso 'C:\ProgramData\NightShift\sources\ubuntu-24.04.x-live-server-amd64.iso' `
+  --iso-sha256 '<independently verified ISO SHA-256>' `
+  --bundle 'C:\ProgramData\NightShift\staging\protocol-test-assets.zip' `
+  --bundle-sha256 '<reviewed bundle SHA-256>'
+```
+
+This read-only check bounds the local files, checks the ISO9660 descriptor's
+Ubuntu 24.04 amd64 label, matches both supplied digests, and requires the ZIP's
+fixed contents to match current trusted guest sources. Neither the ISO label
+nor the file's own hash attests source authenticity. It does not run an installer,
+validate a bootable ISO, produce a VHDX, or inspect a guest. Its tests use a
+synthetic ISO header and never launch a VM.
+
+Canonical's [autoinstall quick start](https://canonical-subiquity.readthedocs-hosted.com/en/latest/howto/autoinstall-quickstart.html)
+notes that presenting NoCloud data from an extra volume alone can leave an
+interactive confirmation before disk modification. A truly unattended Hyper-V
+builder must explicitly and safely arrange the boot parameter and seed medium,
+keep a preparation VM separate from runtime VMs, prove exact-ID cleanup, and
+be tested on the *actual reviewed ISO*; none of that is yet implemented. Do
+not assume a passing ISO input check means unattended image creation works.
+
 No unattended Hyper-V image creation is implemented in this repository.
 A future opt-in builder should pin the OS input, keep image-preparation VM and
 runtime VM separate, produce a reproducible manifest, perform exact-ID cleanup
