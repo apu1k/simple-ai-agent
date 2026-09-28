@@ -119,6 +119,38 @@ keep a preparation VM separate from runtime VMs, prove exact-ID cleanup, and
 be tested on the *actual reviewed ISO*; none of that is yet implemented. Do
 not assume a passing ISO input check means unattended image creation works.
 
+## Opt-in create-only preparation VM (offline-tested, not authorized to run)
+
+`night_shifts.ubuntu_image_preparation.create_image_preparation_vm` composes a
+reviewed local Ubuntu ISO and fixed guest bundle with a **fresh** dedicated
+workspace, for example `D:\NightShift\build-sandboxes`. It does not have a CLI
+or agent tool; a trusted operator must separately authorize **VM creation** and
+review ISO provenance before calling it. The directory must exist, be empty,
+link-free and outside the checkout; ISO, guest bundle and workspace must be on
+the same volume. The caller pins both independently reviewed hashes.
+
+The fixed `prepare_image_vm.ps1` script creates an ID-bound generation-2 VM,
+20-GiB dynamic disk by default and VM configuration below that fresh workspace,
+attaches the reviewed installer ISO and sets the Linux Secure Boot template.
+No switch is provided, dynamic memory and checkpoints are disabled, and the
+script **does not start the VM**. The guest bundle is only bound in a durable
+manifest, **not injected** into the VM. Its VM name uses the separate
+`night-shift-image-prep-<id>` namespace, so runtime reconciliation must never
+mistake an image-preparation VM for a job VM. If the host command fails or has
+unexpected output, the manifest retains its exact ID with status
+`provisioning_unknown`, and retry is blocked by the nonempty directory. The
+operator must inspect owned leftovers; never blindly sweep other VMs.
+
+The fake runner verifies identities, bounded choices, opt-in guards, and
+manifest persistence. It has **not** executed the PowerShell script or verified
+that host configuration, DVD attachment, VM cleanup, ISO boot or disk quotas
+work on Hyper-V. Directory ACLs, named pipes and all host-generated paths still
+require review. No preparation VM or directories on D: were created in the
+offline tests. Ubuntu installation, offline guest-bundle transfer, first-boot
+protocol service, image cleaning, final digest and real lifecycle Gate A remain
+**BLOCKED**. This create-only foundation must not be called an unattended
+image builder or a reviewed base image.
+
 No unattended Hyper-V image creation is implemented in this repository.
 A future opt-in builder should pin the OS input, keep image-preparation VM and
 runtime VM separate, produce a reproducible manifest, perform exact-ID cleanup
