@@ -2,6 +2,8 @@
 
 **State: BLOCKED (no real-host execution recorded).** This is for a dedicated, operator-approved Windows validation host and the existing fixed protocol-test guest only. The tests create and destroy VMs and differencing disks; they do not execute a coding task, transfer a repository, or validate the future tool protocol. Do not enable Hyper-V, elevate, build/download an image, reconfigure networking, or run these tests without explicit approval. See [lifecycle documentation](night_shift_hyperv.md) and [status](night_shift_status.md).
 
+A [read-only protocol-image input check and one-time image setup inventory](night_shift_image_setup.md) are available before Gate A. The input checker is not a VM/image-content audit or a substitute for this operator checklist. An unattended image builder is still missing.
+
 ## Before opting in
 
 1. Confirm an approved, dedicated Windows host has Hyper-V and management PowerShell commands, sufficient free space, and an operator account restricted to the test resources as far as host policy permits. `preflight.ps1` checks commands exist; it does **not** attest hardware configuration, permissions, pipe ACLs, or isolation. Ensure no second runner is active. Review the generated sandbox IDs and VM names from the per-test records before any manual cleanup, and approve the test-only workspace root in advance; never run unscoped `reconcile()` alongside another runner.

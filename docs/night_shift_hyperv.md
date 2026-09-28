@@ -25,6 +25,8 @@ Get-Command Get-VM, New-VM, Start-VM, Stop-VM, Remove-VM
 Get-VMSwitch
 ```
 
+For the one-time image source, guest installation and read-only input check, see [protocol-test image setup](night_shift_image_setup.md). There is currently no unattended image builder; a normal Linux ISO alone is not a prepared protocol-test VHDX. Real-host validation remains opt-in.
+
 ## Base-image requirements
 
 The Linux image must be built and reviewed separately. It must contain only the guest worker bootstrap and required tools, with:
@@ -148,7 +150,7 @@ Image checklist:
 
 ## Opt-in real-host tests
 
-Follow the [Gate A preflight, enforcement matrix and observation record](night_shift_hyperv_preflight.md) first. Normal runs skip `test_hyperv_real_host.py`. On an operator-approved dedicated host:
+Follow the [one-time image setup and read-only input check](night_shift_image_setup.md) and then the [Gate A preflight, enforcement matrix and observation record](night_shift_hyperv_preflight.md) first. Passing the input check does not authorize a VM launch. Normal runs skip `test_hyperv_real_host.py`. On an operator-approved dedicated host:
 
 ```powershell
 $env:NIGHT_SHIFT_HYPERV_INTEGRATION = '1'
