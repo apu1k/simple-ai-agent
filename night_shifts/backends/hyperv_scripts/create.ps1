@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory = $true)][string]$BaseImage,
     [Parameter(Mandatory = $true)][string]$BaseImageSha256,
     [Parameter(Mandatory = $true)][string]$DiskPath,
+    [Parameter(Mandatory = $true)][string]$VmConfigPath,
     [Parameter(Mandatory = $true)][string]$ComPortPipe,
     [Parameter(Mandatory = $true)][long]$CpuCount,
     [Parameter(Mandatory = $true)][long]$MemoryBytes,
@@ -24,6 +25,12 @@ if ($actualDigest -ne $BaseImageSha256.ToLowerInvariant()) {
 if (Test-Path -LiteralPath $DiskPath) {
     throw "The disposable disk path already exists"
 }
+# Controller supplies a fresh, ID-scoped sibling of worker.vhdx. Never
+# place VM configuration at Hyper-V's global (often C:) default location.
+$expectedConfigPath = Join-Path (Split-Path -Parent $DiskPath) 'vm-config'
+if ($VmConfigPath -ne $expectedConfigPath -or (Test-Path -LiteralPath $VmConfigPath)) {
+    throw "VM configuration path must be a fresh sandbox-scoped vm-config directory"
+}
 $parent = Get-VHD -Path $BaseImage
 if ($parent.Size -gt $DiskSizeBytes) {
     throw "The requested disk limit is smaller than the base image virtual size"
@@ -38,6 +45,7 @@ try {
         Name = $VmName
         Generation = 2
         VHDPath = $DiskPath
+        Path = $VmConfigPath
         MemoryStartupBytes = $MemoryBytes
     }
     if ($SwitchName) {

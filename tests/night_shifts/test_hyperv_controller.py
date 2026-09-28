@@ -72,6 +72,19 @@ def test_create_uses_trusted_names_fixed_scripts_and_persists_policy(tmp_path: P
         rf"\\.\pipe\night-shift-{sandbox.sandbox_id}-com1"
     )
     assert create_arguments[create_arguments.index("-SwitchName") + 1] == ""
+    disk_path = Path(create_arguments[create_arguments.index("-DiskPath") + 1])
+    config_path = Path(create_arguments[create_arguments.index("-VmConfigPath") + 1])
+    assert disk_path == controller.config.workspace_root.resolve() / sandbox.sandbox_id / "worker.vhdx"
+    assert config_path == disk_path.parent / "vm-config"
+    assert not config_path.exists()  # the fake runner does not create a real VM
+
+
+def test_creation_script_explicitly_locates_configuration_with_the_disposable_disk():
+    script = Path(__file__).resolve().parents[2] / "night_shifts" / "backends" / "hyperv_scripts" / "create.ps1"
+    source = script.read_text(encoding="utf-8")
+    assert "Path = $VmConfigPath" in source
+    assert "-or (Test-Path -LiteralPath $VmConfigPath)" in source
+    assert "$expectedConfigPath = Join-Path (Split-Path -Parent $DiskPath) 'vm-config'" in source
 
 
 def test_lifecycle_updates_durable_host_observed_state(tmp_path: Path):

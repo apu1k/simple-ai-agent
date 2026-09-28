@@ -44,7 +44,7 @@ Pin and record the image SHA-256 digest. `HyperVSandboxController` verifies it b
 
 ## Default sandbox policy
 
-`SandboxSpec` currently defaults to 2 virtual CPUs, 4096 MiB startup memory, a 20 GiB virtual disk size, and networking disabled. `create.ps1` sets CPU count, disables dynamic memory, resizes the differencing disk when applicable, and omits a switch when networking is off. Virtual disk size is **not** a verified host-storage quota; cgroup/process/lifetime and disk growth enforcement must be reviewed on a real host before treating resource limits as comprehensive.
+`SandboxSpec` currently defaults to 2 virtual CPUs, 4096 MiB startup memory, a 20 GiB virtual disk size, and networking disabled. `create.ps1` sets CPU count, disables dynamic memory, resizes the differencing disk when applicable, and omits a switch when networking is off. It explicitly passes the ID-scoped `vm-config` directory beside `worker.vhdx` to `New-VM -Path`, rather than using Hyper-V's global VM configuration default (which may be on C:). This is **offline-tested argument construction**, not a real-host storage attestation: verify VM configuration, state, checkpoint/smart-paging locations and removal on the approved host. If a configuration directory remains after `Remove-VM`, cleanup must report failure; do not delete unrelated host directories. Virtual disk size is **not** a verified host-storage quota; cgroup/process/lifetime and disk growth enforcement must be reviewed on a real host before treating resource limits as comprehensive.
 
 ## Agent plan
 

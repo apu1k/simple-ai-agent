@@ -244,6 +244,7 @@ class HyperVSandboxController:
                     "-BaseImage", str(self.config.base_image.resolve()),
                     "-BaseImageSha256", self.config.base_image_sha256.lower(),
                     "-DiskPath", str(disk_path),
+                    "-VmConfigPath", str(disk_path.parent / "vm-config"),
                     "-ComPortPipe", self._serial_pipe_path(sandbox),
                     "-CpuCount", str(spec.cpu_count),
                     "-MemoryBytes", str(spec.memory_mb * 1024 * 1024),
