@@ -165,6 +165,20 @@ manifest and requires operator inspection rather than automatic retry or a
 broad cleanup. Its fake-runner tests do **not** establish that Hyper-V actually
 attaches the DVD; no real VM operation is authorized by these tests.
 
+A separate candidate `night_shifts/guest/install_protocol_test_target.sh`
+handles **only an Ubuntu live installer's mounted `/target`**: it requires root
+in a Microsoft Linux guest, a mounted target with Python, fixed-file hashes,
+and an absent service identity. It creates a locked `night-shift` user, installs
+root-owned fixed files into the new target, and masks the serial login and
+enables the fixed service with `systemctl --root=/target` (not `--now`). It is
+**not** the existing `install_protocol_test.sh`, which expects a running,
+installed guest. Its checks are static on this Windows host; the target script
+has **not** been invoked or reviewed against Ubuntu 24.04's live installer.
+No code includes its payload in the seed ISO, invokes it through Subiquity
+`late-commands`, or checks the installed VHDX yet. A failed late-command must
+block freezing the image; manually inspect or discard the exact-owned prep VM,
+never reuse a partially installed disk as a trusted base.
+
 No seed ISO has been attached to a real VM, and no guest bundle is copied into Ubuntu.
 There is **no actual unattended installer yet**. Offline YAML
 parsing cannot prove Subiquity accepts this on the reviewed 24.04.5 ISO;
