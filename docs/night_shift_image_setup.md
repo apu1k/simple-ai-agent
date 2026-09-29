@@ -132,6 +132,18 @@ may **still require a human confirmation before erasing the new VM disk**;
 this is acceptable for one-time base-image preparation, never for ordinary
 background jobs. The kernel `autoinstall` flag is not added automatically.
 
+`night_shifts.ubuntu_seed_staging.stage_ubuntu_seed(parent, instance_id)`
+can now write these two bounded files plus a hash manifest into a **new**
+identity-named directory under an existing, link-free directory outside the
+checkout (for example, `D:\NightShift\staging`). Use the exact generated
+`night-shift-image-prep-<32 lowercase hex>` identity of an approved preparation
+VM; the staging function itself does not create one. It refuses reuse even
+if an earlier write was incomplete; inspect leftovers rather than deleting
+or retrying blindly. This is offline file staging only: it does **not** make a
+NoCloud seed ISO, attach anything to a VM, add the `autoinstall` boot flag,
+or transfer/install the protocol bundle. Review the files and recorded hashes
+before planning any installer run.
+
 No seed ISO is currently generated or attached, and no guest bundle is copied
 into Ubuntu. There is **no actual unattended installer yet**. Offline YAML
 parsing cannot prove Subiquity accepts this on the reviewed 24.04.5 ISO;
