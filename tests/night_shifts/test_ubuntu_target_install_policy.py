@@ -34,7 +34,9 @@ def test_candidate_late_install_is_guest_target_only_and_no_network() -> None:
 
 
 def test_no_bootstrap_is_invoked_from_current_seed_builder() -> None:
-    seed = (SCRIPT.parents[1] / "ubuntu_seed.py").read_text(encoding="utf-8")
+    from night_shifts.ubuntu_seed import render_ubuntu_seed
+
+    seed = render_ubuntu_seed("night-shift-image-prep-" + "e" * 32)
     iso = (SCRIPT.parents[1] / "ubuntu_seed_iso.py").read_text(encoding="utf-8")
-    assert "late-commands" not in seed
+    assert b"late-commands" not in seed.user_data
     assert "install_protocol_test_target.sh" not in iso

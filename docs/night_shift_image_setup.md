@@ -174,8 +174,22 @@ enables the fixed service with `systemctl --root=/target` (not `--now`). It is
 **not** the existing `install_protocol_test.sh`, which expects a running,
 installed guest. Its checks are static on this Windows host; the target script
 has **not** been invoked or reviewed against Ubuntu 24.04's live installer.
-No code includes its payload in the seed ISO, invokes it through Subiquity
-`late-commands`, or checks the installed VHDX yet. A failed late-command must
+`render_ubuntu_install_seed(instance_id)` now defines a **candidate** Subiquity
+`late-commands` entry that would mount the fixed `CIDATA` volume read-only,
+check `SHA256SUMS` and call this installer-target script. The existing
+`stage_ubuntu_seed` and `build_ubuntu_seed_iso` still use the **old generic
+configuration** and include only `user-data`/`meta-data`: they do not include
+or invoke this payload. The **separate offline**
+`build_ubuntu_install_seed_iso(parent, instance_id, bundle, reviewed_bundle_sha256)`
+now builds a candidate write-once `CIDATA` ISO containing the late-command
+configuration, fixed trusted guest bootstrap/service/target installer, and a
+`SHA256SUMS` for those files. It rechecks the reviewed bundle hash and contents
+against the current trusted files; tests open the ISO through both Rock Ridge
+and Joliet. Its returned SHA-256 must be independently reviewed before use.
+The attach-only path currently checks only ISO hash, size and label, **not**
+the combined payload, so do not substitute the old generic seed ISO. No
+Subiquity boot, installed VHDX inspection, or guest-service operation has
+occurred. A failed late-command must
 block freezing the image; manually inspect or discard the exact-owned prep VM,
 never reuse a partially installed disk as a trusted base.
 
