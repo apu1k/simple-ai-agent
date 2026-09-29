@@ -154,10 +154,18 @@ with the NoCloud volume label `CIDATA` and Rock Ridge/Joliet `user-data` and
 and verify the ISO contents before attaching it. Existing outputs are never
 overwritten. Building it does not execute PowerShell, create/start a VM, or
 validate Ubuntu's use of the media. Tests exercising real ISO extraction only
-run when the optional authoring dependency is installed. There is currently
-**no code attaching the ISO to the preparation VM**.
+run when the optional authoring dependency is installed. A separate opt-in `night_shifts.ubuntu_seed_attachment.attach_preparation_seed`
+path can attach a reviewed, SHA-256-pinned `CIDATA` ISO to the **exact owned
+preparation VM while it is off**. It requires a persisted `created_not_started`
+manifest, a matching generated seed filename and explicit attachment approval.
+The fixed PowerShell script checks VM ownership, generation, off-state, disk,
+installer DVD, disconnected network adapters, and both media hashes before
+adding one seed DVD. Any uncertain result leaves `seed_attach_unknown` in the
+manifest and requires operator inspection rather than automatic retry or a
+broad cleanup. Its fake-runner tests do **not** establish that Hyper-V actually
+attaches the DVD; no real VM operation is authorized by these tests.
 
-No seed ISO is currently attached, and no guest bundle is copied into Ubuntu.
+No seed ISO has been attached to a real VM, and no guest bundle is copied into Ubuntu.
 There is **no actual unattended installer yet**. Offline YAML
 parsing cannot prove Subiquity accepts this on the reviewed 24.04.5 ISO;
 verify the disk guard and installed user state in the real guest. Since
