@@ -144,8 +144,21 @@ NoCloud seed ISO, attach anything to a VM, add the `autoinstall` boot flag,
 or transfer/install the protocol bundle. Review the files and recorded hashes
 before planning any installer run.
 
-No seed ISO is currently generated or attached, and no guest bundle is copied
-into Ubuntu. There is **no actual unattended installer yet**. Offline YAML
+An **offline-only candidate ISO builder** is now available:
+`night_shifts.ubuntu_seed_iso.build_ubuntu_seed_iso(staged_directory)`.
+It requires the pinned development dependency `pycdlib==1.21.0` (not installed
+by this code). It rechecks the exact generated `user-data`, `meta-data` and
+manifest, rejects extra files, and writes a fresh sibling `<instance-id>.iso`
+with the NoCloud volume label `CIDATA` and Rock Ridge/Joliet `user-data` and
+`meta-data` filenames. It returns its SHA-256; independently review that hash
+and verify the ISO contents before attaching it. Existing outputs are never
+overwritten. Building it does not execute PowerShell, create/start a VM, or
+validate Ubuntu's use of the media. Tests exercising real ISO extraction only
+run when the optional authoring dependency is installed. There is currently
+**no code attaching the ISO to the preparation VM**.
+
+No seed ISO is currently attached, and no guest bundle is copied into Ubuntu.
+There is **no actual unattended installer yet**. Offline YAML
 parsing cannot prove Subiquity accepts this on the reviewed 24.04.5 ISO;
 verify the disk guard and installed user state in the real guest. Since
 there is no login, failure recovery should discard the exact-owned disposable
