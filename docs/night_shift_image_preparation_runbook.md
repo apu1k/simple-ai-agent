@@ -34,6 +34,49 @@ path, one recorded writable disk, exactly the installer and combined seed DVDs,
 no switch attachment, off-state and resources. Compare media digests again.
 An uncertain create/attach status needs inspection, never automatic retry.
 
+### Start-once launch packet and function (offline-tested only)
+
+Use the [approval-packet template](night_shift_preparation_launch_approval.md)
+for actual operator observations and a separately approved attended time window.
+After create/attach, `build_preparation_launch_plan(record, observed_vm_id)` reads
+only local files and returns an immutable packet. Its `to_review_dict()` contains
+paths, pinned media digests, manifest/script hashes, resources and expected host
+policy. It does not query Hyper-V, authenticate the publisher, inspect ACLs, or
+write a packet file. The VM GUID must come from independent trusted host
+inspection; it is never derived from the generated preparation name. A packet
+fingerprint binds review fields but is not a signature or permission grant.
+
+`launch_image_preparation_vm` has no CLI/agent tool and requires separate launch,
+ISO-provenance and host-state review consent. It rechecks the entire packet under
+an exclusive launch/retirement guard, then creates a permanent `launch.claim`
+and persists the pinned VM GUID/plan fingerprint with `launch_unknown` before
+the host command. Changed inputs or a stale packet require new approval.
+
+The fixed script looks up the pinned GUID, verifies exact name/notes/configuration,
+off-state, generation, the single dynamic parentless unattached VHDX and its
+virtual size, CPU/fixed memory, disabled/absent checkpoints, automatic power
+policy, disconnected adapters, two exact DVDs, Linux Secure Boot/installer-first
+boot order and both media digests. It does not repair host settings. After its
+single start action it observes that same GUID running with its owned disk and
+no switch attachment. Unknown host-property representations must stop for manual
+inspection, not trigger a weakened guard or automatic configuration repair.
+
+A matching receipt yields `installer_vm_started_not_reviewed`: this observes
+only a VM start, not ISO boot, installer acceptance, target review or a good
+image. Timeout, crash, mismatched receipt or persistence error leaves claim/
+unknown evidence; never auto-retry or automatically discard. The command timeout
+bounds the PowerShell call, NOT the running VM lifetime or complete installation.
+An operator must attend the graphical console. No supervisor, install-success
+poller, media removal, automatic installed-guest first boot or freeze is included.
+
+Launch and retirement share `vm-operation.lock`. Normal returns/handled errors
+release only the exact guard created by that wrapper; permanent claims survive.
+A process crash, changed guard or failed release leaves it for manual inspection.
+Never infer a stale lock from elapsed time. Confirm no active operation and
+independently inspect the exact VM/workspace before separately authorizing
+resolution. This coordinates these wrappers, not arbitrary Hyper-V actors;
+create/attach and all other operators/runners still require exclusive host use.
+
 ## 2. Candidate installer entry (one-time manual confirmation)
 
 After separate launch approval, use the VM's graphical Hyper-V console and the
@@ -125,16 +168,20 @@ implemented by this procedure. Those need separately reviewed exact-VM actions.
 `night_shifts.ubuntu_preparation_retirement.retire_image_preparation_vm` is an
 opt-in trusted Python function, not a CLI/agent tool. It requires both explicit
 retirement authorization and acknowledgment that the attempt is being
-**discarded**. `provisioning_unknown`/`seed_attach_unknown` additionally require
-operator inspection (`unknown_state_reviewed=True`) and an updated record
-matching the persisted status. Missing VM/disk/configuration, ownership
+**discarded**. `provisioning_unknown`/`seed_attach_unknown`/`launch_unknown`
+additionally require operator inspection (`unknown_state_reviewed=True`) and an
+updated record matching the persisted status. A started or launch-unknown
+attempt requires the original GUID/plan-bound `launch.claim`; retirement passes
+that GUID to the host script and refuses a same-name replacement. An orphaned
+claim or incomplete launch persistence must be manually reconciled first. Missing VM/disk/configuration, ownership
 mismatches or incomplete manifests require manual investigation, not a sweep.
 
 Before calling the fixed script, it creates a permanent exclusive
 `retirement.claim` and persists `retirement_unknown`. The script validates the
-exact preparation name/notes/configuration/single-disk binding, pins the actual
-Hyper-V GUID, force-powers off if needed, rechecks ownership/off-state by that
-GUID, and unregisters only that VM. It requires a successful inventory query
+exact preparation name/notes/configuration/single-disk binding, uses the recorded
+launch GUID where available (or pins the observed GUID for an older never-launched
+attempt), force-powers off if needed, rechecks ownership/off-state by that GUID,
+and unregisters only that VM. The receipt must match the recorded launch GUID. It requires a successful inventory query
 showing absence of both its GUID and name and verifies disk retention. It does
 not require intact installer/bundle media just to discard a failed attempt.
 
@@ -143,8 +190,9 @@ operation to freeze a good image.** `retired_vm_disk_retained` means only that
 the script reported VM absence and the wrapper still observed its disk; it is
 not full filesystem cleanup or image acceptance. The manifest records the
 retired VM GUID. The retirement path does not delete the VHDX, seed/installer
-media, workspace or Python evidence. Hyper-V may remove its own VM configuration metadata during
-unregistration; do not promise those files survive.
+media, workspace or Python evidence. Only its transient operation guard is
+removed on a normal return/handled exception. Hyper-V may remove its own VM
+configuration metadata during unregistration; do not promise those files survive.
 
 Timeout, crash, malformed receipt, incomplete manifest persistence or uncertain
 retention leaves the claim/unknown evidence and blocks automatic retry. Inspect

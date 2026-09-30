@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory = $true)][string]$VmName,
     [Parameter(Mandatory = $true)][string]$OwnerMarker,
     [Parameter(Mandatory = $true)][string]$DiskPath,
-    [Parameter(Mandatory = $true)][string]$VmConfigPath
+    [Parameter(Mandatory = $true)][string]$VmConfigPath,
+    [string]$ExpectedVmId = ''
 )
 $ErrorActionPreference = 'Stop'
 # DISCARD ONLY: force-off can corrupt the untrusted build disk. Keep that disk
@@ -10,6 +11,11 @@ $ErrorActionPreference = 'Stop'
 if ($VmName -notmatch '^night-shift-image-prep-[0-9a-f]{32}$' -or
     $OwnerMarker -ne ('night-shift-image-prep-owner:' + $VmName.Substring(23))) {
     throw 'Untrusted image-preparation VM identity'
+}
+if ($ExpectedVmId -and
+    ($ExpectedVmId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
+     [guid]$ExpectedVmId -eq [guid]::Empty)) {
+    throw 'Malformed pinned preparation VM GUID'
 }
 $workspace = Split-Path -Parent $DiskPath
 if ((Split-Path -Leaf $workspace) -ne $VmName.Substring(23) -or
@@ -23,6 +29,9 @@ function Assert-PreparationOwner($Candidate) {
         $Candidate.Path -ne $VmConfigPath) {
         throw 'VM identity, ownership, generation or configuration differs; inspect manually'
     }
+    if ($ExpectedVmId -and $Candidate.Id -ne [guid]$ExpectedVmId) {
+        throw 'Refusing a same-name replacement with a different preparation VM GUID'
+    }
     $disks = @(Get-VMHardDiskDrive -VM $Candidate -ErrorAction Stop)
     if ($disks.Count -ne 1 -or $disks[0].Path -ne $DiskPath) {
         throw 'VM does not have exactly its recorded preparation disk'
@@ -33,7 +42,11 @@ if (-not (Test-Path -LiteralPath $DiskPath -PathType Leaf)) {
 }
 # Missing VMs and incomplete creation need manual inspection, not an automatic
 # success or name-prefix sweep. Pin the host GUID before any destructive action.
-$vm = Get-VM -Name $VmName -ErrorAction Stop
+$vm = if ($ExpectedVmId) {
+    Get-VM -Id ([guid]$ExpectedVmId) -ErrorAction Stop
+} else {
+    Get-VM -Name $VmName -ErrorAction Stop
+}
 Assert-PreparationOwner $vm
 $vmId = $vm.Id
 if ($vm.State -ne 'Off') {

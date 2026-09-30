@@ -268,6 +268,100 @@ def test_manifest_storage_failure_keeps_claim_and_blocks_retry(
     assert len(runner.calls) == fail_on - 1
 
 
+def _launched_record(record: UbuntuPreparationRecord, status: str) -> UbuntuPreparationRecord:
+    manifest = record.workspace / "manifest.json"
+    snapshot = json.loads(manifest.read_bytes())
+    snapshot.update({"status": status, "vm_id": _GUID, "launch_plan_sha256": "1" * 64})
+    manifest.write_text(json.dumps(snapshot), encoding="utf-8")
+    (record.workspace / "launch.claim").write_text(json.dumps({
+        "version": 1, "vm_name": record.vm_name, "vm_id": _GUID, "plan_sha256": "1" * 64,
+    }), encoding="utf-8")
+    return replace(record, status=status)
+
+
+@pytest.mark.parametrize("status", ["launch_unknown", "installer_vm_started_not_reviewed"])
+def test_launched_retirement_forwards_original_guid_and_checks_review(
+    prepared: UbuntuPreparationRecord, status: str,
+) -> None:
+    record = _launched_record(prepared, status)
+    runner = RetireRunner(record.workspace)
+    if status == "launch_unknown":
+        with pytest.raises(PreparationError, match="separate operator inspection"):
+            _call(record, runner)
+        assert not runner.calls
+    result = _call(record, runner, unknown_state_reviewed=True)
+    assert result.status == "retired_vm_disk_retained"
+    args = runner.calls[0][1]
+    assert args[args.index("-ExpectedVmId") + 1] == _GUID
+    assert (record.workspace / "launch.claim").is_file()
+    assert not (record.workspace / "vm-operation.lock").exists()
+
+
+@pytest.mark.parametrize("problem", ["missing-claim", "changed-claim", "missing-guid", "missing-digest", "malformed-claim", "orphan-claim"])
+def test_launched_binding_must_match_before_discard_claim_or_host_call(
+    prepared: UbuntuPreparationRecord, problem: str,
+) -> None:
+    record = _launched_record(prepared, "installer_vm_started_not_reviewed")
+    claim = record.workspace / "launch.claim"
+    manifest = record.workspace / "manifest.json"
+    if problem == "missing-claim":
+        claim.unlink()
+    elif problem == "changed-claim":
+        data = json.loads(claim.read_bytes())
+        data["vm_id"] = "87654321-4321-4321-4321-cba987654321"
+        claim.write_text(json.dumps(data), encoding="utf-8")
+    elif problem == "malformed-claim":
+        claim.write_bytes(b"not json")
+    else:
+        data = json.loads(manifest.read_bytes())
+        if problem == "missing-guid":
+            del data["vm_id"]
+        elif problem == "missing-digest":
+            del data["launch_plan_sha256"]
+        else:
+            data["status"] = "created_seed_attached_not_started"
+            record = replace(record, status=data["status"])
+        manifest.write_text(json.dumps(data), encoding="utf-8")
+    previous = manifest.read_bytes()
+    runner = RetireRunner(record.workspace)
+    with pytest.raises(PreparationError):
+        _call(record, runner, unknown_state_reviewed=True)
+    assert not runner.calls
+    assert manifest.read_bytes() == previous
+    assert not (record.workspace / "retirement.claim").exists()
+
+
+def test_wrong_retired_guid_keeps_unknown_state(prepared: UbuntuPreparationRecord) -> None:
+    record = _launched_record(prepared, "installer_vm_started_not_reviewed")
+    path = record.workspace / "manifest.json"
+    snapshot = json.loads(path.read_bytes())
+    other = "87654321-4321-4321-4321-cba987654321"
+    snapshot["vm_id"] = other
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    claim = record.workspace / "launch.claim"
+    binding = json.loads(claim.read_bytes())
+    binding["vm_id"] = other
+    claim.write_text(json.dumps(binding), encoding="utf-8")
+    runner = RetireRunner(record.workspace)  # reports original _GUID, not the pinned one
+    with pytest.raises(PreparationError, match="retirement status unknown"):
+        _call(record, runner)
+    assert json.loads(path.read_bytes())["status"] == "retirement_unknown"
+    assert (record.workspace / "retirement.claim").is_file()
+
+
+def test_retirement_respects_busy_launch_guard(prepared: UbuntuPreparationRecord) -> None:
+    guard = prepared.workspace / "vm-operation.lock"
+    guard.write_bytes(b"existing launch or interrupted operation")
+    before = (prepared.workspace / "manifest.json").read_bytes()
+    runner = RetireRunner(prepared.workspace)
+    with pytest.raises(PreparationError, match="busy or interrupted"):
+        _call(prepared, runner)
+    assert not runner.calls
+    assert (prepared.workspace / "manifest.json").read_bytes() == before
+    assert guard.read_bytes() == b"existing launch or interrupted operation"
+    assert not (prepared.workspace / "retirement.claim").exists()
+
+
 def test_retirement_script_pins_guid_rechecks_ownership_and_never_deletes_disk() -> None:
     script = (Path(__file__).resolve().parents[2] / "night_shifts" / "backends" / "hyperv_scripts" / "retire_image_vm.ps1").read_text(encoding="utf-8")
     assert "Start-VM" not in script
@@ -283,5 +377,7 @@ def test_retirement_script_pins_guid_rechecks_ownership_and_never_deletes_disk()
     assert "$_ .Id" not in script
     assert "$_.Id -eq $vmId -or $_.Name -eq $VmName" in script
     assert "if ($vm.State -ne 'Off') { throw" in script
+    assert "Get-VM -Id ([guid]$ExpectedVmId)" in script
+    assert "$Candidate.Id -ne [guid]$ExpectedVmId" in script
     assert "vm_absent = $true" in script
     assert "disk_retained = $true" in script

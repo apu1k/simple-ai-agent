@@ -31,6 +31,18 @@ one exact-owned preparation VM and retains its untrusted disk/evidence. A
 permanent claim and unknown status block retry after uncertainty. Retirement
 is for discarding a failed attempt, **not freezing an image or freeing storage**;
 its PowerShell script and Python wrapper are tested only with a fake runner.
+The [launch approval-packet template](night_shift_preparation_launch_approval.md)
+and read-only `build_preparation_launch_plan` bind the media, manifest, launch
+script and resources to an independently observed VM GUID. The separate opt-in
+`launch_image_preparation_vm` rechecks that packet and exact host settings,
+creates a permanent claim, records `launch_unknown` before one start command,
+and accepts only a matching running/network-off receipt. Successful launch is
+`installer_vm_started_not_reviewed`, never an installed or accepted image.
+Retirement recognizes these launch states, requires their original GUID/plan
+claim, and refuses a same-name replacement. Launch and retirement share an
+exclusive transient operation guard; crashes/changed guards need manual review,
+not stale-lock guessing. These are offline-tested candidates, not observed
+Hyper-V behavior or a hard installation/VM-lifetime supervisor.
 First-boot serial configuration, image hygiene and final preservation/review
 remain separate prerequisites. No real VM operation is authorized here.
 

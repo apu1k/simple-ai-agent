@@ -11,7 +11,6 @@ import math
 import os
 import re
 import stat
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -22,14 +21,16 @@ from night_shifts.ubuntu_image_preparation import (
     UbuntuPreparationRecord,
     _store_manifest,
 )
+from night_shifts.ubuntu_preparation_safety import checked_vm_guid, preparation_operation
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
-_GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+_LAUNCHED = frozenset({"launch_unknown", "installer_vm_started_not_reviewed"})
 _ELIGIBLE = frozenset({
     "created_not_started", "created_seed_attached_not_started",
-    "provisioning_unknown", "seed_attach_unknown",
+    "provisioning_unknown", "seed_attach_unknown", *_LAUNCHED,
 })
-_UNKNOWN = frozenset({"provisioning_unknown", "seed_attach_unknown"})
+_UNKNOWN = frozenset({"provisioning_unknown", "seed_attach_unknown", "launch_unknown"})
 
 
 def _retirement_inputs(record: UbuntuPreparationRecord) -> tuple[Path, dict[str, Any]]:
@@ -71,7 +72,36 @@ def _retirement_inputs(record: UbuntuPreparationRecord) -> tuple[Path, dict[str,
     config = _checked_path(workspace / "vm-config", "preparation VM configuration")
     if not stat.S_ISREG(disk.stat().st_mode) or not config.is_dir():
         raise PreparationError("recorded preparation disk or configuration is missing or irregular")
+    _launch_binding(record, workspace, snapshot)
     return workspace, snapshot
+
+
+def _launch_binding(record: UbuntuPreparationRecord, workspace: Path, snapshot: dict[str, Any]) -> str | None:
+    """Never discard a same-name replacement after a GUID-pinned launch."""
+    claim_path = workspace / "launch.claim"
+    if record.status not in _LAUNCHED:
+        if claim_path.exists() or claim_path.is_symlink():
+            raise PreparationError("launch claim without matching launch state; inspect before retirement")
+        return checked_vm_guid(snapshot["vm_id"]) if "vm_id" in snapshot else None
+    vm_id = checked_vm_guid(snapshot.get("vm_id"))
+    digest = snapshot.get("launch_plan_sha256")
+    if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
+        raise PreparationError("missing or invalid launched-plan digest; inspect before retirement")
+    claim = _checked_path(claim_path, "preparation launch claim")
+    if not stat.S_ISREG(claim.stat().st_mode) or claim.stat().st_size > 512:
+        raise PreparationError("launch claim is not a bounded regular file")
+    with claim.open("rb") as stream:
+        data = stream.read(513)
+    if len(data) > 512:
+        raise PreparationError("launch claim exceeds fixed bounds")
+    try:
+        binding = json.loads(data)
+    except (ValueError, UnicodeError) as exc:
+        raise PreparationError("invalid launch claim; inspect before retirement") from exc
+    expected = {"version": 1, "vm_name": record.vm_name, "vm_id": vm_id, "plan_sha256": digest}
+    if not isinstance(binding, dict) or type(binding.get("version")) is not int or binding != expected:
+        raise PreparationError("launch claim binding differs; inspect before retirement")
+    return vm_id
 
 
 def retire_image_preparation_vm(
@@ -86,70 +116,79 @@ def retire_image_preparation_vm(
 ) -> UbuntuPreparationRecord:
     """Force off/unregister ONE owned VM; keep disk, manifest and evidence.
 
-    This may interrupt installation and corrupt the retained disk. It is only
-    for discarding a preparation attempt, NEVER for producing a reviewed image.
-    A permanent exclusive claim and unknown status precede the host call.
-    Any failure blocks retry and requires inspection of the exact recorded ID.
-    No CLI, agent tool, broad VM sweep or filesystem deletion is provided.
+    This can corrupt the retained disk: only discard, NEVER image finalization.
+    Launch/retirement wrappers share an exclusive transient operation guard;
+    permanent claims and unknown statuses block retries after uncertainty.
+    Launched attempts require their original GUID/plan-bound launch claim.
     """
     if not operator_authorized or not discard_image_reviewed:
         raise PreparationError("explicit retirement authorization and discard-image review required")
     if not math.isfinite(command_timeout_seconds) or not 1 <= command_timeout_seconds <= 300:
         raise PreparationError("command timeout must be finite and from 1 to 300 seconds")
     try:
-        workspace, snapshot = _retirement_inputs(record)
+        workspace, _ = _retirement_inputs(record)
     except (OSError, ValueError) as exc:
         raise PreparationError(f"retirement inputs rejected: {exc}") from exc
     if record.status in _UNKNOWN and not unknown_state_reviewed:
         raise PreparationError("unknown preparation state needs separate operator inspection before retirement")
-    claim = workspace / "retirement.claim"
-    try:
-        with claim.open("xb") as stream:
-            stream.write((record.vm_name + "\n").encode("ascii"))
-            stream.flush()
-            os.fsync(stream.fileno())
-    except FileExistsError as exc:
-        raise PreparationError("retirement already claimed; inspect the exact recorded ID, never retry") from exc
-    except OSError as exc:
-        raise PreparationError("retirement claim uncertain; inspect the exact recorded ID") from exc
-    snapshot["retirement_previous_status"] = record.status
-    snapshot["retirement_mode"] = "discard_vm_retain_disk"
-    snapshot["status"] = "retirement_unknown"
-    manifest = workspace / "manifest.json"
-    script = Path(__file__).resolve().parent / "backends" / "hyperv_scripts" / "retire_image_vm.ps1"
-    try:
-        _store_manifest(manifest, snapshot, first=False)
-        selected_runner = runner or SubprocessPowerShellRunner(
-            powershell_executable, timeout_seconds=command_timeout_seconds,
-        )
-        output = selected_runner.run(script, (
-            "-VmName", record.vm_name,
-            "-OwnerMarker", "night-shift-image-prep-owner:" + record.sandbox_id,
-            "-DiskPath", str(workspace / "ubuntu-build.vhdx"),
-            "-VmConfigPath", str(workspace / "vm-config"),
-        ))
-        if len(output) > 2048:
-            raise PreparationError("oversized retirement receipt")
-        receipt = json.loads(output)
-        if not isinstance(receipt, dict) or set(receipt) != {"vm_name", "vm_id", "vm_absent", "disk_retained"}:
-            raise PreparationError("invalid retirement receipt")
-        vm_id = receipt.get("vm_id")
-        if any((
-            receipt.get("vm_name") != record.vm_name,
-            receipt.get("vm_absent") is not True,
-            receipt.get("disk_retained") is not True,
-        )):
-            raise PreparationError("retirement receipt identity or observations differ")
-        if not isinstance(vm_id, str) or not _GUID.fullmatch(vm_id) or uuid.UUID(vm_id).int == 0:
-            raise PreparationError("invalid retired Hyper-V VM GUID")
-        disk = _checked_path(workspace / "ubuntu-build.vhdx", "retained preparation disk")
-        if not stat.S_ISREG(disk.stat().st_mode):
-            raise PreparationError("preparation disk retention not observed")
-        snapshot["retired_vm_id"] = vm_id
-        snapshot["status"] = "retired_vm_disk_retained"
-        _store_manifest(manifest, snapshot, first=False)
-    except Exception as exc:
-        raise PreparationError(
-            f"VM retirement status unknown; inspect exact ID {record.sandbox_id}; retained disk is NOT a reviewed image"
-        ) from exc
+    with preparation_operation(workspace, "retire"):
+        # Re-read after acquiring the guard; a concurrently completed launch or
+        # retirement must not be overwritten using a stale manifest snapshot.
+        try:
+            _, snapshot = _retirement_inputs(record)
+            expected_vm_id = _launch_binding(record, workspace, snapshot)
+        except (OSError, ValueError) as exc:
+            raise PreparationError(f"retirement inputs rejected: {exc}") from exc
+        claim = workspace / "retirement.claim"
+        try:
+            with claim.open("xb") as stream:
+                stream.write((record.vm_name + "\n").encode("ascii"))
+                stream.flush()
+                os.fsync(stream.fileno())
+        except FileExistsError as exc:
+            raise PreparationError("retirement already claimed; inspect the exact recorded ID, never retry") from exc
+        except OSError as exc:
+            raise PreparationError("retirement claim uncertain; inspect the exact recorded ID") from exc
+        snapshot["retirement_previous_status"] = record.status
+        snapshot["retirement_mode"] = "discard_vm_retain_disk"
+        snapshot["status"] = "retirement_unknown"
+        manifest = workspace / "manifest.json"
+        script = Path(__file__).resolve().parent / "backends" / "hyperv_scripts" / "retire_image_vm.ps1"
+        try:
+            _store_manifest(manifest, snapshot, first=False)
+            selected_runner = runner or SubprocessPowerShellRunner(
+                powershell_executable, timeout_seconds=command_timeout_seconds,
+            )
+            args: tuple[str, ...] = (
+                "-VmName", record.vm_name,
+                "-OwnerMarker", "night-shift-image-prep-owner:" + record.sandbox_id,
+                "-DiskPath", str(workspace / "ubuntu-build.vhdx"),
+                "-VmConfigPath", str(workspace / "vm-config"),
+            )
+            if expected_vm_id is not None:
+                args += ("-ExpectedVmId", expected_vm_id)
+            output = selected_runner.run(script, args)
+            if len(output) > 2048:
+                raise PreparationError("oversized retirement receipt")
+            receipt = json.loads(output)
+            if not isinstance(receipt, dict) or set(receipt) != {"vm_name", "vm_id", "vm_absent", "disk_retained"}:
+                raise PreparationError("invalid retirement receipt")
+            vm_id = checked_vm_guid(receipt.get("vm_id"))
+            if any((
+                receipt.get("vm_name") != record.vm_name,
+                receipt.get("vm_absent") is not True,
+                receipt.get("disk_retained") is not True,
+                expected_vm_id is not None and vm_id != expected_vm_id,
+            )):
+                raise PreparationError("retirement receipt identity or observations differ")
+            disk = _checked_path(workspace / "ubuntu-build.vhdx", "retained preparation disk")
+            if not stat.S_ISREG(disk.stat().st_mode):
+                raise PreparationError("preparation disk retention not observed")
+            snapshot["retired_vm_id"] = vm_id
+            snapshot["status"] = "retired_vm_disk_retained"
+            _store_manifest(manifest, snapshot, first=False)
+        except Exception as exc:
+            raise PreparationError(
+                f"VM retirement status unknown; inspect exact ID {record.sandbox_id}; retained disk is NOT a reviewed image"
+            ) from exc
     return UbuntuPreparationRecord(record.sandbox_id, record.vm_name, workspace, "retired_vm_disk_retained")
