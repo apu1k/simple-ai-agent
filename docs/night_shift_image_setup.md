@@ -155,7 +155,8 @@ and verify the ISO contents before attaching it. Existing outputs are never
 overwritten. Building it does not execute PowerShell, create/start a VM, or
 validate Ubuntu's use of the media. Tests exercising real ISO extraction only
 run when the optional authoring dependency is installed. A separate opt-in `night_shifts.ubuntu_seed_attachment.attach_preparation_seed`
-path can attach a reviewed, SHA-256-pinned `CIDATA` ISO to the **exact owned
+path can attach only the reviewed, SHA-256-pinned **combined install** `CIDATA`
+ISO described below (not this older generic ISO) to the **exact owned
 preparation VM while it is off**. It requires a persisted `created_not_started`
 manifest, a matching generated seed filename and explicit attachment approval.
 The fixed PowerShell script checks VM ownership, generation, off-state, disk,
@@ -186,10 +187,22 @@ configuration, fixed trusted guest bootstrap/service/target installer, and a
 `SHA256SUMS` for those files. It rechecks the reviewed bundle hash and contents
 against the current trusted files; tests open the ISO through both Rock Ridge
 and Joliet. Its returned SHA-256 must be independently reviewed before use.
-The attach-only path currently checks only ISO hash, size and label, **not**
-the combined payload, so do not substitute the old generic seed ISO. No
-Subiquity boot, installed VHDX inspection, or guest-service operation has
-occurred. A failed late-command must
+The read-only `inspect_ubuntu_install_seed_iso` checks the pinned ISO hash and
+bounded byte snapshot, exact ID-bound late-command configuration, and fixed
+payload against the preparation manifest's reviewed guest bundle and current
+trusted sources. It requires exactly the six expected regular files, with
+matching bytes in the ISO9660, Rock Ridge and Joliet namespaces; extra files,
+directories, symlinks, missing extensions and bootable/UDF media are refused.
+The attach-only path now requires this check **before changing the manifest or
+calling PowerShell**, records `seed_kind: ubuntu-protocol-install-v1`, and
+rejects the older generic seed even if its SHA-256 and `CIDATA` label match.
+The pinned `pycdlib` development dependency is therefore needed for attachment
+inspection as well as ISO authoring; missing inspection support fails closed.
+The existing PowerShell script independently rechecks the reviewed ISO hash
+immediately before its attach-only operation. These checks assume reviewed,
+operator-controlled input directories; they do not replace host ACL review or
+establish guest safety. No Subiquity boot, installed VHDX inspection, or
+guest-service operation has occurred. A failed late-command must
 block freezing the image; manually inspect or discard the exact-owned prep VM,
 never reuse a partially installed disk as a trusted base.
 

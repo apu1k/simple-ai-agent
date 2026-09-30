@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
 from collections.abc import Sequence
@@ -16,6 +17,7 @@ from night_shifts.ubuntu_image_preparation import (
     UbuntuPreparationRecord,
     create_image_preparation_vm,
 )
+from night_shifts.ubuntu_install_seed_iso import build_ubuntu_install_seed_iso
 from night_shifts.ubuntu_seed_attachment import attach_preparation_seed
 from night_shifts.ubuntu_seed_iso import build_ubuntu_seed_iso
 from night_shifts.ubuntu_seed_staging import stage_ubuntu_seed
@@ -36,6 +38,7 @@ class FakeRunner:
 
 @pytest.fixture
 def prepared(tmp_path: Path) -> tuple[UbuntuPreparationRecord, Path, str]:
+    pytest.importorskip("pycdlib")
     iso = tmp_path / "ubuntu-24.04.5-live-server-amd64.iso"
     fixture = bytearray(17 * 2048)
     fixture[16 * 2048:16 * 2048 + 7] = b"\x01CD001\x01"
@@ -51,8 +54,7 @@ def prepared(tmp_path: Path) -> tuple[UbuntuPreparationRecord, Path, str]:
     )
     staging = tmp_path / "staging"
     staging.mkdir()
-    staged = stage_ubuntu_seed(staging, record.vm_name)
-    media = build_ubuntu_seed_iso(staged.directory)
+    media = build_ubuntu_install_seed_iso(staging, record.vm_name, bundle, bundle_hash)
     return record, media.path, media.sha256
 
 
@@ -79,6 +81,7 @@ def test_exact_owned_off_vm_is_only_attachment_target(
     manifest = json.loads((record.workspace / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == result.status
     assert manifest["seed_iso_sha256"] == sha256
+    assert manifest["seed_kind"] == "ubuntu-protocol-install-v1"
     assert manifest["network_enabled"] is False
     script = (Path(__file__).resolve().parents[2] / "night_shifts" / "backends" / "hyperv_scripts" / runner.calls[0][0]).read_text(encoding="utf-8")
     assert "Start-VM" not in script
@@ -127,6 +130,86 @@ def test_modified_iso_or_manifest_rejected_before_host_call(
             record, media, sha256, operator_authorized=True, seed_iso_reviewed=True, runner=runner
         )
     assert not runner.calls
+
+
+def test_old_generic_seed_is_rejected_without_host_call_or_manifest_change(
+    prepared: tuple[UbuntuPreparationRecord, Path, str], tmp_path: Path,
+) -> None:
+    record, _, _ = prepared
+    generic_dir = tmp_path / "generic-seed"
+    generic_dir.mkdir()
+    staged = stage_ubuntu_seed(generic_dir, record.vm_name)
+    generic = build_ubuntu_seed_iso(staged.directory)
+    manifest = record.workspace / "manifest.json"
+    previous = manifest.read_bytes()
+    runner = FakeRunner()
+    with pytest.raises(PreparationError, match="combined install seed rejected"):
+        attach_preparation_seed(
+            record, generic.path, generic.sha256, operator_authorized=True,
+            seed_iso_reviewed=True, runner=runner,
+        )
+    assert not runner.calls
+    assert manifest.read_bytes() == previous
+
+
+@pytest.mark.parametrize("changed", ["payload", "instance", "bundle", "missing-bundle-binding", "oversized"])
+def test_invalid_combined_seed_is_rejected_before_manifest_update(
+    prepared: tuple[UbuntuPreparationRecord, Path, str], changed: str,
+) -> None:
+    record, media, digest = prepared
+    manifest_path = record.workspace / "manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    if changed == "missing-bundle-binding":
+        del manifest["bundle"]
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    elif changed == "bundle":
+        bundle = Path(manifest["bundle"])
+        bundle.write_bytes(bundle.read_bytes() + b"altered")
+    elif changed == "oversized":
+        media.write_bytes(media.read_bytes() + b"x" * (2 * 1024 * 1024))
+        digest = hashlib.sha256(media.read_bytes()).hexdigest()
+    else:
+        data = media.read_bytes()
+        if changed == "payload":
+            trusted = (Path(__file__).resolve().parents[2] / "night_shifts" / "guest" / "protocol_test_bootstrap.py").read_bytes()
+            assert trusted in data
+            data = data.replace(trusted, b"!" + trusted[1:])
+        else:
+            assert record.vm_name.encode("ascii") in data
+            other_id = "a" * 32 if record.sandbox_id != "a" * 32 else "b" * 32
+            data = data.replace(record.vm_name.encode("ascii"), ("night-shift-image-prep-" + other_id).encode("ascii"))
+        media.write_bytes(data)
+        digest = hashlib.sha256(data).hexdigest()  # re-pinning does not authorize different contents
+    previous = manifest_path.read_bytes()
+    runner = FakeRunner()
+    with pytest.raises(PreparationError):
+        attach_preparation_seed(
+            record, media, digest, operator_authorized=True, seed_iso_reviewed=True, runner=runner,
+        )
+    assert not runner.calls
+    assert manifest_path.read_bytes() == previous
+
+
+def test_missing_inspection_dependency_blocks_attachment_without_mutation(
+    prepared: tuple[UbuntuPreparationRecord, Path, str], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record, media, digest = prepared
+    previous = (record.workspace / "manifest.json").read_bytes()
+    original_import = builtins.__import__
+
+    def without_pycdlib(name, *args, **kwargs):
+        if name == "pycdlib" or name.startswith("pycdlib."):
+            raise ImportError("test-only missing optional dependency")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_pycdlib)
+    runner = FakeRunner()
+    with pytest.raises(PreparationError, match="pycdlib is required to inspect"):
+        attach_preparation_seed(
+            record, media, digest, operator_authorized=True, seed_iso_reviewed=True, runner=runner,
+        )
+    assert not runner.calls
+    assert (record.workspace / "manifest.json").read_bytes() == previous
 
 
 @pytest.mark.parametrize("fail,mismatched", [(True, False), (False, True)])

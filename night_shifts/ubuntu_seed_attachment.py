@@ -6,7 +6,6 @@ operator authorization; offline tests inject a fake PowerShell runner.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import re
@@ -20,6 +19,8 @@ from night_shifts.ubuntu_image_preparation import (
     UbuntuPreparationRecord,
     _store_manifest,
 )
+from night_shifts.ubuntu_install_seed_iso import inspect_ubuntu_install_seed_iso
+from night_shifts.ubuntu_seed_iso import SeedIsoError
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
 _DIGEST = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -36,7 +37,7 @@ def attach_preparation_seed(
     powershell_executable: str = "powershell.exe",
     command_timeout_seconds: float = 180.0,
 ) -> UbuntuPreparationRecord:
-    """Attach pinned CIDATA ISO to an exact-owned preparation VM, never start.
+    """Attach exact combined install seed to an owned preparation VM, never start.
 
     A durable 'unknown' marker precedes the host call. Any unexpected output,
     timeout or crash requires manual inspection of this exact recorded VM;
@@ -79,6 +80,7 @@ def attach_preparation_seed(
         snapshot.get("status") != "created_not_started",
         not isinstance(snapshot.get("iso"), str),
         not isinstance(snapshot.get("iso_sha256"), str),
+        not isinstance(snapshot.get("bundle"), str),
         not isinstance(snapshot.get("bundle_sha256"), str),
     )):
         raise PreparationError("preparation ownership manifest differs from record")
@@ -90,21 +92,16 @@ def attach_preparation_seed(
         raise PreparationError("seed ISO must be the recorded image-preparation ID's .iso")
     if media.drive.lower() != workspace.drive.lower() or workspace == media.parent or workspace in media.parents:
         raise PreparationError("seed ISO must be outside workspace on the preparation volume")
-    if media.stat().st_size > 1024 * 1024 or media.stat().st_size < 17 * 2048:
-        raise PreparationError("NoCloud seed ISO size is outside the fixed bounds")
-    digest = hashlib.sha256()
-    with media.open("rb") as stream:
-        stream.seek(16 * 2048)
-        descriptor = stream.read(72)
-        if descriptor[:7] != b"\x01CD001\x01" or descriptor[40:72].rstrip(b" ") != b"CIDATA":
-            raise PreparationError("NoCloud seed ISO lacks the CIDATA descriptor")
-        stream.seek(0)
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    if media.stat().st_size > 1024 * 1024 or digest.hexdigest() != expected_sha256.lower():
-        raise PreparationError("NoCloud seed ISO differs from reviewed SHA-256")
+    try:
+        inspect_ubuntu_install_seed_iso(
+            media, record.vm_name, expected_sha256,
+            Path(snapshot["bundle"]), snapshot["bundle_sha256"],
+        )
+    except (SeedIsoError, OSError, ValueError) as exc:
+        raise PreparationError(f"combined install seed rejected: {exc}") from exc
     snapshot["seed_iso"] = str(media)
     snapshot["seed_iso_sha256"] = expected_sha256.lower()
+    snapshot["seed_kind"] = "ubuntu-protocol-install-v1"
     snapshot["status"] = "seed_attach_unknown"
     _store_manifest(manifest, snapshot, first=False)
     script = Path(__file__).resolve().parent / "backends" / "hyperv_scripts" / "attach_image_seed.ps1"

@@ -94,6 +94,103 @@ def _fixed_payload(bundle: Path, expected_sha256: str) -> dict[str, bytes]:
     return contents
 
 
+def _install_seed_files(instance_id: str, payload: dict[str, bytes]) -> dict[str, tuple[bytes, str]]:
+    """One fixed file layout shared by authoring and read-only verification."""
+    seed = render_ubuntu_install_seed(instance_id)
+    return {
+        "user-data": (seed.user_data, "/USERDATA.;1"),
+        "meta-data": (seed.meta_data, "/METADATA.;1"),
+        "protocol_test_bootstrap.py": (payload["protocol_test_bootstrap.py"], "/BOOTSTRP.PY;1"),
+        "night-shift-protocol-test.service": (payload["night-shift-protocol-test.service"], "/PROTUNIT.SRV;1"),
+        _TARGET_SCRIPT: (payload[_TARGET_SCRIPT], "/TARGETSH.SH;1"),
+        "SHA256SUMS": (payload["SHA256SUMS"], "/SHASUMS.;1"),
+    }
+
+
+def inspect_ubuntu_install_seed_iso(
+    seed_iso: Path,
+    instance_id: str,
+    expected_sha256: str,
+    bundle: Path,
+    expected_bundle_sha256: str,
+) -> ProtocolInstallSeedReport:
+    """Read-only check of exact combined seed contents, never mount or run them.
+
+    Hash the bounded byte snapshot that is parsed, and require the exact files
+    in ISO9660, Rock Ridge and Joliet. The bundle must still match its reviewed
+    digest and current trusted sources. This is NOT Subiquity/guest validation.
+    """
+    render_ubuntu_install_seed(instance_id)  # reject invalid identities first
+    if not _DIGEST.fullmatch(expected_sha256):
+        raise SeedIsoError("a separately reviewed seed ISO SHA-256 is required")
+    media = _checked_path(seed_iso, "combined install seed ISO")
+    checkout = Path(__file__).resolve().parents[1]
+    if not media.is_file() or media.name != instance_id + ".iso" or checkout in media.parents:
+        raise SeedIsoError("combined seed must be an external identity-named regular .iso")
+    size = media.stat().st_size
+    if not 17 * 2048 <= size <= _MAX_MEDIA:
+        raise SeedIsoError("combined seed ISO size is outside fixed bounds")
+    with media.open("rb") as stream:
+        data = stream.read(_MAX_MEDIA + 1)
+    if len(data) != size or media.stat().st_size != size:
+        raise SeedIsoError("combined seed ISO changed size during inspection")
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != expected_sha256.lower():
+        raise SeedIsoError("combined seed ISO differs from reviewed SHA-256")
+    descriptor = data[16 * 2048:16 * 2048 + 72]
+    if descriptor[:7] != b"\x01CD001\x01" or descriptor[40:72].rstrip(b" ") != b"CIDATA":
+        raise SeedIsoError("combined seed ISO lacks the CIDATA descriptor")
+    files = _install_seed_files(instance_id, _fixed_payload(bundle, expected_bundle_sha256))
+    try:
+        import pycdlib  # type: ignore[import-not-found]  # pinned development dependency
+        from pycdlib.pycdlibexception import PyCdlibException  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise SeedIsoError("pycdlib is required to inspect combined seed ISO contents") from exc
+    iso = pycdlib.PyCdlib()
+    opened = False
+    try:
+        iso.open_fp(io.BytesIO(data))
+        opened = True
+        if not iso.has_rock_ridge() or not iso.has_joliet() or iso.has_udf() or iso.eltorito_boot_catalog is not None:
+            raise SeedIsoError("combined seed must be data-only Rock Ridge/Joliet media")
+        for namespace in ("iso_path", "rr_path", "joliet_path"):
+            expected = {
+                iso_name[1:] if namespace == "iso_path" else name: contents
+                for name, (contents, iso_name) in files.items()
+            }
+            seen: set[str] = set()
+            for entry in iso.list_children(**{namespace: "/"}):
+                if entry.is_dot() or entry.is_dotdot():
+                    continue
+                if entry.is_symlink() or not entry.is_file() or entry.is_associated_file():
+                    raise SeedIsoError("combined seed contains a non-regular entry")
+                if namespace == "rr_path":
+                    if entry.rock_ridge is None:
+                        raise SeedIsoError("combined seed entry lacks a Rock Ridge name")
+                    name = entry.rock_ridge.name().decode("utf-8")
+                else:
+                    name = entry.file_identifier().decode("utf-16-be" if namespace == "joliet_path" else "ascii")
+                if name not in expected or name in seen:
+                    raise SeedIsoError("combined seed contains extra or duplicate entries")
+                seen.add(name)
+                if entry.get_data_length() != len(expected[name]):
+                    raise SeedIsoError("combined seed file length differs from trusted contents")
+                extracted = io.BytesIO()
+                iso.get_file_from_iso_fp(extracted, **{namespace: "/" + name})
+                if extracted.getvalue() != expected[name]:
+                    raise SeedIsoError("combined seed file differs from trusted contents")
+            if seen != set(expected):
+                raise SeedIsoError("combined seed is missing required install files")
+    except (PyCdlibException, UnicodeError, ValueError, OSError) as exc:
+        if isinstance(exc, SeedIsoError):
+            raise
+        raise SeedIsoError("invalid combined install seed ISO") from exc
+    finally:
+        if opened:
+            iso.close()
+    return ProtocolInstallSeedReport(media, digest, size, expected_bundle_sha256.lower())
+
+
 def build_ubuntu_install_seed_iso(
     parent: Path, instance_id: str, bundle: Path, expected_bundle_sha256: str
 ) -> ProtocolInstallSeedReport:
@@ -103,7 +200,7 @@ def build_ubuntu_install_seed_iso(
     their payload. Only its matching ID-named .iso can later be considered for
     attachment; this function itself never invokes Hyper-V or PowerShell.
     """
-    seed = render_ubuntu_install_seed(instance_id)
+    render_ubuntu_install_seed(instance_id)  # validate identity before any output
     root = _checked_path(parent, "seed media output directory")
     checkout = Path(__file__).resolve().parents[1]
     if not root.is_dir() or root == Path(root.anchor) or root == checkout or checkout in root.parents:
@@ -114,15 +211,7 @@ def build_ubuntu_install_seed_iso(
     output = root / (instance_id + ".iso")
     if output.exists() or output.is_symlink():
         raise SeedIsoError("seed ISO already exists; never overwrite")
-    payload = _fixed_payload(source, expected_bundle_sha256)
-    files = {
-        "user-data": (seed.user_data, "/USERDATA.;1"),
-        "meta-data": (seed.meta_data, "/METADATA.;1"),
-        "protocol_test_bootstrap.py": (payload["protocol_test_bootstrap.py"], "/BOOTSTRP.PY;1"),
-        "night-shift-protocol-test.service": (payload["night-shift-protocol-test.service"], "/PROTUNIT.SRV;1"),
-        _TARGET_SCRIPT: (payload[_TARGET_SCRIPT], "/TARGETSH.SH;1"),
-        "SHA256SUMS": (payload["SHA256SUMS"], "/SHASUMS.;1"),
-    }
+    files = _install_seed_files(instance_id, _fixed_payload(source, expected_bundle_sha256))
     try:
         import pycdlib  # type: ignore[import-not-found]  # pinned development dependency
     except ImportError as exc:
