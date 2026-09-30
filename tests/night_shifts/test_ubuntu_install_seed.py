@@ -18,11 +18,13 @@ def test_candidate_command_mounts_only_fixed_local_payload() -> None:
     settings = yaml.safe_load(candidate.user_data)["autoinstall"]
     generic_settings = yaml.safe_load(generic.user_data)["autoinstall"]
     assert "late-commands" not in generic_settings
-    assert {key: value for key, value in settings.items() if key != "late-commands"} == generic_settings
+    assert "shutdown" not in generic_settings
+    assert {key: value for key, value in settings.items() if key not in {"late-commands", "shutdown"}} == generic_settings
+    assert settings["shutdown"] == "poweroff"
     assert candidate.meta_data == generic.meta_data
     assert candidate.user_data_sha256 == hashlib.sha256(candidate.user_data).hexdigest()
     assert len(candidate.user_data) <= 8192
-    assert len(settings["late-commands"]) == 1
+    assert len(settings["late-commands"]) == 2
     argv = settings["late-commands"][0]
     assert argv[:2] == ["sh", "-c"]
     command = argv[2]
@@ -35,6 +37,32 @@ def test_candidate_command_mounts_only_fixed_local_payload() -> None:
     assert not any(token in command for token in ("http://", "https://", "curl ", "wget ", "apt ", "ssh "))
     assert "password" not in candidate.user_data.decode("utf-8").lower()
     assert "identity" not in settings
+
+
+def test_combined_candidate_has_finite_manual_review_checkpoint_then_poweroff() -> None:
+    candidate = render_ubuntu_install_seed(_ID)
+    settings = yaml.safe_load(candidate.user_data)["autoinstall"]
+    install, review = settings["late-commands"]
+    assert "install_protocol_test_target.sh" in install[2]
+    assert review[:2] == ["sh", "-c"]
+    command = review[2]
+    assert "ack=/run/night-shift-image-review-approved" in command
+    assert '[ -e "$ack" ] || [ -L "$ack" ]' in command
+    assert "remaining=1800" in command
+    assert 'while [ "$remaining" -gt 0 ]' in command
+    assert "sleep 1; remaining=$((remaining - 1))" in command
+    assert '[ -f "$ack" ] && [ ! -L "$ack" ]' in command
+    assert 'stat -c %u -- "$ack"' in command
+    assert 'stat -c %a -- "$ack"' in command
+    assert '= 600 ]; then exit 0' in command
+    assert command.endswith("exit 1")  # no acknowledgment must fail, not continue to first boot
+    assert settings["shutdown"] == "poweroff"
+    assert settings["user-data"]["users"] == []
+    assert "identity" not in settings
+    assert not any(token in command for token in (
+        "http://", "https://", "curl ", "wget ", "ssh ", "useradd ", "passwd ", "> /target", "rm ",
+    ))
+    assert candidate.user_data == render_ubuntu_install_seed(_ID).user_data
 
 
 @pytest.mark.parametrize("bad", ["", "night-shift-image-prep-" + "X" * 32])

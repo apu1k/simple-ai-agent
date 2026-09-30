@@ -1,0 +1,287 @@
+"""Fake-runner retirement evidence only; never stop/remove a real VM."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Sequence
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+import night_shifts.ubuntu_preparation_retirement as retirement
+from night_shifts.protocol_image_bundle import build_protocol_image_bundle
+from night_shifts.ubuntu_image_preparation import (
+    PreparationError,
+    UbuntuPreparationConfig,
+    UbuntuPreparationRecord,
+    create_image_preparation_vm,
+)
+
+_GUID = "12345678-1234-1234-1234-123456789abc"
+
+
+class CreateRunner:
+    def run(self, script: Path, args: Sequence[str]) -> str:
+        assert script.name == "prepare_image_vm.ps1"
+        return args[args.index("-VmName") + 1]
+
+
+class RetireRunner:
+    def __init__(self, workspace: Path, *, fail: bool = False, change: str = ""):
+        self.workspace = workspace
+        self.fail = fail
+        self.change = change
+        self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+    def run(self, script: Path, args: Sequence[str]) -> str:
+        self.calls.append((script.name, tuple(args)))
+        snapshot = json.loads((self.workspace / "manifest.json").read_bytes())
+        assert snapshot["status"] == "retirement_unknown"
+        assert snapshot["retirement_mode"] == "discard_vm_retain_disk"
+        assert (self.workspace / "retirement.claim").is_file()
+        if self.fail:
+            raise OSError("host may have stopped or unregistered the VM before disconnect")
+        receipt: dict[str, object] = {
+            "vm_name": args[args.index("-VmName") + 1], "vm_id": _GUID,
+            "vm_absent": True, "disk_retained": True,
+        }
+        if self.change == "malformed":
+            return "not json"
+        if self.change == "oversized":
+            return "x" * 2049
+        if self.change == "identity":
+            receipt["vm_name"] = "another-vm"
+        elif self.change == "guid":
+            receipt["vm_id"] = "not-a-guid"
+        elif self.change == "null-guid":
+            receipt["vm_id"] = None
+        elif self.change == "numeric-guid":
+            receipt["vm_id"] = 123
+        elif self.change == "zero-guid":
+            receipt["vm_id"] = "00000000-0000-0000-0000-000000000000"
+        elif self.change == "absence":
+            receipt["vm_absent"] = False
+        elif self.change == "retention":
+            receipt["disk_retained"] = False
+        elif self.change == "non-boolean":
+            receipt["vm_absent"] = 1
+        elif self.change == "extra":
+            receipt["unexpected"] = True
+        elif self.change == "missing":
+            del receipt["disk_retained"]
+        elif self.change == "disk-disappeared":
+            (self.workspace / "ubuntu-build.vhdx").unlink()  # TEST-owned fake file only
+        return json.dumps(receipt)
+
+
+@pytest.fixture
+def prepared(tmp_path: Path) -> UbuntuPreparationRecord:
+    iso = tmp_path / "ubuntu-24.04.5-live-server-amd64.iso"
+    data = bytearray(17 * 2048)
+    data[16 * 2048:16 * 2048 + 7] = b"\x01CD001\x01"
+    data[16 * 2048 + 40:16 * 2048 + 72] = b"Ubuntu-Server 24.04.5 LTS amd64".ljust(32)
+    iso.write_bytes(data)  # Synthetic descriptor, not bootable Ubuntu media.
+    bundle = tmp_path / "guest.zip"
+    bundle_hash = build_protocol_image_bundle(bundle).sha256
+    root = tmp_path / "build-sandboxes"
+    root.mkdir()
+    record = create_image_preparation_vm(
+        UbuntuPreparationConfig(iso, hashlib.sha256(data).hexdigest(), bundle, bundle_hash, root),
+        operator_authorized=True, iso_provenance_reviewed=True, runner=CreateRunner(),
+    )
+    (record.workspace / "ubuntu-build.vhdx").write_bytes(b"TEST-owned fake disk, NOT a VHDX")
+    (record.workspace / "vm-config").mkdir()
+    (record.workspace / "vm-config" / "test-evidence.txt").write_bytes(b"configuration evidence")
+    (record.workspace / "installer-evidence.txt").write_bytes(b"keep build evidence")
+    return record
+
+
+def _call(record: UbuntuPreparationRecord, runner: RetireRunner, **kwargs) -> UbuntuPreparationRecord:
+    return retirement.retire_image_preparation_vm(
+        record, operator_authorized=True, discard_image_reviewed=True, runner=runner, **kwargs,
+    )
+
+
+def test_exact_owned_retirement_records_guid_and_retains_disk_and_evidence(prepared: UbuntuPreparationRecord) -> None:
+    workspace = prepared.workspace
+    keep = {
+        path: path.read_bytes() for path in workspace.rglob("*")
+        if path.is_file() and path.name != "manifest.json"
+    }
+    runner = RetireRunner(workspace)
+    result = _call(prepared, runner)
+    assert result.status == "retired_vm_disk_retained"
+    assert result.sandbox_id == prepared.sandbox_id
+    assert len(runner.calls) == 1
+    script, args = runner.calls[0]
+    assert script == "retire_image_vm.ps1"
+    assert args == (
+        "-VmName", prepared.vm_name,
+        "-OwnerMarker", "night-shift-image-prep-owner:" + prepared.sandbox_id,
+        "-DiskPath", str(workspace / "ubuntu-build.vhdx"),
+        "-VmConfigPath", str(workspace / "vm-config"),
+    )
+    snapshot = json.loads((workspace / "manifest.json").read_bytes())
+    assert snapshot["status"] == result.status
+    assert snapshot["retired_vm_id"] == _GUID
+    assert snapshot["retirement_previous_status"] == prepared.status
+    assert snapshot["retirement_mode"] == "discard_vm_retain_disk"
+    assert (workspace / "retirement.claim").read_text(encoding="ascii") == prepared.vm_name + "\n"
+    for path, data in keep.items():
+        assert path.read_bytes() == data  # fake runner only; real Remove-VM may remove VM metadata
+    with pytest.raises(PreparationError, match="inspect"):
+        _call(result, runner)
+    assert len(runner.calls) == 1
+
+
+@pytest.mark.parametrize("authorized,reviewed", [(False, True), (True, False), (False, False)])
+def test_retirement_requires_separate_discard_consent(
+    prepared: UbuntuPreparationRecord, authorized: bool, reviewed: bool,
+) -> None:
+    before = (prepared.workspace / "manifest.json").read_bytes()
+    runner = RetireRunner(prepared.workspace)
+    with pytest.raises(PreparationError, match="authorization"):
+        retirement.retire_image_preparation_vm(
+            prepared, operator_authorized=authorized, discard_image_reviewed=reviewed, runner=runner,
+        )
+    assert not runner.calls
+    assert (prepared.workspace / "manifest.json").read_bytes() == before
+    assert not (prepared.workspace / "retirement.claim").exists()
+
+
+@pytest.mark.parametrize("timeout", [0.0, 301.0, float("nan"), float("inf")])
+def test_invalid_timeout_has_no_mutation(prepared: UbuntuPreparationRecord, timeout: float) -> None:
+    before = (prepared.workspace / "manifest.json").read_bytes()
+    runner = RetireRunner(prepared.workspace)
+    with pytest.raises(PreparationError, match="timeout"):
+        _call(prepared, runner, command_timeout_seconds=timeout)
+    assert not runner.calls
+    assert (prepared.workspace / "manifest.json").read_bytes() == before
+    assert not (prepared.workspace / "retirement.claim").exists()
+
+
+@pytest.mark.parametrize("field", [
+    "sandbox_id", "vm_name", "owner_marker", "disk", "vm_config", "network_enabled", "status", "version",
+])
+def test_manifest_ownership_mismatch_rejected_without_claim(prepared: UbuntuPreparationRecord, field: str) -> None:
+    path = prepared.workspace / "manifest.json"
+    snapshot = json.loads(path.read_bytes())
+    snapshot[field] = True if field == "network_enabled" else "wrong"
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    before = path.read_bytes()
+    runner = RetireRunner(prepared.workspace)
+    with pytest.raises(PreparationError, match="manifest differs"):
+        _call(prepared, runner)
+    assert not runner.calls
+    assert path.read_bytes() == before
+    assert not (prepared.workspace / "retirement.claim").exists()
+
+
+@pytest.mark.parametrize("problem", ["pending", "claim", "missing-disk", "missing-config", "bad-json", "oversized-manifest"])
+def test_incomplete_or_missing_inputs_block_host_call(prepared: UbuntuPreparationRecord, problem: str) -> None:
+    workspace = prepared.workspace
+    if problem == "pending":
+        (workspace / "manifest.pending").write_bytes(b"incomplete")
+    elif problem == "claim":
+        (workspace / "retirement.claim").write_bytes(b"earlier attempt")
+    elif problem == "missing-disk":
+        (workspace / "ubuntu-build.vhdx").unlink()
+    elif problem == "missing-config":
+        (workspace / "vm-config" / "test-evidence.txt").unlink()
+        (workspace / "vm-config").rmdir()
+    elif problem == "bad-json":
+        (workspace / "manifest.json").write_bytes(b"not json")
+    else:
+        (workspace / "manifest.json").write_bytes(b"x" * 8193)
+    before = (workspace / "manifest.json").read_bytes()
+    runner = RetireRunner(workspace)
+    with pytest.raises(PreparationError):
+        _call(prepared, runner)
+    assert not runner.calls
+    assert (workspace / "manifest.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("status", ["provisioning_unknown", "seed_attach_unknown", "created_seed_attached_not_started"])
+def test_unknown_attempt_requires_extra_review_but_eligible_known_state_does_not(
+    prepared: UbuntuPreparationRecord, status: str,
+) -> None:
+    path = prepared.workspace / "manifest.json"
+    snapshot = json.loads(path.read_bytes())
+    snapshot["status"] = status
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    record = replace(prepared, status=status)
+    runner = RetireRunner(prepared.workspace)
+    if status.endswith("unknown"):
+        before = path.read_bytes()
+        with pytest.raises(PreparationError, match="separate operator inspection"):
+            _call(record, runner)
+        assert not runner.calls
+        assert path.read_bytes() == before
+        assert not (prepared.workspace / "retirement.claim").exists()
+    result = _call(record, runner, unknown_state_reviewed=True)
+    assert result.status == "retired_vm_disk_retained"
+
+
+@pytest.mark.parametrize("change", [
+    "raise", "malformed", "oversized", "identity", "guid", "null-guid", "numeric-guid", "zero-guid", "absence", "retention",
+    "non-boolean", "extra", "missing", "disk-disappeared",
+])
+def test_uncertain_host_receipt_retains_unknown_marker_and_blocks_retry(
+    prepared: UbuntuPreparationRecord, change: str,
+) -> None:
+    runner = RetireRunner(prepared.workspace, fail=change == "raise", change=change)
+    with pytest.raises(PreparationError, match=f"status unknown; inspect exact ID {prepared.sandbox_id}"):
+        _call(prepared, runner)
+    snapshot = json.loads((prepared.workspace / "manifest.json").read_bytes())
+    assert snapshot["status"] == "retirement_unknown"
+    assert snapshot["sandbox_id"] == prepared.sandbox_id
+    assert (prepared.workspace / "retirement.claim").is_file()
+    with pytest.raises(PreparationError, match="inspect"):
+        _call(prepared, runner)
+    assert len(runner.calls) == 1
+
+
+@pytest.mark.parametrize("fail_on", [1, 2])
+def test_manifest_storage_failure_keeps_claim_and_blocks_retry(
+    prepared: UbuntuPreparationRecord, monkeypatch: pytest.MonkeyPatch, fail_on: int,
+) -> None:
+    original = retirement._store_manifest
+    count = 0
+
+    def failing_store(path, data, *, first):
+        nonlocal count
+        count += 1
+        if count == fail_on:
+            raise OSError("test-only manifest storage failure")
+        return original(path, data, first=first)
+
+    monkeypatch.setattr(retirement, "_store_manifest", failing_store)
+    runner = RetireRunner(prepared.workspace)
+    with pytest.raises(PreparationError, match="status unknown"):
+        _call(prepared, runner)
+    assert (prepared.workspace / "retirement.claim").is_file()
+    assert len(runner.calls) == fail_on - 1
+    with pytest.raises(PreparationError, match="inspect"):
+        _call(prepared, runner)
+    assert len(runner.calls) == fail_on - 1
+
+
+def test_retirement_script_pins_guid_rechecks_ownership_and_never_deletes_disk() -> None:
+    script = (Path(__file__).resolve().parents[2] / "night_shifts" / "backends" / "hyperv_scripts" / "retire_image_vm.ps1").read_text(encoding="utf-8")
+    assert "Start-VM" not in script
+    assert "Remove-Item" not in script
+    assert "New-VHD" not in script
+    assert "SilentlyContinue" not in script
+    assert "$Candidate.Notes -ne $OwnerMarker" in script
+    assert "$Candidate.Path -ne $VmConfigPath" in script
+    assert "$disks.Count -ne 1 -or $disks[0].Path -ne $DiskPath" in script
+    assert script.count("Assert-PreparationOwner $vm") == 2
+    assert script.index("$vmId = $vm.Id") < script.index("Stop-VM -VM $vm")
+    assert script.index("Get-VM -Id $vmId") < script.index("Remove-VM -VM $vm")
+    assert "$_ .Id" not in script
+    assert "$_.Id -eq $vmId -or $_.Name -eq $VmName" in script
+    assert "if ($vm.State -ne 'Off') { throw" in script
+    assert "vm_absent = $true" in script
+    assert "disk_retained = $true" in script

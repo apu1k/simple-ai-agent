@@ -18,6 +18,22 @@ or run the real-host suite; image, workspace, VM privileges and pipe ACLs have
 not been validated. No particular image source, location or SHA-256 has been
 approved.
 
+## Candidate operator runbook and discard safeguard
+
+See the [candidate preparation runbook](night_shift_image_preparation_runbook.md)
+for the exact input/host review checkpoints, deliberate one-time installer
+confirmation, live-installer target inspection and separate discard consent.
+It is **not launch authorization**, and the actual ISO behavior is unvalidated.
+The combined seed now requests a finite manual late-command review wait and
+`shutdown: poweroff`; it does not automatically boot the installed guest.
+The optional `retire_image_preparation_vm` path only force-stops/unregisters
+one exact-owned preparation VM and retains its untrusted disk/evidence. A
+permanent claim and unknown status block retry after uncertainty. Retirement
+is for discarding a failed attempt, **not freezing an image or freeing storage**;
+its PowerShell script and Python wrapper are tested only with a fake runner.
+First-boot serial configuration, image hygiene and final preservation/review
+remain separate prerequisites. No real VM operation is authorized here.
+
 ## What a one-time image build needs
 
 1. Operator-selected and independently verified Linux installer/source, OS
@@ -175,9 +191,15 @@ enables the fixed service with `systemctl --root=/target` (not `--now`). It is
 **not** the existing `install_protocol_test.sh`, which expects a running,
 installed guest. Its checks are static on this Windows host; the target script
 has **not** been invoked or reviewed against Ubuntu 24.04's live installer.
-`render_ubuntu_install_seed(instance_id)` now defines a **candidate** Subiquity
-`late-commands` entry that would mount the fixed `CIDATA` volume read-only,
-check `SHA256SUMS` and call this installer-target script. The existing
+`render_ubuntu_install_seed(instance_id)` now defines **candidate** Subiquity
+`late-commands` that would mount the fixed `CIDATA` volume read-only,
+check `SHA256SUMS`, call this installer-target script, then pause for manual
+inspection of `/target` from the live installer shell. A fresh root-owned
+mode-0600 `/run/night-shift-image-review-approved` marker releases the wait;
+a stale marker or exhaustion of 1800 polling attempts fails installation.
+This is roughly a 30-minute cooperative review window, not a host-enforced
+deadline or image certification. The seed requests `shutdown: poweroff` after
+review; actual acceptance/off-state must be observed. The existing
 `stage_ubuntu_seed` and `build_ubuntu_seed_iso` still use the **old generic
 configuration** and include only `user-data`/`meta-data`: they do not include
 or invoke this payload. The **separate offline**

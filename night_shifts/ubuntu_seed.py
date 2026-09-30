@@ -29,6 +29,24 @@ _TARGET_INSTALL_COMMAND = (
     "umount /run/night-shift-protocol-seed"
 )
 
+# One-time operator inspection in the live installer, not a target login.
+# The marker ONLY releases installation; it does not certify the image or
+# authorize first boot/Gate A. A stale marker or exhausted wait fails closed.
+_TARGET_REVIEW_COMMAND = (
+    "set -eu; "
+    "ack=/run/night-shift-image-review-approved; "
+    "if [ -e \"$ack\" ] || [ -L \"$ack\" ]; then "
+    "echo 'Unexpected existing image-review marker' >&2; exit 1; fi; "
+    "echo 'Night-shift target review required in live installer; 1800 polling attempts'; "
+    "remaining=1800; "
+    "while [ \"$remaining\" -gt 0 ]; do "
+    "if [ -f \"$ack\" ] && [ ! -L \"$ack\" ] && "
+    "[ \"$(stat -c %u -- \"$ack\")\" -eq 0 ] && "
+    "[ \"$(stat -c %a -- \"$ack\")\" = 600 ]; then exit 0; fi; "
+    "sleep 1; remaining=$((remaining - 1)); done; "
+    "echo 'Image-review checkpoint expired; do not freeze this image' >&2; exit 1"
+)
+
 
 @dataclass(frozen=True)
 class NoCloudSeed:
@@ -74,7 +92,13 @@ def render_ubuntu_seed(instance_id: str, *, install_protocol_test: bool = False)
         },
     }
     if install_protocol_test:
-        settings["late-commands"] = [["sh", "-c", _TARGET_INSTALL_COMMAND]]
+        settings["late-commands"] = [
+            ["sh", "-c", _TARGET_INSTALL_COMMAND],
+            ["sh", "-c", _TARGET_REVIEW_COMMAND],
+        ]
+        # Prevent an automatic return to the still-attached installer or an
+        # unreviewed first boot. Subiquity acceptance must be observed for real.
+        settings["shutdown"] = "poweroff"
     user_data = ("#cloud-config\n" + yaml.safe_dump({"autoinstall": settings}, sort_keys=False)).encode("utf-8")
     meta_data = yaml.safe_dump(
         {"instance-id": instance_id, "local-hostname": _HOSTNAME},
@@ -91,10 +115,11 @@ def render_ubuntu_seed(instance_id: str, *, install_protocol_test: bool = False)
 
 
 def render_ubuntu_install_seed(instance_id: str) -> NoCloudSeed:
-    """Candidate late-command seed, for the combined install-ISO builder only.
+    """Candidate install/review/power-off seed, for the combined builder only.
 
     The older staging and ISO builder use render_ubuntu_seed without guest
-    payload. Packaging this variant with fixed assets is not proof Subiquity
-    accepts it; never launch a VM merely because the YAML renders.
+    payload. This candidate pauses for manual live-installer target review and
+    requests power-off, not automatic first boot. Packaging it with fixed assets
+    is not proof Subiquity accepts it; never launch merely because YAML renders.
     """
     return render_ubuntu_seed(instance_id, install_protocol_test=True)
