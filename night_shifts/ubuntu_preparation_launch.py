@@ -19,7 +19,7 @@ from typing import Any
 
 from night_shifts.backends.hyperv import PowerShellCommandRunner, SubprocessPowerShellRunner
 from night_shifts.hyperv_image_preflight import _checked_path
-from night_shifts.ubuntu_image_preparation import PreparationError, UbuntuPreparationRecord, _store_manifest
+from night_shifts.ubuntu_image_preparation import PreparationError, UbuntuPreparationRecord, _store_manifest, preparation_config_paths
 from night_shifts.ubuntu_install_seed_iso import inspect_ubuntu_install_seed_iso
 from night_shifts.ubuntu_iso_inputs import inspect_ubuntu_inputs
 from night_shifts.ubuntu_preparation_safety import checked_vm_guid, preparation_operation
@@ -121,16 +121,20 @@ def _launch_inputs(
         snapshot = json.loads(raw)
     except (ValueError, UnicodeError) as exc:
         raise PreparationError("invalid preparation manifest") from exc
+    config_root, config_path = preparation_config_paths(root, record.vm_name)
     if not isinstance(snapshot, dict) or any((
         type(snapshot.get("version")) is not int, snapshot.get("version") != 1,
         snapshot.get("sandbox_id") != record.sandbox_id, snapshot.get("vm_name") != record.vm_name,
         snapshot.get("owner_marker") != "night-shift-image-prep-owner:" + record.sandbox_id,
         snapshot.get("disk") != str(root / "ubuntu-build.vhdx"),
-        snapshot.get("vm_config") != str(root / "vm-config"),
+        snapshot.get("vm_config_root") != str(config_root),
+        snapshot.get("vm_config") != str(config_path),
         snapshot.get("status") != _READY, snapshot.get("network_enabled") is not False,
         snapshot.get("seed_kind") != "ubuntu-protocol-install-v1",
     )):
         raise PreparationError("preparation ownership or combined-seed manifest differs")
+    if "vm_id" in snapshot and checked_vm_guid(snapshot["vm_id"]) != vm_id:
+        raise PreparationError("observed VM GUID differs from the recorded preparation binding")
     for field in ("iso", "bundle", "seed_iso", "iso_sha256", "bundle_sha256", "seed_iso_sha256"):
         value = snapshot.get(field)
         if not isinstance(value, str) or not value or (field.endswith("sha256") and not _DIGEST.fullmatch(value)):
@@ -143,7 +147,7 @@ def _launch_inputs(
     bundle = _checked_path(Path(snapshot["bundle"]), "fixed guest bundle")
     seed = _checked_path(Path(snapshot["seed_iso"]), "combined install seed ISO")
     disk = _checked_path(root / "ubuntu-build.vhdx", "preparation disk")
-    config = _checked_path(root / "vm-config", "preparation VM configuration")
+    config = _checked_path(config_path, "exact preparation VM configuration")
     if not stat.S_ISREG(disk.stat().st_mode) or not config.is_dir():
         raise PreparationError("recorded disk or VM configuration is missing or irregular")
     for path in (root, installer, bundle, seed):

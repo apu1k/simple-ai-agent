@@ -92,8 +92,9 @@ def prepared(tmp_path: Path) -> UbuntuPreparationRecord:
         operator_authorized=True, iso_provenance_reviewed=True, runner=CreateRunner(),
     )
     (record.workspace / "ubuntu-build.vhdx").write_bytes(b"TEST-owned fake disk, NOT a VHDX")
-    (record.workspace / "vm-config").mkdir()
-    (record.workspace / "vm-config" / "test-evidence.txt").write_bytes(b"configuration evidence")
+    configuration = record.workspace / "vm-config" / record.vm_name
+    configuration.mkdir(parents=True)
+    (configuration / "test-evidence.txt").write_bytes(b"configuration evidence")
     (record.workspace / "installer-evidence.txt").write_bytes(b"keep build evidence")
     return record
 
@@ -121,7 +122,7 @@ def test_exact_owned_retirement_records_guid_and_retains_disk_and_evidence(prepa
         "-VmName", prepared.vm_name,
         "-OwnerMarker", "night-shift-image-prep-owner:" + prepared.sandbox_id,
         "-DiskPath", str(workspace / "ubuntu-build.vhdx"),
-        "-VmConfigPath", str(workspace / "vm-config"),
+        "-VmConfigPath", str(workspace / "vm-config" / prepared.vm_name),
     )
     snapshot = json.loads((workspace / "manifest.json").read_bytes())
     assert snapshot["status"] == result.status
@@ -163,7 +164,7 @@ def test_invalid_timeout_has_no_mutation(prepared: UbuntuPreparationRecord, time
 
 
 @pytest.mark.parametrize("field", [
-    "sandbox_id", "vm_name", "owner_marker", "disk", "vm_config", "network_enabled", "status", "version",
+    "sandbox_id", "vm_name", "owner_marker", "disk", "vm_config_root", "vm_config", "network_enabled", "status", "version",
 ])
 def test_manifest_ownership_mismatch_rejected_without_claim(prepared: UbuntuPreparationRecord, field: str) -> None:
     path = prepared.workspace / "manifest.json"
@@ -189,8 +190,9 @@ def test_incomplete_or_missing_inputs_block_host_call(prepared: UbuntuPreparatio
     elif problem == "missing-disk":
         (workspace / "ubuntu-build.vhdx").unlink()
     elif problem == "missing-config":
-        (workspace / "vm-config" / "test-evidence.txt").unlink()
-        (workspace / "vm-config").rmdir()
+        configuration = workspace / "vm-config" / prepared.vm_name
+        (configuration / "test-evidence.txt").unlink()
+        configuration.rmdir()  # root still exists; it must not count as the exact VM directory
     elif problem == "bad-json":
         (workspace / "manifest.json").write_bytes(b"not json")
     else:
@@ -362,6 +364,37 @@ def test_retirement_respects_busy_launch_guard(prepared: UbuntuPreparationRecord
     assert not (prepared.workspace / "retirement.claim").exists()
 
 
+@pytest.mark.parametrize("problem", ["missing-root", "legacy-root", "wrong-vm"])
+def test_legacy_or_wrong_configuration_cannot_retire(prepared, problem: str) -> None:
+    path = prepared.workspace / "manifest.json"
+    snapshot = json.loads(path.read_bytes())
+    if problem == "missing-root":
+        del snapshot["vm_config_root"]
+    elif problem == "legacy-root":
+        snapshot["vm_config"] = str(prepared.workspace / "vm-config")
+    else:
+        snapshot["vm_config"] = str(prepared.workspace / "vm-config" / "another-vm")
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    previous = path.read_bytes()
+    runner = RetireRunner(prepared.workspace)
+    with pytest.raises(PreparationError, match="manifest differs"):
+        _call(prepared, runner)
+    assert not runner.calls
+    assert path.read_bytes() == previous
+    assert not (prepared.workspace / "retirement.claim").exists()
+
+
+def test_reconciled_never_started_retirement_is_guid_bound(prepared) -> None:
+    path = prepared.workspace / "manifest.json"
+    snapshot = json.loads(path.read_bytes())
+    snapshot["vm_id"] = _GUID
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    runner = RetireRunner(prepared.workspace)
+    _call(prepared, runner)
+    args = runner.calls[0][1]
+    assert args[args.index("-ExpectedVmId") + 1] == _GUID
+
+
 def test_retirement_script_pins_guid_rechecks_ownership_and_never_deletes_disk() -> None:
     script = (Path(__file__).resolve().parents[2] / "night_shifts" / "backends" / "hyperv_scripts" / "retire_image_vm.ps1").read_text(encoding="utf-8")
     assert "Start-VM" not in script
@@ -370,6 +403,8 @@ def test_retirement_script_pins_guid_rechecks_ownership_and_never_deletes_disk()
     assert "SilentlyContinue" not in script
     assert "$Candidate.Notes -ne $OwnerMarker" in script
     assert "$Candidate.Path -ne $VmConfigPath" in script
+    assert "Join-Path (Join-Path $workspace 'vm-config') $VmName" in script
+    assert "$VmConfigPath -ne $expectedConfigPath" in script
     assert "$disks.Count -ne 1 -or $disks[0].Path -ne $DiskPath" in script
     assert script.count("Assert-PreparationOwner $vm") == 2
     assert script.index("$vmId = $vm.Id") < script.index("Stop-VM -VM $vm")

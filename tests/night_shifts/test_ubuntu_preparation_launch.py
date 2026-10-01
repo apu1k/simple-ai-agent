@@ -45,7 +45,9 @@ class FakeHost:
         self.workspace = disk.parent
         if script.name == "prepare_image_vm.ps1":
             disk.write_bytes(b"TEST-owned fake disk, NOT a VHDX")
-            Path(values["-VmConfigPath"]).mkdir()
+            config_root = Path(values["-VmConfigRootPath"])
+            assert Path(values["-VmConfigPath"]) == config_root / name
+            Path(values["-VmConfigPath"]).mkdir(parents=True)
             self.state = "Off"
             return name
         if script.name == "attach_image_seed.ps1":
@@ -145,6 +147,7 @@ def test_packet_is_deterministic_read_only_and_not_host_evidence(ready, tmp_path
     assert packet["expected_host_policy"]["network_enabled"] is False
     assert packet["expected_host_policy"]["minimum_free_bytes"] == 20 * 1024**3
     assert "NOT Gate A" in packet["purpose"]
+    assert plan.vm_config == record.workspace / "vm-config" / record.vm_name
     assert plan.manifest_sha256 == hashlib.sha256((record.workspace / "manifest.json").read_bytes()).hexdigest()
     monkeypatch.setattr(launch.shutil, "disk_usage", lambda path: SimpleNamespace(free=99 * 1024**3))
     assert launch.build_preparation_launch_plan(record, _GUID) == plan
@@ -231,6 +234,45 @@ def test_invalid_manifest_policy_cannot_generate_packet(ready, field: str, bad) 
     with pytest.raises(PreparationError):
         launch.build_preparation_launch_plan(record, _GUID)
     assert host.started == 0 and len(host.calls) == 2
+
+
+@pytest.mark.parametrize("problem", ["missing-root", "legacy-root", "wrong-root", "wrong-vm", "different-guid", "invalid-guid"])
+def test_wrong_configuration_or_reconciled_guid_cannot_generate_packet(ready, problem: str) -> None:
+    record, _, host = ready
+    path = record.workspace / "manifest.json"
+    snapshot = json.loads(path.read_bytes())
+    if problem == "missing-root":
+        del snapshot["vm_config_root"]
+    elif problem == "legacy-root":
+        snapshot["vm_config"] = str(record.workspace / "vm-config")
+    elif problem == "wrong-root":
+        snapshot["vm_config_root"] = str(record.workspace.parent)
+    elif problem == "wrong-vm":
+        snapshot["vm_config"] = str(record.workspace / "vm-config" / "another-vm")
+    else:
+        snapshot["vm_id"] = _OTHER_GUID if problem == "different-guid" else None
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    previous = path.read_bytes()
+    with pytest.raises(PreparationError):
+        launch.build_preparation_launch_plan(record, _GUID)
+    assert path.read_bytes() == previous
+    assert len(host.calls) == 2 and host.started == 0
+    assert not (record.workspace / "launch.claim").exists()
+
+
+def test_reconciled_guid_and_exact_config_survive_integrated_lifecycle(ready) -> None:
+    record, _, host = ready
+    path = record.workspace / "manifest.json"
+    snapshot = json.loads(path.read_bytes())
+    snapshot["vm_id"] = _GUID
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    plan = launch.build_preparation_launch_plan(record, _GUID)
+    started = _start(record, plan, host)
+    assert plan.vm_config == record.workspace / "vm-config" / record.vm_name
+    assert _discard(started, host).status == "retired_vm_disk_retained"
+    for _, args in host.calls:
+        values = dict(zip(args[::2], args[1::2], strict=True))
+        assert values["-VmConfigPath"] == str(plan.vm_config)
 
 
 @pytest.mark.parametrize("timeout", [0.0, 301.0, True, float("nan"), float("inf")])
@@ -344,6 +386,7 @@ def test_start_script_guards_before_only_power_action_and_never_repairs() -> Non
     script = (Path(__file__).resolve().parents[2] / "night_shifts" / "backends" / "hyperv_scripts" / "launch_image_vm.ps1").read_text(encoding="utf-8")
     before, after = script.split("Start-VM -VM $vm -ErrorAction Stop")
     for expected in (
+        "Join-Path (Join-Path $workspace 'vm-config') $VmName", "$VmConfigPath -ne $expectedConfigPath",
         "Get-VM -Id ([guid]$VmId)", "Assert-LaunchIdentity $vm 'Off'",
         "$Candidate.Id -ne [guid]$VmId", "$Candidate.Notes -cne $OwnerMarker",
         "$Candidate.Path -ne $VmConfigPath", "$Candidate.Generation -ne 2",

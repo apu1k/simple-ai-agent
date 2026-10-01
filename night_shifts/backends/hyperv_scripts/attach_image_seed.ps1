@@ -6,7 +6,8 @@ param(
     [Parameter(Mandatory = $true)][string]$InstallerIso,
     [Parameter(Mandatory = $true)][string]$InstallerIsoSha256,
     [Parameter(Mandatory = $true)][string]$SeedIso,
-    [Parameter(Mandatory = $true)][string]$SeedIsoSha256
+    [Parameter(Mandatory = $true)][string]$SeedIsoSha256,
+    [string]$ExpectedVmId = ''
 )
 $ErrorActionPreference = 'Stop'
 # Attach only; no VM creation, power-on, network attachment or arbitrary paths.
@@ -18,11 +19,27 @@ if ($InstallerIsoSha256 -notmatch '^[0-9a-fA-F]{64}$' -or
     $SeedIsoSha256 -notmatch '^[0-9a-fA-F]{64}$') {
     throw 'A media digest is missing or malformed'
 }
-$vm = Get-VM -Name $VmName -ErrorAction Stop
-if ($VmConfigPath -ne (Join-Path (Split-Path -Parent $DiskPath) 'vm-config') -or
+if ($ExpectedVmId -and
+    ($ExpectedVmId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or
+     [guid]$ExpectedVmId -eq [guid]::Empty)) {
+    throw 'Malformed pinned preparation VM GUID'
+}
+$vm = if ($ExpectedVmId) {
+    Get-VM -Id ([guid]$ExpectedVmId) -ErrorAction Stop
+} else {
+    Get-VM -Name $VmName -ErrorAction Stop
+}
+$workspace = Split-Path -Parent $DiskPath
+$expectedConfigPath = Join-Path (Join-Path $workspace 'vm-config') $VmName
+if ((Split-Path -Leaf $workspace) -cne $VmName.Substring(23) -or
+    (Split-Path -Leaf $DiskPath) -cne 'ubuntu-build.vhdx' -or
+    $VmConfigPath -ne $expectedConfigPath -or
     $vm.Name -ne $VmName -or $vm.Notes -ne $OwnerMarker -or
     $vm.Path -ne $VmConfigPath -or $vm.Generation -ne 2 -or $vm.State -ne 'Off') {
     throw 'VM identity, ownership, configuration path, generation, or off-state differs'
+}
+if ($ExpectedVmId -and $vm.Id -ne [guid]$ExpectedVmId) {
+    throw 'Refusing a same-name replacement with a different preparation VM GUID'
 }
 $disks = @(Get-VMHardDiskDrive -VM $vm)
 if ($disks.Count -ne 1 -or $disks[0].Path -ne $DiskPath) {

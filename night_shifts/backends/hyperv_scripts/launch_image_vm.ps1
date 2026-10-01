@@ -22,9 +22,10 @@ if ($VmName -cnotmatch '^night-shift-image-prep-[0-9a-f]{32}$' -or
     throw 'Untrusted preparation name, ownership marker or pinned VM GUID'
 }
 $workspace = Split-Path -Parent $DiskPath
+$expectedConfigPath = Join-Path (Join-Path $workspace 'vm-config') $VmName
 if ((Split-Path -Leaf $workspace) -cne $VmName.Substring(23) -or
     (Split-Path -Leaf $DiskPath) -cne 'ubuntu-build.vhdx' -or
-    $VmConfigPath -ne (Join-Path $workspace 'vm-config') -or
+    $VmConfigPath -ne $expectedConfigPath -or
     (Split-Path -Leaf $SeedIso) -cne ($VmName + '.iso') -or $InstallerIso -eq $SeedIso) {
     throw 'Preparation paths differ from the identity-scoped launch plan'
 }

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,6 +61,20 @@ class UbuntuPreparationRecord:
     vm_name: str
     workspace: Path
     status: str
+
+
+def preparation_config_paths(workspace: Path, vm_name: str) -> tuple[Path, Path]:
+    """Derive the New-VM -Path root and exact resulting VM.Path, never discover it.
+
+    Hyper-V creates a VM-name subdirectory under the supplied configuration
+    root. Both paths stay bound to the generated preparation identity.
+    """
+    if not re.fullmatch(r"night-shift-image-prep-[0-9a-f]{32}", vm_name) or (
+        not workspace.is_absolute() or workspace.name != vm_name[23:]
+    ):
+        raise PreparationError("configuration paths require an identity-scoped preparation workspace")
+    root = workspace / "vm-config"
+    return root, root / vm_name
 
 
 def _store_manifest(path: Path, data: dict[str, Any], *, first: bool) -> None:
@@ -113,7 +128,7 @@ def create_image_preparation_vm(
     vm_name = f"night-shift-image-prep-{sandbox_id}"
     workspace = root / sandbox_id
     disk = workspace / "ubuntu-build.vhdx"
-    vm_config = workspace / "vm-config"
+    vm_config_root, vm_config = preparation_config_paths(workspace, vm_name)
     owner = f"night-shift-image-prep-owner:{sandbox_id}"
     workspace.mkdir(exist_ok=False)
     manifest = workspace / "manifest.json"
@@ -127,6 +142,7 @@ def create_image_preparation_vm(
         "bundle": str(config.bundle),
         "bundle_sha256": report.bundle_sha256,
         "disk": str(disk),
+        "vm_config_root": str(vm_config_root),
         "vm_config": str(vm_config),
         "cpu_count": config.cpu_count,
         "memory_mb": config.memory_mb,
@@ -148,6 +164,7 @@ def create_image_preparation_vm(
                 "-InstallerIso", str(config.iso),
                 "-InstallerIsoSha256", report.iso_sha256,
                 "-DiskPath", str(disk),
+                "-VmConfigRootPath", str(vm_config_root),
                 "-VmConfigPath", str(vm_config),
                 "-DiskSizeBytes", str(config.disk_gb * 1024**3),
                 "-MemoryBytes", str(config.memory_mb * 1024**2),

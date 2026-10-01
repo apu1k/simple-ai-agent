@@ -18,8 +18,10 @@ from night_shifts.ubuntu_image_preparation import (
     PreparationError,
     UbuntuPreparationRecord,
     _store_manifest,
+    preparation_config_paths,
 )
 from night_shifts.ubuntu_install_seed_iso import inspect_ubuntu_install_seed_iso
+from night_shifts.ubuntu_preparation_safety import checked_vm_guid
 from night_shifts.ubuntu_seed_iso import SeedIsoError
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
@@ -69,13 +71,15 @@ def attach_preparation_seed(
     except (ValueError, UnicodeError) as exc:
         raise PreparationError("invalid preparation manifest") from exc
     owner = "night-shift-image-prep-owner:" + record.sandbox_id
+    config_root, config_path = preparation_config_paths(workspace, record.vm_name)
     if not isinstance(snapshot, dict) or any((
         snapshot.get("version") != 1,
         snapshot.get("sandbox_id") != record.sandbox_id,
         snapshot.get("vm_name") != record.vm_name,
         snapshot.get("owner_marker") != owner,
         snapshot.get("disk") != str(workspace / "ubuntu-build.vhdx"),
-        snapshot.get("vm_config") != str(workspace / "vm-config"),
+        snapshot.get("vm_config_root") != str(config_root),
+        snapshot.get("vm_config") != str(config_path),
         snapshot.get("network_enabled") is not False,
         snapshot.get("status") != "created_not_started",
         not isinstance(snapshot.get("iso"), str),
@@ -84,6 +88,13 @@ def attach_preparation_seed(
         not isinstance(snapshot.get("bundle_sha256"), str),
     )):
         raise PreparationError("preparation ownership manifest differs from record")
+    expected_vm_id = checked_vm_guid(snapshot["vm_id"]) if "vm_id" in snapshot else None
+    try:
+        configuration = _checked_path(config_path, "exact preparation VM configuration")
+    except (OSError, ValueError) as exc:
+        raise PreparationError("exact preparation configuration directory is missing or irregular") from exc
+    if not configuration.is_dir():
+        raise PreparationError("exact preparation configuration directory is missing or irregular")
     installer = _checked_path(Path(snapshot["iso"]), "installer ISO")
     if not installer.is_file() or not _DIGEST.fullmatch(snapshot["iso_sha256"]) or not _DIGEST.fullmatch(snapshot["bundle_sha256"]):
         raise PreparationError("installer or manifest digests are invalid")
@@ -109,16 +120,19 @@ def attach_preparation_seed(
         selected_runner = runner or SubprocessPowerShellRunner(
             powershell_executable, timeout_seconds=command_timeout_seconds
         )
-        result = selected_runner.run(script, (
+        args: tuple[str, ...] = (
             "-VmName", record.vm_name,
             "-OwnerMarker", owner,
             "-DiskPath", str(workspace / "ubuntu-build.vhdx"),
-            "-VmConfigPath", str(workspace / "vm-config"),
+            "-VmConfigPath", str(config_path),
             "-InstallerIso", str(installer),
             "-InstallerIsoSha256", snapshot["iso_sha256"],
             "-SeedIso", str(media),
             "-SeedIsoSha256", expected_sha256.lower(),
-        ))
+        )
+        if expected_vm_id is not None:
+            args += ("-ExpectedVmId", expected_vm_id)
+        result = selected_runner.run(script, args)
         if result.strip() != record.vm_name:
             raise PreparationError("unexpected VM identity after seed attachment")
         snapshot["status"] = "created_seed_attached_not_started"

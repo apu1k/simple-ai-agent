@@ -2,8 +2,10 @@
 
 This is a review procedure for a separate preparation VM, not Gate A itself.
 **No preparation VM has been launched and no installed VHDX is reviewed.**
-The host functions and scripts have only fake-runner evidence. The shell/YAML
-candidates have not been executed in Ubuntu. The operator must separately
+One operator-reported create-only attempt has been observed OFF on Hyper-V;
+this exposed a configuration-path assumption that the fake runners missed.
+Attachment, launch and retirement still have only offline/fake-runner evidence.
+The shell/YAML candidates have not been executed in Ubuntu. The operator must separately
 approve actual paths, independently reviewed digests, resources, permissions,
 a time window and the exact actions before any real host operation.
 
@@ -33,6 +35,49 @@ After creation/attachment, inspect actual host state: notes/name/GUID/config
 path, one recorded writable disk, exactly the installer and combined seed DVDs,
 no switch attachment, off-state and resources. Compare media digests again.
 An uncertain create/attach status needs inspection, never automatic retry.
+
+### Exact configuration root versus Hyper-V VM.Path
+
+`New-VM -Path` takes a configuration **root**, but the observed preparation VM's
+`.Path` includes an additional exact VM-name subdirectory. New manifests bind
+both `vm_config_root = <workspace>/vm-config` and
+`vm_config = <workspace>/vm-config/<exact-preparation-name>`. Creation passes the
+root separately and checks the returned VM.Path before accepting success.
+Attachment, launch and retirement require the exact derived path, not just a
+prefix, an existing root directory or an arbitrary observed path. Unknown layouts
+remain a refusal; never discover a directory and silently adopt it.
+
+Old manifests that record the root as `vm_config` are deliberately rejected.
+There is no automatic migration/fallback. For an existing never-started attempt,
+prepare a separate exact-file reconciliation proposal **after offline validation**:
+
+1. Independently observe the exact Hyper-V GUID and inspect by that GUID: exact
+   name/notes, generation 2, OFF state, single recorded disk, sole installer DVD,
+   disconnected adapters, and the unwrapped configuration path. The observed
+   path must equal the derived root/name path; do not change host settings.
+2. Require `created_not_started`, the old exact root binding, the reviewed media
+   hashes/resources and absence of seed/launch/retirement claims, operation lock
+   and pending manifest writes. Confirm no operator has started or changed it.
+   Unknown/attached/launched attempts need a separately reviewed recovery plan.
+3. Retain the manifest's exact original bytes and SHA-256 as write-once private
+   evidence. Present a separately approved exact-match change adding
+   `vm_config_root`, replacing only `vm_config` with the derived exact path and
+   pinning `vm_id` to the independently observed GUID. Preserve all other fields,
+   including status; reconciliation does not certify creation or installation.
+4. Re-read the approved file and check both bindings, preserved inputs and GUID.
+   A changed manifest, missing evidence, claim or uncertain write stops progress;
+   no blind retry or host cleanup. Do not apply migration merely by approving
+   these repository edits. When present, the recorded GUID is checked/forwarded
+   by attachment, packet construction and retirement to reject replacement VMs.
+
+File-edit approval is not seed building/attachment or VM-launch approval. Keep
+this existing VM OFF throughout code review and manifest reconciliation.
+
+For operator Python snippets in Windows PowerShell 5.1, feed the reviewed source
+through stdin (`$code | & $python -B -`), not a multiline `python -c $code` argument;
+native argument quoting can strip embedded double quotes. This is invocation
+syntax, never permission to execute a creation or launch snippet. On any error,
+retain the original traceback and inspect the manifest/host instead of rerunning.
 
 ### Start-once launch packet and function (offline-tested only)
 

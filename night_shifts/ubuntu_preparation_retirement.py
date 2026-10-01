@@ -20,6 +20,7 @@ from night_shifts.ubuntu_image_preparation import (
     PreparationError,
     UbuntuPreparationRecord,
     _store_manifest,
+    preparation_config_paths,
 )
 from night_shifts.ubuntu_preparation_safety import checked_vm_guid, preparation_operation
 
@@ -57,19 +58,21 @@ def _retirement_inputs(record: UbuntuPreparationRecord) -> tuple[Path, dict[str,
         snapshot = json.loads(data)
     except (ValueError, UnicodeError) as exc:
         raise PreparationError("invalid preparation manifest") from exc
+    config_root, config_path = preparation_config_paths(workspace, record.vm_name)
     if not isinstance(snapshot, dict) or any((
         snapshot.get("version") != 1,
         snapshot.get("sandbox_id") != record.sandbox_id,
         snapshot.get("vm_name") != record.vm_name,
         snapshot.get("owner_marker") != "night-shift-image-prep-owner:" + record.sandbox_id,
         snapshot.get("disk") != str(workspace / "ubuntu-build.vhdx"),
-        snapshot.get("vm_config") != str(workspace / "vm-config"),
+        snapshot.get("vm_config_root") != str(config_root),
+        snapshot.get("vm_config") != str(config_path),
         snapshot.get("network_enabled") is not False,
         snapshot.get("status") != record.status,
     )):
         raise PreparationError("preparation ownership manifest differs; inspect before retirement")
     disk = _checked_path(workspace / "ubuntu-build.vhdx", "retained preparation disk")
-    config = _checked_path(workspace / "vm-config", "preparation VM configuration")
+    config = _checked_path(config_path, "exact preparation VM configuration")
     if not stat.S_ISREG(disk.stat().st_mode) or not config.is_dir():
         raise PreparationError("recorded preparation disk or configuration is missing or irregular")
     _launch_binding(record, workspace, snapshot)
@@ -163,7 +166,7 @@ def retire_image_preparation_vm(
                 "-VmName", record.vm_name,
                 "-OwnerMarker", "night-shift-image-prep-owner:" + record.sandbox_id,
                 "-DiskPath", str(workspace / "ubuntu-build.vhdx"),
-                "-VmConfigPath", str(workspace / "vm-config"),
+                "-VmConfigPath", str(snapshot["vm_config"]),
             )
             if expected_vm_id is not None:
                 args += ("-ExpectedVmId", expected_vm_id)

@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory = $true)][string]$InstallerIso,
     [Parameter(Mandatory = $true)][string]$InstallerIsoSha256,
     [Parameter(Mandatory = $true)][string]$DiskPath,
+    [Parameter(Mandatory = $true)][string]$VmConfigRootPath,
     [Parameter(Mandatory = $true)][string]$VmConfigPath,
     [Parameter(Mandatory = $true)][long]$DiskSizeBytes,
     [Parameter(Mandatory = $true)][long]$MemoryBytes,
@@ -16,8 +17,12 @@ if ($VmName -notmatch '^night-shift-image-prep-[0-9a-f]{32}$' -or
     $OwnerMarker -ne ('night-shift-image-prep-owner:' + $VmName.Substring(23))) {
     throw 'Untrusted image-preparation VM identity'
 }
-if ($VmConfigPath -ne (Join-Path (Split-Path -Parent $DiskPath) 'vm-config')) {
-    throw 'VM configuration path must be the sandbox-scoped disk sibling'
+$workspace = Split-Path -Parent $DiskPath
+if ((Split-Path -Leaf $workspace) -cne $VmName.Substring(23) -or
+    (Split-Path -Leaf $DiskPath) -cne 'ubuntu-build.vhdx' -or
+    $VmConfigRootPath -ne (Join-Path $workspace 'vm-config') -or
+    $VmConfigPath -ne (Join-Path $VmConfigRootPath $VmName)) {
+    throw 'VM configuration root and exact path must match the preparation identity'
 }
 if ($CpuCount -lt 1 -or $CpuCount -gt 8 -or
     $MemoryBytes -lt 1073741824 -or $MemoryBytes -gt 8589934592 -or
@@ -26,6 +31,7 @@ if ($CpuCount -lt 1 -or $CpuCount -gt 8 -or
 }
 if ((Get-VM -Name $VmName -ErrorAction SilentlyContinue) -or
     (Test-Path -LiteralPath $DiskPath) -or
+    (Test-Path -LiteralPath $VmConfigRootPath) -or
     (Test-Path -LiteralPath $VmConfigPath)) {
     throw 'Refusing to reuse an existing VM, disk, or configuration path'
 }
@@ -42,7 +48,10 @@ try {
     New-VHD -Path $DiskPath -Dynamic -SizeBytes $DiskSizeBytes | Out-Null
     $createdDisk = $true
     $createdVm = New-VM -Name $VmName -Generation 2 -VHDPath $DiskPath `
-        -Path $VmConfigPath -MemoryStartupBytes $MemoryBytes
+        -Path $VmConfigRootPath -MemoryStartupBytes $MemoryBytes
+    if ($createdVm.Path -ne $VmConfigPath) {
+        throw 'New VM configuration path differs from the exact reviewed identity-derived path'
+    }
     Set-VM -VM $createdVm -Notes $OwnerMarker -DynamicMemory:$false `
         -CheckpointType Disabled -AutomaticStartAction Nothing -AutomaticStopAction ShutDown
     Set-VMProcessor -VM $createdVm -Count $CpuCount

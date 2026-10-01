@@ -14,6 +14,7 @@ from night_shifts.ubuntu_image_preparation import (
     PreparationError,
     UbuntuPreparationConfig,
     create_image_preparation_vm,
+    preparation_config_paths,
 )
 
 
@@ -67,7 +68,10 @@ def test_preparation_creates_durable_manifest_but_does_not_start_vm(
     assert args[args.index("-OwnerMarker") + 1] == f"night-shift-image-prep-owner:{record.sandbox_id}"
     assert args[args.index("-InstallerIso") + 1] == str(config.iso)
     assert args[args.index("-InstallerIsoSha256") + 1] == config.iso_sha256
-    assert args[args.index("-VmConfigPath") + 1] == str(record.workspace / "vm-config")
+    config_root = record.workspace / "vm-config"
+    config_path = config_root / record.vm_name
+    assert args[args.index("-VmConfigRootPath") + 1] == str(config_root)
+    assert args[args.index("-VmConfigPath") + 1] == str(config_path)
     assert args[args.index("-DiskPath") + 1] == str(record.workspace / "ubuntu-build.vhdx")
     script = (Path(__file__).resolve().parents[2] / "night_shifts" / "backends" / "hyperv_scripts" / name).read_text(encoding="utf-8")
     assert "Start-VM" not in script
@@ -76,6 +80,12 @@ def test_preparation_creates_durable_manifest_but_does_not_start_vm(
     manifest = json.loads((record.workspace / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "created_not_started"
     assert manifest["network_enabled"] is False
+    assert manifest["vm_config_root"] == str(config_root)
+    assert manifest["vm_config"] == str(config_path)
+    assert "-Path $VmConfigRootPath -MemoryStartupBytes $MemoryBytes" in script
+    assert "$createdVm.Path -ne $VmConfigPath" in script
+    assert "$VmConfigPath -ne (Join-Path $VmConfigRootPath $VmName)" in script
+    assert "Test-Path -LiteralPath $VmConfigRootPath" in script
     assert manifest["iso_sha256"] == config.iso_sha256
     assert manifest["bundle_sha256"] == config.bundle_sha256
     assert not (record.workspace / "ubuntu-build.vhdx").exists()  # Fake runner
@@ -127,6 +137,34 @@ def test_rejects_stale_iso_and_nonempty_workspace_before_host_call(
         )
     assert not list(config.workspace_root.iterdir())
     assert not runner.calls
+
+
+def test_configuration_layout_matches_observed_hyperv_semantics(tmp_path: Path) -> None:
+    identity = "a" * 32
+    name = "night-shift-image-prep-" + identity
+    workspace = tmp_path / identity
+    root, actual = preparation_config_paths(workspace, name)
+    assert root == workspace / "vm-config"
+    assert actual == root / name
+    assert actual != root
+    assert not workspace.exists()  # pure derivation, not a directory discovery/write
+
+
+@pytest.mark.parametrize("name,folder", [
+    ("night-shift-image-prep-" + "a" * 32, "b" * 32),
+    ("personal-vm", "a" * 32),
+    ("night-shift-image-prep-" + "A" * 32, "A" * 32),
+    ("night-shift-image-prep-" + "a" * 32 + "/other", "a" * 32),
+])
+def test_configuration_layout_refuses_wrong_identity(tmp_path: Path, name: str, folder: str) -> None:
+    with pytest.raises(PreparationError, match="identity-scoped"):
+        preparation_config_paths(tmp_path / folder, name)
+
+
+def test_configuration_layout_refuses_relative_workspace() -> None:
+    identity = "a" * 32
+    with pytest.raises(PreparationError, match="identity-scoped"):
+        preparation_config_paths(Path(identity), "night-shift-image-prep-" + identity)
 
 
 def test_invalid_resources_and_wrong_volume_fail_closed(config: UbuntuPreparationConfig) -> None:

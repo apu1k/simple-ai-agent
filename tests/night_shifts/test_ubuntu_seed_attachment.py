@@ -52,6 +52,7 @@ def prepared(tmp_path: Path) -> tuple[UbuntuPreparationRecord, Path, str]:
     record = create_image_preparation_vm(
         config, operator_authorized=True, iso_provenance_reviewed=True, runner=FakeRunner()
     )
+    (record.workspace / "vm-config" / record.vm_name).mkdir(parents=True)
     staging = tmp_path / "staging"
     staging.mkdir()
     media = build_ubuntu_install_seed_iso(staging, record.vm_name, bundle, bundle_hash)
@@ -73,7 +74,7 @@ def test_exact_owned_off_vm_is_only_attachment_target(
         ("-VmName", record.vm_name),
         ("-OwnerMarker", "night-shift-image-prep-owner:" + record.sandbox_id),
         ("-DiskPath", str(record.workspace / "ubuntu-build.vhdx")),
-        ("-VmConfigPath", str(record.workspace / "vm-config")),
+        ("-VmConfigPath", str(record.workspace / "vm-config" / record.vm_name)),
         ("-SeedIso", str(media)),
         ("-SeedIsoSha256", sha256),
     ):
@@ -88,6 +89,10 @@ def test_exact_owned_off_vm_is_only_attachment_target(
     assert "$vm.State -ne 'Off'" in script
     assert "$vm.Notes -ne $OwnerMarker" in script
     assert "$vm.Path -ne $VmConfigPath" in script
+    assert "Join-Path (Join-Path $workspace 'vm-config') $VmName" in script
+    assert "$VmConfigPath -ne $expectedConfigPath" in script
+    assert "Get-VM -Id ([guid]$ExpectedVmId)" in script
+    assert "$vm.Id -ne [guid]$ExpectedVmId" in script
     assert "Get-VMNetworkAdapter" in script
     assert "Get-FileHash -LiteralPath $SeedIso -Algorithm SHA256" in script
     assert "Add-VMDvdDrive -VM $vm -Path $SeedIso" in script
@@ -130,6 +135,62 @@ def test_modified_iso_or_manifest_rejected_before_host_call(
             record, media, sha256, operator_authorized=True, seed_iso_reviewed=True, runner=runner
         )
     assert not runner.calls
+
+
+@pytest.mark.parametrize("problem", [
+    "missing-root-binding", "legacy-root-path", "wrong-vm", "outside-root", "wrong-root", "missing-exact-directory",
+])
+def test_configuration_binding_refusal_has_no_host_call_or_manifest_change(prepared, problem: str) -> None:
+    record, media, digest = prepared
+    path = record.workspace / "manifest.json"
+    snapshot = json.loads(path.read_bytes())
+    if problem == "missing-root-binding":
+        del snapshot["vm_config_root"]
+    elif problem == "legacy-root-path":
+        snapshot["vm_config"] = str(record.workspace / "vm-config")
+    elif problem == "wrong-vm":
+        snapshot["vm_config"] = str(record.workspace / "vm-config" / "another-vm")
+    elif problem == "outside-root":
+        snapshot["vm_config"] = str(record.workspace.parent / record.vm_name)
+    elif problem == "wrong-root":
+        snapshot["vm_config_root"] = str(record.workspace.parent)
+    else:
+        (record.workspace / "vm-config" / record.vm_name).rmdir()
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    previous = path.read_bytes()
+    runner = FakeRunner()
+    with pytest.raises(PreparationError):
+        attach_preparation_seed(record, media, digest, operator_authorized=True, seed_iso_reviewed=True, runner=runner)
+    assert not runner.calls
+    assert path.read_bytes() == previous
+
+
+def test_reconciled_guid_is_forwarded_without_deriving_it_from_name(prepared) -> None:
+    record, media, digest = prepared
+    path = record.workspace / "manifest.json"
+    snapshot = json.loads(path.read_bytes())
+    guid = "12345678-1234-1234-1234-123456789abc"
+    snapshot["vm_id"] = guid
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    runner = FakeRunner()
+    attach_preparation_seed(record, media, digest, operator_authorized=True, seed_iso_reviewed=True, runner=runner)
+    args = runner.calls[0][1]
+    assert args[args.index("-ExpectedVmId") + 1] == guid
+
+
+@pytest.mark.parametrize("guid", [None, 123, "not-a-guid", "00000000-0000-0000-0000-000000000000"])
+def test_invalid_recorded_guid_refused_before_attachment_mutation(prepared, guid) -> None:
+    record, media, digest = prepared
+    path = record.workspace / "manifest.json"
+    snapshot = json.loads(path.read_bytes())
+    snapshot["vm_id"] = guid
+    path.write_text(json.dumps(snapshot), encoding="utf-8")
+    previous = path.read_bytes()
+    runner = FakeRunner()
+    with pytest.raises(PreparationError, match="GUID"):
+        attach_preparation_seed(record, media, digest, operator_authorized=True, seed_iso_reviewed=True, runner=runner)
+    assert not runner.calls
+    assert path.read_bytes() == previous
 
 
 def test_old_generic_seed_is_rejected_without_host_call_or_manifest_change(

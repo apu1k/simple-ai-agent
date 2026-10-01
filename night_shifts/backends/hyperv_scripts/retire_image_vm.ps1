@@ -18,9 +18,10 @@ if ($ExpectedVmId -and
     throw 'Malformed pinned preparation VM GUID'
 }
 $workspace = Split-Path -Parent $DiskPath
+$expectedConfigPath = Join-Path (Join-Path $workspace 'vm-config') $VmName
 if ((Split-Path -Leaf $workspace) -ne $VmName.Substring(23) -or
     (Split-Path -Leaf $DiskPath) -ne 'ubuntu-build.vhdx' -or
-    $VmConfigPath -ne (Join-Path $workspace 'vm-config')) {
+    $VmConfigPath -ne $expectedConfigPath) {
     throw 'Preparation disk or configuration is not identity-scoped'
 }
 function Assert-PreparationOwner($Candidate) {
