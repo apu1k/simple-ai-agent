@@ -73,6 +73,8 @@ def test_preparation_creates_durable_manifest_but_does_not_start_vm(
     assert args[args.index("-VmConfigRootPath") + 1] == str(config_root)
     assert args[args.index("-VmConfigPath") + 1] == str(config_path)
     assert args[args.index("-DiskPath") + 1] == str(record.workspace / "ubuntu-build.vhdx")
+    assert args[args.index("-MemoryBytes") + 1] == str(config.memory_mb * 1024**2)
+    assert args[args.index("-CpuCount") + 1] == str(config.cpu_count)
     script = (Path(__file__).resolve().parents[2] / "night_shifts" / "backends" / "hyperv_scripts" / name).read_text(encoding="utf-8")
     assert "Start-VM" not in script
     assert "Get-FileHash -LiteralPath $InstallerIso -Algorithm SHA256" in script
@@ -137,6 +139,37 @@ def test_rejects_stale_iso_and_nonempty_workspace_before_host_call(
         )
     assert not list(config.workspace_root.iterdir())
     assert not runner.calls
+
+
+def test_creation_script_uses_explicit_boolean_fixed_memory_policy() -> None:
+    """Static regression only: does not prove actual Hyper-V memory behavior."""
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "night_shifts" / "backends" / "hyperv_scripts" / "prepare_image_vm.ps1"
+    ).read_text(encoding="utf-8")
+    setting = "Set-VMMemory -VM $createdVm -DynamicMemoryEnabled $false -StartupBytes $MemoryBytes"
+    observation = "$memory = Get-VMMemory -VM $createdVm -ErrorAction Stop"
+    assert setting in script
+    assert observation in script
+    assert "-DynamicMemory:" not in script
+    assert script.index(setting) < script.index(observation) < script.index("$createdVm.Name")
+    assert "Start-VM" not in script
+
+
+def test_creation_script_checks_memory_before_returning_success() -> None:
+    """Static fail-closed guard; live setting/read-back still needs host evidence."""
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "night_shifts" / "backends" / "hyperv_scripts" / "prepare_image_vm.ps1"
+    ).read_text(encoding="utf-8")
+    expected_guard = (
+        "if ($null -eq $memory -or $memory.Startup -ne $MemoryBytes -or\n"
+        "        $memory.DynamicMemoryEnabled -ne $false) {\n"
+        "        throw 'Created VM does not have the exact reviewed fixed-memory settings'\n"
+        "    }"
+    )
+    assert expected_guard in script
+    assert script.index(expected_guard) < script.index("$createdVm.Name") < script.index("catch {")
 
 
 def test_configuration_layout_matches_observed_hyperv_semantics(tmp_path: Path) -> None:

@@ -2,9 +2,14 @@
 
 This is a review procedure for a separate preparation VM, not Gate A itself.
 **No preparation VM has been launched and no installed VHDX is reviewed.**
-One operator-reported create-only attempt has been observed OFF on Hyper-V;
-this exposed a configuration-path assumption that the fake runners missed.
-Attachment, launch and retirement still have only offline/fake-runner evidence.
+One operator-reported preparation attempt has been observed OFF after creation
+and separately approved combined-seed attachment. The persisted manifest records
+`created_seed_attached_not_started` and the local seed verification passes.
+Host observations exposed configuration-path and fixed-memory assumptions that
+the fake runners missed: the VM still reports Dynamic Memory enabled, contrary
+to the reviewed fixed-memory policy. It must remain OFF until separately reviewed
+correction and isolation checks pass. Launch and retirement still have only
+offline/fake-runner evidence; successful attachment does not certify readiness.
 The shell/YAML candidates have not been executed in Ubuntu. The operator must separately
 approve actual paths, independently reviewed digests, resources, permissions,
 a time window and the exact actions before any real host operation.
@@ -35,6 +40,36 @@ After creation/attachment, inspect actual host state: notes/name/GUID/config
 path, one recorded writable disk, exactly the installer and combined seed DVDs,
 no switch attachment, off-state and resources. Compare media digests again.
 An uncertain create/attach status needs inspection, never automatic retry.
+
+### Explicit fixed-memory configuration and read-back
+
+The approved preparation policy is fixed RAM, not Dynamic Memory. The original
+creation script used `Set-VM -DynamicMemory:$false` without reading back memory
+state. Operator inspection after attachment reported `DynamicMemoryEnabled=true`
+with 2 GiB startup memory. Do not infer fixed allocation from the startup size.
+Installed cmdlet metadata identifies `Set-VM`'s `DynamicMemory`/`StaticMemory` as
+switches, whereas `Set-VMMemory.DynamicMemoryEnabled` is a Boolean. This metadata
+and observation do not establish all parameter-set behavior.
+
+Creation now uses explicit `Set-VMMemory -DynamicMemoryEnabled $false
+-StartupBytes $MemoryBytes` and `Get-VMMemory` read-back. Missing state, a different
+startup size or anything other than Dynamic Memory disabled throws before create
+success. The existing attempt-local rollback/unknown-state rules still apply;
+static regression tests are not proof this configuration works on the real host.
+The launch script independently rejects Dynamic Memory and never repairs it.
+
+Applying repository edits does not change an existing VM. A separate, exact-GUID
+operator settings approval must precede correcting the current OFF VM. Recheck
+ownership, name/notes/configuration, disk, media, disconnected adapters and OFF
+state first; retain before/after memory observations and verify fixed 2 GiB RAM
+without changing the manifest to pretend the host already matches. Do not recreate
+the VM, bypass the launch guard or retry an uncertain host operation blindly.
+
+The current integration-service report shows Guest Service Interface disabled;
+other enabled integrations are still host/guest communication channels, not
+ordinary Windows drive shares. Keep permissions/integration/sharing review open
+before boot. Generic `EFI SCSI Device` boot descriptions do not identify the
+installer; inspect the first firmware entry's actual device/path as well.
 
 ### Exact configuration root versus Hyper-V VM.Path
 

@@ -52,8 +52,16 @@ try {
     if ($createdVm.Path -ne $VmConfigPath) {
         throw 'New VM configuration path differs from the exact reviewed identity-derived path'
     }
-    Set-VM -VM $createdVm -Notes $OwnerMarker -DynamicMemory:$false `
+    Set-VM -VM $createdVm -Notes $OwnerMarker `
         -CheckpointType Disabled -AutomaticStartAction Nothing -AutomaticStopAction ShutDown
+    # DynamicMemory is a Set-VM switch, not a Boolean memory policy. Set the
+    # actual Boolean explicitly and observe it before reporting create success.
+    Set-VMMemory -VM $createdVm -DynamicMemoryEnabled $false -StartupBytes $MemoryBytes
+    $memory = Get-VMMemory -VM $createdVm -ErrorAction Stop
+    if ($null -eq $memory -or $memory.Startup -ne $MemoryBytes -or
+        $memory.DynamicMemoryEnabled -ne $false) {
+        throw 'Created VM does not have the exact reviewed fixed-memory settings'
+    }
     Set-VMProcessor -VM $createdVm -Count $CpuCount
     $dvd = Add-VMDvdDrive -VM $createdVm -Path $InstallerIso -Passthru
     if (-not $dvd) { throw 'Installer DVD attachment was not observed' }
