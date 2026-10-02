@@ -240,7 +240,11 @@ guest-service operation has occurred. A failed late-command must
 block freezing the image; manually inspect or discard the exact-owned prep VM,
 never reuse a partially installed disk as a trusted base.
 
-No seed ISO has been attached to a real VM, and no guest bundle is copied into Ubuntu.
+A separately approved seed attachment is operator-observed on one exact-owned,
+OFF preparation VM; its persisted status is `created_seed_attached_not_started`.
+No guest bundle has been copied into Ubuntu and no preparation VM has booted.
+Host-only control-state migration and final isolation/console review remain
+required before separately approving installation.
 There is **no actual unattended installer yet**. Offline YAML
 parsing cannot prove Subiquity accepts this on the reviewed 24.04.5 ISO;
 verify the disk guard and installed user state in the real guest. Since
@@ -262,20 +266,32 @@ the same volume. The caller pins both independently reviewed hashes.
 The fixed `prepare_image_vm.ps1` script creates an ID-bound generation-2 VM,
 20-GiB dynamic disk by default and VM configuration below that fresh workspace,
 attaches the reviewed installer ISO and sets the Linux Secure Boot template.
-No switch is provided, dynamic memory and checkpoints are disabled, and the
-script **does not start the VM**. The guest bundle is only bound in a durable
-manifest, **not injected** into the VM. Its VM name uses the separate
+No switch is provided, fixed memory is explicitly set and read back, checkpoints
+are disabled, and the script **does not start the VM**. The guest bundle is only
+bound in a durable manifest, **not injected** into the VM. A version-2 manifest,
+pending writes, claims and operation lock live in the exact host-only sibling
+`<workspace-root>/<id>.control`, not worker-writable VM storage. The current
+operator account, SYSTEM and Administrators must exclusively control that state
+and its private parent; native owner/DACL/ancestor checks refuse broad/worker
+access or unsafe replacement rights without changing permissions. New creation
+creates this control directory and the unchanged `<workspace-root>/<id>` data
+directory under the reviewed initially empty root. Existing workspace manifests
+are never automatically adopted or migrated; see the separately authorized
+migration procedure in the preparation runbook. Its VM name uses the separate
 `night-shift-image-prep-<id>` namespace, so runtime reconciliation must never
 mistake an image-preparation VM for a job VM. If the host command fails or has
 unexpected output, the manifest retains its exact ID with status
 `provisioning_unknown`, and retry is blocked by the nonempty directory. The
 operator must inspect owned leftovers; never blindly sweep other VMs.
 
-The fake runner verifies identities, bounded choices, opt-in guards, and
-manifest persistence. It has **not** executed the PowerShell script or verified
-that host configuration, DVD attachment, VM cleanup, ISO boot or disk quotas
-work on Hyper-V. Directory ACLs, named pipes and all host-generated paths still
-require review. No preparation VM or directories on D: were created in the
+The fake runners verify identities, bounded choices, opt-in guards and
+host-only manifest/claim persistence with an explicitly substituted ACL model.
+Control-policy models and a read-only native ACL reader test are separate.
+These tests have **not** executed the PowerShell scripts or proved actual
+host configuration, DVD attachment, VM cleanup, ISO boot or disk quotas work.
+Separately retained operator observations cover this VM's create/attach and
+fixed-memory correction; they do not certify boot or a base image. Directory
+ACLs, named pipes and all host-generated paths still require review. No preparation VM or directories on D: were created in the
 offline tests. Ubuntu installation, offline guest-bundle transfer, first-boot
 protocol service, image cleaning, final digest and real lifecycle Gate A remain
 **BLOCKED**. This create-only foundation must not be called an unattended

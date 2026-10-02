@@ -20,10 +20,12 @@ from typing import Any
 from night_shifts.backends.hyperv import PowerShellCommandRunner, SubprocessPowerShellRunner
 from night_shifts.hyperv_image_preflight import _checked_path
 from night_shifts.ubuntu_iso_inputs import inspect_ubuntu_inputs
-
-
-class PreparationError(RuntimeError):
-    """A preparation attempt cannot safely proceed or needs investigation."""
+from night_shifts.ubuntu_preparation_control import (
+    PreparationError,
+    check_control_parent,
+    checked_preparation_control,
+    preparation_control_path,
+)
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,15 @@ class UbuntuPreparationRecord:
     workspace: Path
     status: str
 
+    @property
+    def control(self) -> Path:
+        """Identity-derived host-only sibling; worker storage is never authority."""
+        return preparation_control_path(self.workspace)
+
+    @property
+    def manifest(self) -> Path:
+        return self.control / "manifest.json"
+
 
 def preparation_config_paths(workspace: Path, vm_name: str) -> tuple[Path, Path]:
     """Derive the New-VM -Path root and exact resulting VM.Path, never discover it.
@@ -78,19 +89,28 @@ def preparation_config_paths(workspace: Path, vm_name: str) -> tuple[Path, Path]
 
 
 def _store_manifest(path: Path, data: dict[str, Any], *, first: bool) -> None:
+    workspace = Path(data["workspace"])
+    control = checked_preparation_control(workspace)
+    if type(data.get("version")) is not int or data["version"] != 2 or (
+        data.get("control") != str(control) or path != control / "manifest.json"
+    ):
+        raise PreparationError("manifest write requires the exact version-2 host-only control binding")
     encoded = (json.dumps(data, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
     if first:
         with path.open("xb") as stream:
             stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
+        checked_preparation_control(workspace)
         return
     temporary = path.with_name("manifest.pending")
     with temporary.open("xb") as stream:
         stream.write(encoded)
         stream.flush()
         os.fsync(stream.fileno())
+    checked_preparation_control(workspace)
     os.replace(temporary, path)
+    checked_preparation_control(workspace)
 
 
 def create_image_preparation_vm(
@@ -130,10 +150,15 @@ def create_image_preparation_vm(
     disk = workspace / "ubuntu-build.vhdx"
     vm_config_root, vm_config = preparation_config_paths(workspace, vm_name)
     owner = f"night-shift-image-prep-owner:{sandbox_id}"
+    control = check_control_parent(workspace)
+    control.mkdir(exist_ok=False)
+    checked_preparation_control(workspace)
     workspace.mkdir(exist_ok=False)
-    manifest = workspace / "manifest.json"
+    manifest = control / "manifest.json"
     snapshot: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
+        "workspace": str(workspace),
+        "control": str(control),
         "sandbox_id": sandbox_id,
         "vm_name": vm_name,
         "owner_marker": owner,

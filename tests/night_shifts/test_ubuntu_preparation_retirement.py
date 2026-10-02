@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from night_shifts.ubuntu_preparation_control import preparation_control_path as _control
+
 import night_shifts.ubuntu_preparation_retirement as retirement
 from night_shifts.protocol_image_bundle import build_protocol_image_bundle
 from night_shifts.ubuntu_image_preparation import (
@@ -37,10 +39,10 @@ class RetireRunner:
 
     def run(self, script: Path, args: Sequence[str]) -> str:
         self.calls.append((script.name, tuple(args)))
-        snapshot = json.loads((self.workspace / "manifest.json").read_bytes())
+        snapshot = json.loads((_control(self.workspace) / "manifest.json").read_bytes())
         assert snapshot["status"] == "retirement_unknown"
         assert snapshot["retirement_mode"] == "discard_vm_retain_disk"
-        assert (self.workspace / "retirement.claim").is_file()
+        assert (_control(self.workspace) / "retirement.claim").is_file()
         if self.fail:
             raise OSError("host may have stopped or unregistered the VM before disconnect")
         receipt: dict[str, object] = {
@@ -124,12 +126,12 @@ def test_exact_owned_retirement_records_guid_and_retains_disk_and_evidence(prepa
         "-DiskPath", str(workspace / "ubuntu-build.vhdx"),
         "-VmConfigPath", str(workspace / "vm-config" / prepared.vm_name),
     )
-    snapshot = json.loads((workspace / "manifest.json").read_bytes())
+    snapshot = json.loads((_control(workspace) / "manifest.json").read_bytes())
     assert snapshot["status"] == result.status
     assert snapshot["retired_vm_id"] == _GUID
     assert snapshot["retirement_previous_status"] == prepared.status
     assert snapshot["retirement_mode"] == "discard_vm_retain_disk"
-    assert (workspace / "retirement.claim").read_text(encoding="ascii") == prepared.vm_name + "\n"
+    assert (_control(workspace) / "retirement.claim").read_text(encoding="ascii") == prepared.vm_name + "\n"
     for path, data in keep.items():
         assert path.read_bytes() == data  # fake runner only; real Remove-VM may remove VM metadata
     with pytest.raises(PreparationError, match="inspect"):
@@ -141,33 +143,33 @@ def test_exact_owned_retirement_records_guid_and_retains_disk_and_evidence(prepa
 def test_retirement_requires_separate_discard_consent(
     prepared: UbuntuPreparationRecord, authorized: bool, reviewed: bool,
 ) -> None:
-    before = (prepared.workspace / "manifest.json").read_bytes()
+    before = (_control(prepared.workspace) / "manifest.json").read_bytes()
     runner = RetireRunner(prepared.workspace)
     with pytest.raises(PreparationError, match="authorization"):
         retirement.retire_image_preparation_vm(
             prepared, operator_authorized=authorized, discard_image_reviewed=reviewed, runner=runner,
         )
     assert not runner.calls
-    assert (prepared.workspace / "manifest.json").read_bytes() == before
-    assert not (prepared.workspace / "retirement.claim").exists()
+    assert (_control(prepared.workspace) / "manifest.json").read_bytes() == before
+    assert not (_control(prepared.workspace) / "retirement.claim").exists()
 
 
 @pytest.mark.parametrize("timeout", [0.0, 301.0, float("nan"), float("inf")])
 def test_invalid_timeout_has_no_mutation(prepared: UbuntuPreparationRecord, timeout: float) -> None:
-    before = (prepared.workspace / "manifest.json").read_bytes()
+    before = (_control(prepared.workspace) / "manifest.json").read_bytes()
     runner = RetireRunner(prepared.workspace)
     with pytest.raises(PreparationError, match="timeout"):
         _call(prepared, runner, command_timeout_seconds=timeout)
     assert not runner.calls
-    assert (prepared.workspace / "manifest.json").read_bytes() == before
-    assert not (prepared.workspace / "retirement.claim").exists()
+    assert (_control(prepared.workspace) / "manifest.json").read_bytes() == before
+    assert not (_control(prepared.workspace) / "retirement.claim").exists()
 
 
 @pytest.mark.parametrize("field", [
-    "sandbox_id", "vm_name", "owner_marker", "disk", "vm_config_root", "vm_config", "network_enabled", "status", "version",
+    "sandbox_id", "vm_name", "owner_marker", "disk", "vm_config_root", "vm_config", "network_enabled", "status", "version", "workspace", "control",
 ])
 def test_manifest_ownership_mismatch_rejected_without_claim(prepared: UbuntuPreparationRecord, field: str) -> None:
-    path = prepared.workspace / "manifest.json"
+    path = _control(prepared.workspace) / "manifest.json"
     snapshot = json.loads(path.read_bytes())
     snapshot[field] = True if field == "network_enabled" else "wrong"
     path.write_text(json.dumps(snapshot), encoding="utf-8")
@@ -177,16 +179,16 @@ def test_manifest_ownership_mismatch_rejected_without_claim(prepared: UbuntuPrep
         _call(prepared, runner)
     assert not runner.calls
     assert path.read_bytes() == before
-    assert not (prepared.workspace / "retirement.claim").exists()
+    assert not (_control(prepared.workspace) / "retirement.claim").exists()
 
 
 @pytest.mark.parametrize("problem", ["pending", "claim", "missing-disk", "missing-config", "bad-json", "oversized-manifest"])
 def test_incomplete_or_missing_inputs_block_host_call(prepared: UbuntuPreparationRecord, problem: str) -> None:
     workspace = prepared.workspace
     if problem == "pending":
-        (workspace / "manifest.pending").write_bytes(b"incomplete")
+        (_control(workspace) / "manifest.pending").write_bytes(b"incomplete")
     elif problem == "claim":
-        (workspace / "retirement.claim").write_bytes(b"earlier attempt")
+        (_control(workspace) / "retirement.claim").write_bytes(b"earlier attempt")
     elif problem == "missing-disk":
         (workspace / "ubuntu-build.vhdx").unlink()
     elif problem == "missing-config":
@@ -194,22 +196,22 @@ def test_incomplete_or_missing_inputs_block_host_call(prepared: UbuntuPreparatio
         (configuration / "test-evidence.txt").unlink()
         configuration.rmdir()  # root still exists; it must not count as the exact VM directory
     elif problem == "bad-json":
-        (workspace / "manifest.json").write_bytes(b"not json")
+        (_control(workspace) / "manifest.json").write_bytes(b"not json")
     else:
-        (workspace / "manifest.json").write_bytes(b"x" * 8193)
-    before = (workspace / "manifest.json").read_bytes()
+        (_control(workspace) / "manifest.json").write_bytes(b"x" * 8193)
+    before = (_control(workspace) / "manifest.json").read_bytes()
     runner = RetireRunner(workspace)
     with pytest.raises(PreparationError):
         _call(prepared, runner)
     assert not runner.calls
-    assert (workspace / "manifest.json").read_bytes() == before
+    assert (_control(workspace) / "manifest.json").read_bytes() == before
 
 
 @pytest.mark.parametrize("status", ["provisioning_unknown", "seed_attach_unknown", "created_seed_attached_not_started"])
 def test_unknown_attempt_requires_extra_review_but_eligible_known_state_does_not(
     prepared: UbuntuPreparationRecord, status: str,
 ) -> None:
-    path = prepared.workspace / "manifest.json"
+    path = _control(prepared.workspace) / "manifest.json"
     snapshot = json.loads(path.read_bytes())
     snapshot["status"] = status
     path.write_text(json.dumps(snapshot), encoding="utf-8")
@@ -221,7 +223,7 @@ def test_unknown_attempt_requires_extra_review_but_eligible_known_state_does_not
             _call(record, runner)
         assert not runner.calls
         assert path.read_bytes() == before
-        assert not (prepared.workspace / "retirement.claim").exists()
+        assert not (_control(prepared.workspace) / "retirement.claim").exists()
     result = _call(record, runner, unknown_state_reviewed=True)
     assert result.status == "retired_vm_disk_retained"
 
@@ -236,10 +238,10 @@ def test_uncertain_host_receipt_retains_unknown_marker_and_blocks_retry(
     runner = RetireRunner(prepared.workspace, fail=change == "raise", change=change)
     with pytest.raises(PreparationError, match=f"status unknown; inspect exact ID {prepared.sandbox_id}"):
         _call(prepared, runner)
-    snapshot = json.loads((prepared.workspace / "manifest.json").read_bytes())
+    snapshot = json.loads((_control(prepared.workspace) / "manifest.json").read_bytes())
     assert snapshot["status"] == "retirement_unknown"
     assert snapshot["sandbox_id"] == prepared.sandbox_id
-    assert (prepared.workspace / "retirement.claim").is_file()
+    assert (_control(prepared.workspace) / "retirement.claim").is_file()
     with pytest.raises(PreparationError, match="inspect"):
         _call(prepared, runner)
     assert len(runner.calls) == 1
@@ -263,7 +265,7 @@ def test_manifest_storage_failure_keeps_claim_and_blocks_retry(
     runner = RetireRunner(prepared.workspace)
     with pytest.raises(PreparationError, match="status unknown"):
         _call(prepared, runner)
-    assert (prepared.workspace / "retirement.claim").is_file()
+    assert (_control(prepared.workspace) / "retirement.claim").is_file()
     assert len(runner.calls) == fail_on - 1
     with pytest.raises(PreparationError, match="inspect"):
         _call(prepared, runner)
@@ -271,11 +273,11 @@ def test_manifest_storage_failure_keeps_claim_and_blocks_retry(
 
 
 def _launched_record(record: UbuntuPreparationRecord, status: str) -> UbuntuPreparationRecord:
-    manifest = record.workspace / "manifest.json"
+    manifest = _control(record.workspace) / "manifest.json"
     snapshot = json.loads(manifest.read_bytes())
     snapshot.update({"status": status, "vm_id": _GUID, "launch_plan_sha256": "1" * 64})
     manifest.write_text(json.dumps(snapshot), encoding="utf-8")
-    (record.workspace / "launch.claim").write_text(json.dumps({
+    (_control(record.workspace) / "launch.claim").write_text(json.dumps({
         "version": 1, "vm_name": record.vm_name, "vm_id": _GUID, "plan_sha256": "1" * 64,
     }), encoding="utf-8")
     return replace(record, status=status)
@@ -295,8 +297,8 @@ def test_launched_retirement_forwards_original_guid_and_checks_review(
     assert result.status == "retired_vm_disk_retained"
     args = runner.calls[0][1]
     assert args[args.index("-ExpectedVmId") + 1] == _GUID
-    assert (record.workspace / "launch.claim").is_file()
-    assert not (record.workspace / "vm-operation.lock").exists()
+    assert (_control(record.workspace) / "launch.claim").is_file()
+    assert not (_control(record.workspace) / "vm-operation.lock").exists()
 
 
 @pytest.mark.parametrize("problem", ["missing-claim", "changed-claim", "missing-guid", "missing-digest", "malformed-claim", "orphan-claim"])
@@ -304,8 +306,8 @@ def test_launched_binding_must_match_before_discard_claim_or_host_call(
     prepared: UbuntuPreparationRecord, problem: str,
 ) -> None:
     record = _launched_record(prepared, "installer_vm_started_not_reviewed")
-    claim = record.workspace / "launch.claim"
-    manifest = record.workspace / "manifest.json"
+    claim = _control(record.workspace) / "launch.claim"
+    manifest = _control(record.workspace) / "manifest.json"
     if problem == "missing-claim":
         claim.unlink()
     elif problem == "changed-claim":
@@ -330,17 +332,17 @@ def test_launched_binding_must_match_before_discard_claim_or_host_call(
         _call(record, runner, unknown_state_reviewed=True)
     assert not runner.calls
     assert manifest.read_bytes() == previous
-    assert not (record.workspace / "retirement.claim").exists()
+    assert not (_control(record.workspace) / "retirement.claim").exists()
 
 
 def test_wrong_retired_guid_keeps_unknown_state(prepared: UbuntuPreparationRecord) -> None:
     record = _launched_record(prepared, "installer_vm_started_not_reviewed")
-    path = record.workspace / "manifest.json"
+    path = _control(record.workspace) / "manifest.json"
     snapshot = json.loads(path.read_bytes())
     other = "87654321-4321-4321-4321-cba987654321"
     snapshot["vm_id"] = other
     path.write_text(json.dumps(snapshot), encoding="utf-8")
-    claim = record.workspace / "launch.claim"
+    claim = _control(record.workspace) / "launch.claim"
     binding = json.loads(claim.read_bytes())
     binding["vm_id"] = other
     claim.write_text(json.dumps(binding), encoding="utf-8")
@@ -348,25 +350,25 @@ def test_wrong_retired_guid_keeps_unknown_state(prepared: UbuntuPreparationRecor
     with pytest.raises(PreparationError, match="retirement status unknown"):
         _call(record, runner)
     assert json.loads(path.read_bytes())["status"] == "retirement_unknown"
-    assert (record.workspace / "retirement.claim").is_file()
+    assert (_control(record.workspace) / "retirement.claim").is_file()
 
 
 def test_retirement_respects_busy_launch_guard(prepared: UbuntuPreparationRecord) -> None:
-    guard = prepared.workspace / "vm-operation.lock"
+    guard = _control(prepared.workspace) / "vm-operation.lock"
     guard.write_bytes(b"existing launch or interrupted operation")
-    before = (prepared.workspace / "manifest.json").read_bytes()
+    before = (_control(prepared.workspace) / "manifest.json").read_bytes()
     runner = RetireRunner(prepared.workspace)
     with pytest.raises(PreparationError, match="busy or interrupted"):
         _call(prepared, runner)
     assert not runner.calls
-    assert (prepared.workspace / "manifest.json").read_bytes() == before
+    assert (_control(prepared.workspace) / "manifest.json").read_bytes() == before
     assert guard.read_bytes() == b"existing launch or interrupted operation"
-    assert not (prepared.workspace / "retirement.claim").exists()
+    assert not (_control(prepared.workspace) / "retirement.claim").exists()
 
 
 @pytest.mark.parametrize("problem", ["missing-root", "legacy-root", "wrong-vm"])
 def test_legacy_or_wrong_configuration_cannot_retire(prepared, problem: str) -> None:
-    path = prepared.workspace / "manifest.json"
+    path = _control(prepared.workspace) / "manifest.json"
     snapshot = json.loads(path.read_bytes())
     if problem == "missing-root":
         del snapshot["vm_config_root"]
@@ -381,11 +383,11 @@ def test_legacy_or_wrong_configuration_cannot_retire(prepared, problem: str) -> 
         _call(prepared, runner)
     assert not runner.calls
     assert path.read_bytes() == previous
-    assert not (prepared.workspace / "retirement.claim").exists()
+    assert not (_control(prepared.workspace) / "retirement.claim").exists()
 
 
 def test_reconciled_never_started_retirement_is_guid_bound(prepared) -> None:
-    path = prepared.workspace / "manifest.json"
+    path = _control(prepared.workspace) / "manifest.json"
     snapshot = json.loads(path.read_bytes())
     snapshot["vm_id"] = _GUID
     path.write_text(json.dumps(snapshot), encoding="utf-8")
@@ -393,6 +395,35 @@ def test_reconciled_never_started_retirement_is_guid_bound(prepared) -> None:
     _call(prepared, runner)
     args = runner.calls[0][1]
     assert args[args.index("-ExpectedVmId") + 1] == _GUID
+
+
+def test_worker_metadata_decoys_are_retained_but_ignored_on_retirement(prepared) -> None:
+    decoy = prepared.workspace / "manifest.json"
+    decoy.write_bytes(b"worker-controlled manifest, not authority")
+    result = _call(prepared, RetireRunner(prepared.workspace))
+    assert result.status == "retired_vm_disk_retained"
+    assert decoy.read_bytes() == b"worker-controlled manifest, not authority"
+    assert (prepared.control / "retirement.claim").is_file()
+
+
+@pytest.mark.parametrize("problem", ["missing-control", "legacy-version", "unsafe-acl"])
+def test_control_refusal_blocks_retirement_without_claim(prepared, monkeypatch, problem) -> None:
+    if problem == "missing-control":
+        (prepared.workspace / "manifest.json").write_bytes(prepared.manifest.read_bytes())
+        prepared.control.rename(prepared.control.with_name(prepared.control.name + ".retained-test"))
+    elif problem == "legacy-version":
+        snapshot = json.loads(prepared.manifest.read_bytes())
+        snapshot["version"] = 1
+        prepared.manifest.write_text(json.dumps(snapshot), encoding="utf-8")
+    else:
+        def unsafe(path):
+            raise PreparationError("test model: VM worker control rights")
+        monkeypatch.setattr("night_shifts.ubuntu_preparation_control._check_control_permissions", unsafe)
+    runner = RetireRunner(prepared.workspace)
+    with pytest.raises(PreparationError):
+        _call(prepared, runner)
+    assert not runner.calls
+    assert not (prepared.control / "retirement.claim").exists()
 
 
 def test_retirement_script_pins_guid_rechecks_ownership_and_never_deletes_disk() -> None:

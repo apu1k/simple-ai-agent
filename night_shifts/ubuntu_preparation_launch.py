@@ -22,6 +22,7 @@ from night_shifts.hyperv_image_preflight import _checked_path
 from night_shifts.ubuntu_image_preparation import PreparationError, UbuntuPreparationRecord, _store_manifest, preparation_config_paths
 from night_shifts.ubuntu_install_seed_iso import inspect_ubuntu_install_seed_iso
 from night_shifts.ubuntu_iso_inputs import inspect_ubuntu_inputs
+from night_shifts.ubuntu_preparation_control import checked_preparation_control
 from night_shifts.ubuntu_preparation_safety import checked_vm_guid, preparation_operation
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
@@ -37,6 +38,7 @@ class UbuntuPreparationLaunchPlan:
     vm_name: str
     vm_id: str
     workspace: Path
+    control: Path
     disk: Path
     vm_config: Path
     installer_iso: Path
@@ -53,7 +55,9 @@ class UbuntuPreparationLaunchPlan:
     command_timeout_seconds: float
 
     def _fields(self) -> dict[str, object]:
-        return {key: str(value) if isinstance(value, Path) else value for key, value in asdict(self).items()}
+        fields = {key: str(value) if isinstance(value, Path) else value for key, value in asdict(self).items()}
+        fields["manifest"] = str(self.control / "manifest.json")
+        return fields
 
     @property
     def sha256(self) -> str:
@@ -64,7 +68,7 @@ class UbuntuPreparationLaunchPlan:
     def to_review_dict(self) -> dict[str, object]:
         """Return public review data in memory; no files/host commands are written."""
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "purpose": "attended preparation installer launch only; NOT Gate A",
             "plan_sha256": self.sha256,
             "inputs": self._fields(),
@@ -91,7 +95,7 @@ class UbuntuPreparationLaunchPlan:
 
 
 def _launch_inputs(
-    record: UbuntuPreparationRecord, vm_id: str, command_timeout_seconds: float,
+    record: UbuntuPreparationRecord, vm_id: str, command_timeout_seconds: float, *, operation_held: bool = False,
 ) -> tuple[UbuntuPreparationLaunchPlan, dict[str, Any]]:
     vm_id = checked_vm_guid(vm_id)
     if isinstance(command_timeout_seconds, bool) or not isinstance(command_timeout_seconds, (int, float)) or (
@@ -106,11 +110,15 @@ def _launch_inputs(
     checkout = Path(__file__).resolve().parents[1]
     if not root.is_dir() or root.name != record.sandbox_id or root == checkout or checkout in root.parents:
         raise PreparationError("preparation workspace identity or location differs")
-    for name in ("manifest.pending", "launch.claim", "retirement.claim"):
-        path = root / name
+    control = checked_preparation_control(root)
+    blocked: tuple[str, ...] = ("manifest.pending", "launch.claim", "retirement.claim")
+    if not operation_held:
+        blocked += ("vm-operation.lock",)
+    for name in blocked:
+        path = control / name
         if path.exists() or path.is_symlink():
             raise PreparationError(f"{name} present; inspect exact workspace, never launch or retry blindly")
-    manifest = _checked_path(root / "manifest.json", "preparation ownership manifest")
+    manifest = _checked_path(control / "manifest.json", "preparation ownership manifest")
     if not stat.S_ISREG(manifest.stat().st_mode) or manifest.stat().st_size > 8192:
         raise PreparationError("preparation manifest is not a bounded regular file")
     with manifest.open("rb") as stream:
@@ -123,8 +131,8 @@ def _launch_inputs(
         raise PreparationError("invalid preparation manifest") from exc
     config_root, config_path = preparation_config_paths(root, record.vm_name)
     if not isinstance(snapshot, dict) or any((
-        type(snapshot.get("version")) is not int, snapshot.get("version") != 1,
-        snapshot.get("sandbox_id") != record.sandbox_id, snapshot.get("vm_name") != record.vm_name,
+        type(snapshot.get("version")) is not int, snapshot.get("version") != 2,
+        snapshot.get("workspace") != str(root), snapshot.get("control") != str(control),        snapshot.get("sandbox_id") != record.sandbox_id, snapshot.get("vm_name") != record.vm_name,
         snapshot.get("owner_marker") != "night-shift-image-prep-owner:" + record.sandbox_id,
         snapshot.get("disk") != str(root / "ubuntu-build.vhdx"),
         snapshot.get("vm_config_root") != str(config_root),
@@ -171,7 +179,7 @@ def _launch_inputs(
     if len(script_bytes) != info.st_size or script.stat().st_size != info.st_size:
         raise PreparationError("trusted launch script changed during review")
     plan = UbuntuPreparationLaunchPlan(
-        record.sandbox_id, record.vm_name, vm_id, root, disk, config,
+        record.sandbox_id, record.vm_name, vm_id, root, control, disk, config,
         installer, inputs.iso_sha256, bundle, inputs.bundle_sha256, seed, install_seed.sha256,
         snapshot["cpu_count"], snapshot["memory_mb"], snapshot["disk_gb"],
         hashlib.sha256(raw).hexdigest(), hashlib.sha256(script_bytes).hexdigest(), float(command_timeout_seconds),
@@ -218,7 +226,9 @@ def launch_image_preparation_vm(
     workspace = _checked_path(record.workspace, "preparation workspace")
     with preparation_operation(workspace, "launch"):
         try:
-            actual, snapshot = _launch_inputs(record, approved_plan.vm_id, approved_plan.command_timeout_seconds)
+            actual, snapshot = _launch_inputs(
+                record, approved_plan.vm_id, approved_plan.command_timeout_seconds, operation_held=True,
+            )
         except (OSError, ValueError) as exc:
             raise PreparationError(f"launch inputs rejected before host call: {exc}") from exc
         # Fingerprints also distinguish Python-equal but differently typed fields
@@ -229,7 +239,7 @@ def launch_image_preparation_vm(
             "version": 1, "vm_name": actual.vm_name, "vm_id": actual.vm_id, "plan_sha256": actual.sha256,
         }
         try:
-            with (workspace / "launch.claim").open("xb") as stream:
+            with (actual.control / "launch.claim").open("xb") as stream:
                 stream.write((json.dumps(claim_data, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii"))
                 stream.flush()
                 os.fsync(stream.fileno())
@@ -239,7 +249,7 @@ def launch_image_preparation_vm(
         snapshot["launch_plan_sha256"] = actual.sha256
         snapshot["launch_mode"] = "attended_install_only"
         snapshot["status"] = "launch_unknown"
-        manifest = workspace / "manifest.json"
+        manifest = actual.control / "manifest.json"
         script = Path(__file__).resolve().parent / "backends" / "hyperv_scripts" / "launch_image_vm.ps1"
         try:
             _store_manifest(manifest, snapshot, first=False)

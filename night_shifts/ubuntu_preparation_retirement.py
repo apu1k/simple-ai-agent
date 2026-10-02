@@ -22,6 +22,7 @@ from night_shifts.ubuntu_image_preparation import (
     _store_manifest,
     preparation_config_paths,
 )
+from night_shifts.ubuntu_preparation_control import checked_preparation_control
 from night_shifts.ubuntu_preparation_safety import checked_vm_guid, preparation_operation
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
@@ -43,11 +44,12 @@ def _retirement_inputs(record: UbuntuPreparationRecord) -> tuple[Path, dict[str,
     checkout = Path(__file__).resolve().parents[1]
     if not workspace.is_dir() or workspace.name != record.sandbox_id or workspace == checkout or checkout in workspace.parents:
         raise PreparationError("preparation workspace identity or location differs")
-    manifest = _checked_path(workspace / "manifest.json", "preparation ownership manifest")
+    control = checked_preparation_control(workspace)
+    manifest = _checked_path(control / "manifest.json", "preparation ownership manifest")
     info = manifest.stat()
     if not stat.S_ISREG(info.st_mode) or info.st_size > 8192:
         raise PreparationError("preparation manifest is not a bounded regular file")
-    pending = workspace / "manifest.pending"
+    pending = control / "manifest.pending"
     if pending.exists() or pending.is_symlink():
         raise PreparationError("incomplete manifest update; inspect before retirement")
     with manifest.open("rb") as stream:
@@ -60,8 +62,9 @@ def _retirement_inputs(record: UbuntuPreparationRecord) -> tuple[Path, dict[str,
         raise PreparationError("invalid preparation manifest") from exc
     config_root, config_path = preparation_config_paths(workspace, record.vm_name)
     if not isinstance(snapshot, dict) or any((
-        snapshot.get("version") != 1,
-        snapshot.get("sandbox_id") != record.sandbox_id,
+        type(snapshot.get("version")) is not int, snapshot.get("version") != 2,
+        snapshot.get("workspace") != str(workspace),
+        snapshot.get("control") != str(control),        snapshot.get("sandbox_id") != record.sandbox_id,
         snapshot.get("vm_name") != record.vm_name,
         snapshot.get("owner_marker") != "night-shift-image-prep-owner:" + record.sandbox_id,
         snapshot.get("disk") != str(workspace / "ubuntu-build.vhdx"),
@@ -81,7 +84,7 @@ def _retirement_inputs(record: UbuntuPreparationRecord) -> tuple[Path, dict[str,
 
 def _launch_binding(record: UbuntuPreparationRecord, workspace: Path, snapshot: dict[str, Any]) -> str | None:
     """Never discard a same-name replacement after a GUID-pinned launch."""
-    claim_path = workspace / "launch.claim"
+    claim_path = checked_preparation_control(workspace) / "launch.claim"
     if record.status not in _LAUNCHED:
         if claim_path.exists() or claim_path.is_symlink():
             raise PreparationError("launch claim without matching launch state; inspect before retirement")
@@ -142,7 +145,8 @@ def retire_image_preparation_vm(
             expected_vm_id = _launch_binding(record, workspace, snapshot)
         except (OSError, ValueError) as exc:
             raise PreparationError(f"retirement inputs rejected: {exc}") from exc
-        claim = workspace / "retirement.claim"
+        control = checked_preparation_control(workspace)
+        claim = control / "retirement.claim"
         try:
             with claim.open("xb") as stream:
                 stream.write((record.vm_name + "\n").encode("ascii"))
@@ -155,7 +159,7 @@ def retire_image_preparation_vm(
         snapshot["retirement_previous_status"] = record.status
         snapshot["retirement_mode"] = "discard_vm_retain_disk"
         snapshot["status"] = "retirement_unknown"
-        manifest = workspace / "manifest.json"
+        manifest = control / "manifest.json"
         script = Path(__file__).resolve().parent / "backends" / "hyperv_scripts" / "retire_image_vm.ps1"
         try:
             _store_manifest(manifest, snapshot, first=False)

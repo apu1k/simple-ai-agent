@@ -5,10 +5,16 @@ This is a review procedure for a separate preparation VM, not Gate A itself.
 One operator-reported preparation attempt has been observed OFF after creation
 and separately approved combined-seed attachment. The persisted manifest records
 `created_seed_attached_not_started` and the local seed verification passes.
-Host observations exposed configuration-path and fixed-memory assumptions that
-the fake runners missed: the VM still reports Dynamic Memory enabled, contrary
-to the reviewed fixed-memory policy. It must remain OFF until separately reviewed
-correction and isolation checks pass. Launch and retirement still have only
+Host observations exposed configuration-path, fixed-memory and control-state
+permission assumptions that the fake runners missed. A separately approved
+exact-GUID memory correction now has matching private before/after receipts:
+fixed 2 GiB RAM, Dynamic Memory disabled, VM OFF and unchanged manifest.
+The installer DVD is observed first, the 20 GiB VHDX is Dynamic/parentless/not
+host-mounted, and GPU partition/DDA/Fibre Channel queries succeeded with zero
+devices. Windows capability derivation exactly identifies the additional SID as
+`vmWorkerProcess`; the old manifest inherits its FullControl permission.
+This VM must remain OFF pending separately reviewed host-only control migration
+and final sharing/attended-console review. Launch and retirement still have only
 offline/fake-runner evidence; successful attachment does not certify readiness.
 The shell/YAML candidates have not been executed in Ubuntu. The operator must separately
 approve actual paths, independently reviewed digests, resources, permissions,
@@ -41,6 +47,76 @@ path, one recorded writable disk, exactly the installer and combined seed DVDs,
 no switch attachment, off-state and resources. Compare media digests again.
 An uncertain create/attach status needs inspection, never automatic retry.
 
+### Host-only control versus VM-worker storage (version 2)
+
+For workspace `<root>/<32-hex-id>`, authoritative state is now in the exact
+sibling `<root>/<32-hex-id>.control`, never beneath worker-writable VM storage.
+`record.control` and `record.manifest` expose these derived paths. Version-2
+manifests bind both `workspace` and `control`, in addition to exact VM paths,
+name/marker, media, resources, status and any observed GUID. Creation records
+its unknown state there before the host call. The data/configuration paths and
+necessary Hyper-V permissions are unchanged; no control path is passed to a
+Hyper-V script. The workspace root must initially be empty and receives two
+identity-bound directories during a new approved creation.
+
+The control directory contains only the manifest, pending update, launch and
+retirement claims, and operation lock. Native Windows owner/DACL checks require
+only the current operator account, SYSTEM and Administrators with simple
+FullControl allow entries on control state and its private parent. Ancestors
+are checked for untrusted ownership, replacement/deletion-child or ACL-changing
+grants. A volume root's ordinary Modify permission is not treated as permission
+to rename that root; untrusted delete-child/ACL-changing grants still refuse.
+Paths must be link/reparse-free; control files must be regular and single-link.
+Unknown entries, unsupported ACEs, broad/worker grants, missing control or drift
+stop progress. The checks never modify ACLs. New control directories/files
+inherit the reviewed private parent and are checked again; pending replacement
+files stay there as well. Real Windows permission evidence is required; choosing
+a fake runner never bypasses production permission checks. Fake-host tests
+explicitly substitute an ACL model in four named test modules; separate policy
+models and a read-only native test do not prove guest isolation.
+
+Attach, launch and retirement use the same host-only operation lock. Permanent
+claims and unknown-state rules retain their start/discard protections. Local
+launch packets bind the control and manifest paths and refuse a busy lock.
+Metadata/claims in the VM-worker workspace are untrusted legacy files/decoys:
+new code neither adopts, updates nor deletes them, and never falls back to them.
+Restricting only the old manifest would not protect later replacement files or
+claims from its worker-writable parent. Keep necessary worker access to the
+VHDX/configuration; do not blindly remove the `vmWorkerProcess` capability.
+
+**Migration of the current VM is NOT authorized by repository-file approval.**
+There is no automatic migrator. After this complete batch passes offline review:
+
+1. Reobserve exact GUID `1691b381-a69b-4c6c-95bf-c3000d169191`, name/notes/config,
+   generation 2 and OFF state; recheck sole disk, two DVDs, resources, network,
+   reviewed digests and exclusive operator use. Never migrate a launched or
+   uncertain attempt using this never-started procedure.
+2. Require the existing version-1 `created_seed_attached_not_started` manifest,
+   SHA-256 `c1f066ba8a669de6563494bb66b462ce30be25030df4692b86749fb3ca3b1c71`,
+   exact GUID/config/media bindings and no legacy pending writes, claims or lock.
+   Preserve its exact bytes/hash as new write-once private before-evidence.
+3. Present a separate approval for the initially absent exact sibling
+   `D:\NightShift\build-sandboxes\20ce30aa97c345b58b4a61155a26d72d.control`.
+   Validate its private parent and ancestors, create it without reuse or overwrite,
+   and independently check the resulting owner/DACL. No permission changes to
+   VM data/configuration, D: or other directories are included.
+4. Write a new control manifest with only version changed to 2 and exact
+   `workspace`/`control` fields added. Preserve all existing status, identity,
+   GUID, path, media-hash and resource fields. Retain the legacy workspace copy
+   as non-authoritative evidence; it is no longer read by operations. Migration
+   is not permission to attach, launch, retire or delete resources.
+5. Recheck actual bytes, fields and native control permissions, retain private
+   after-evidence and construct a fresh local packet. A changed input, interrupted
+   write, collision or uncertain result stops for inspection, never blind retry.
+
+Historical manually authored primary-group evidence disagrees with later native
+observations; retain that discrepancy, not a silently rewritten history. The
+control policy validates actual owner/DACL, not the historical group string.
+A protected control plane does not eliminate Hyper-V escapes or protect against
+a compromised administrator/operator/SYSTEM process. Basic-session-only console
+use, no redirection, reviewed host integration and separately authorized attended
+boot remain required. Gate A remains unrun.
+
 ### Explicit fixed-memory configuration and read-back
 
 The approved preparation policy is fixed RAM, not Dynamic Memory. The original
@@ -67,9 +143,12 @@ the VM, bypass the launch guard or retry an uncertain host operation blindly.
 
 The current integration-service report shows Guest Service Interface disabled;
 other enabled integrations are still host/guest communication channels, not
-ordinary Windows drive shares. Keep permissions/integration/sharing review open
-before boot. Generic `EFI SCSI Device` boot descriptions do not identify the
-installer; inspect the first firmware entry's actual device/path as well.
+ordinary Windows drive shares. Keep integration/sharing review open before boot.
+A subsequent read-only firmware report identifies the first entry as the actual
+reviewed installer `DvdDrive` path; generic `EFI SCSI Device` descriptions alone
+would not have been sufficient. Host enhanced-session support remains enabled;
+no host-global setting changed. Use basic session only, without drive/clipboard
+or device redirection, under the separately reviewed attended launch scope.
 
 ### Exact configuration root versus Hyper-V VM.Path
 
@@ -83,8 +162,12 @@ prefix, an existing root directory or an arbitrary observed path. Unknown layout
 remain a refusal; never discover a directory and silently adopt it.
 
 Old manifests that record the root as `vm_config` are deliberately rejected.
-There is no automatic migration/fallback. For an existing never-started attempt,
-prepare a separate exact-file reconciliation proposal **after offline validation**:
+There is no automatic migration/fallback. The following is the historical
+configuration-only reconciliation procedure used before control isolation;
+it does not make a version-1 workspace manifest usable by new operations.
+Current recovery must also satisfy the separately approved version-2 host-only
+migration above. For an existing never-started attempt, prepare a separate
+exact-file reconciliation proposal **after offline validation**:
 
 1. Independently observe the exact Hyper-V GUID and inspect by that GUID: exact
    name/notes, generation 2, OFF state, single recorded disk, sole installer DVD,
@@ -119,10 +202,11 @@ retain the original traceback and inspect the manifest/host instead of rerunning
 Use the [approval-packet template](night_shift_preparation_launch_approval.md)
 for actual operator observations and a separately approved attended time window.
 After create/attach, `build_preparation_launch_plan(record, observed_vm_id)` reads
-only local files and returns an immutable packet. Its `to_review_dict()` contains
+local files and native control permissions and returns an immutable packet. Its `to_review_dict()` contains
 paths, pinned media digests, manifest/script hashes, resources and expected host
-policy. It does not query Hyper-V, authenticate the publisher, inspect ACLs, or
-write a packet file. The VM GUID must come from independent trusted host
+policy. It does not query Hyper-V, authenticate the publisher, inspect VM-storage
+or console/sharing ACLs, or write a packet file. Host-only control owner/DACL and
+ancestor permissions are inspected natively. The VM GUID must come from independent trusted host
 inspection; it is never derived from the generated preparation name. A packet
 fingerprint binds review fields but is not a signature or permission grant.
 
@@ -149,13 +233,13 @@ bounds the PowerShell call, NOT the running VM lifetime or complete installation
 An operator must attend the graphical console. No supervisor, install-success
 poller, media removal, automatic installed-guest first boot or freeze is included.
 
-Launch and retirement share `vm-operation.lock`. Normal returns/handled errors
+Attach, launch and retirement share host-only `vm-operation.lock`. Normal returns/handled errors
 release only the exact guard created by that wrapper; permanent claims survive.
 A process crash, changed guard or failed release leaves it for manual inspection.
 Never infer a stale lock from elapsed time. Confirm no active operation and
 independently inspect the exact VM/workspace before separately authorizing
 resolution. This coordinates these wrappers, not arbitrary Hyper-V actors;
-create/attach and all other operators/runners still require exclusive host use.
+creation and all other operators/runners still require exclusive host use.
 
 ## 2. Candidate installer entry (one-time manual confirmation)
 

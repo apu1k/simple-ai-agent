@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from night_shifts.ubuntu_preparation_control import preparation_control_path as _control
+
 from night_shifts.protocol_image_bundle import build_protocol_image_bundle
 from night_shifts.ubuntu_image_preparation import (
     PreparationError,
@@ -79,8 +81,13 @@ def test_preparation_creates_durable_manifest_but_does_not_start_vm(
     assert "Start-VM" not in script
     assert "Get-FileHash -LiteralPath $InstallerIso -Algorithm SHA256" in script
     assert "Add-VMDvdDrive -VM $createdVm -Path $InstallerIso -Passthru" in script
-    manifest = json.loads((record.workspace / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads((_control(record.workspace) / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "created_not_started"
+    assert manifest["version"] == 2
+    assert manifest["workspace"] == str(record.workspace)
+    assert manifest["control"] == str(record.control)
+    assert record.manifest == record.control / "manifest.json"
+    assert not (record.workspace / "manifest.json").exists()
     assert manifest["network_enabled"] is False
     assert manifest["vm_config_root"] == str(config_root)
     assert manifest["vm_config"] == str(config_path)
@@ -91,7 +98,7 @@ def test_preparation_creates_durable_manifest_but_does_not_start_vm(
     assert manifest["iso_sha256"] == config.iso_sha256
     assert manifest["bundle_sha256"] == config.bundle_sha256
     assert not (record.workspace / "ubuntu-build.vhdx").exists()  # Fake runner
-    assert [item.name for item in config.workspace_root.iterdir()] == [record.sandbox_id]
+    assert {item.name for item in config.workspace_root.iterdir()} == {record.sandbox_id, record.sandbox_id + ".control"}
 
 
 @pytest.mark.parametrize("authorized,reviewed", [(False, True), (True, False), (False, False)])
@@ -116,8 +123,8 @@ def test_unknown_host_creation_retains_exact_id_for_investigation(
         create_image_preparation_vm(
             config, operator_authorized=True, iso_provenance_reviewed=True, runner=runner
         )
-    [folder] = list(config.workspace_root.iterdir())
-    data = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    [folder] = [item for item in config.workspace_root.iterdir() if len(item.name) == 32]
+    data = json.loads((_control(folder) / "manifest.json").read_text(encoding="utf-8"))
     assert data["status"] == "provisioning_unknown"
     assert data["sandbox_id"] == folder.name
     assert len(runner.calls) == 1
@@ -198,6 +205,18 @@ def test_configuration_layout_refuses_relative_workspace() -> None:
     identity = "a" * 32
     with pytest.raises(PreparationError, match="identity-scoped"):
         preparation_config_paths(Path(identity), "night-shift-image-prep-" + identity)
+
+
+def test_unsafe_control_parent_refuses_creation_before_any_file_or_host_call(config, monkeypatch) -> None:
+    def unsafe(path):
+        raise PreparationError("test ACL model: VM worker may replace control")
+
+    monkeypatch.setattr("night_shifts.ubuntu_preparation_control._check_control_permissions", unsafe)
+    runner = FakeRunner()
+    with pytest.raises(PreparationError, match="VM worker"):
+        create_image_preparation_vm(config, operator_authorized=True, iso_provenance_reviewed=True, runner=runner)
+    assert not runner.calls
+    assert not list(config.workspace_root.iterdir())
 
 
 def test_invalid_resources_and_wrong_volume_fail_closed(config: UbuntuPreparationConfig) -> None:

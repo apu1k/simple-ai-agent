@@ -11,6 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from night_shifts.ubuntu_preparation_control import preparation_control_path as _control
+
 import night_shifts.ubuntu_preparation_launch as launch
 from night_shifts.protocol_image_bundle import build_protocol_image_bundle
 from night_shifts.ubuntu_image_preparation import PreparationError, UbuntuPreparationConfig, UbuntuPreparationRecord, create_image_preparation_vm
@@ -53,8 +55,8 @@ class FakeHost:
         if script.name == "attach_image_seed.ps1":
             assert self.state == "Off"
             return name
-        snapshot = json.loads((self.workspace / "manifest.json").read_bytes())
-        assert (self.workspace / "vm-operation.lock").is_file()
+        snapshot = json.loads((_control(self.workspace) / "manifest.json").read_bytes())
+        assert (_control(self.workspace) / "vm-operation.lock").is_file()
         if script.name == "retire_image_vm.ps1":
             assert snapshot["status"] == "retirement_unknown"
             if values.get("-ExpectedVmId", _GUID) != _GUID:
@@ -65,7 +67,7 @@ class FakeHost:
         assert script.name == "launch_image_vm.ps1"
         assert snapshot["status"] == "launch_unknown"
         assert snapshot["vm_id"] == values["-VmId"] == _GUID
-        assert (self.workspace / "launch.claim").is_file()
+        assert (_control(self.workspace) / "launch.claim").is_file()
         assert values["-MemoryBytes"] == str(snapshot["memory_mb"] * 1024**2)
         assert values["-DiskSizeBytes"] == str(snapshot["disk_gb"] * 1024**3)
         assert values["-CpuCount"] == str(snapshot["cpu_count"])
@@ -148,7 +150,9 @@ def test_packet_is_deterministic_read_only_and_not_host_evidence(ready, tmp_path
     assert packet["expected_host_policy"]["minimum_free_bytes"] == 20 * 1024**3
     assert "NOT Gate A" in packet["purpose"]
     assert plan.vm_config == record.workspace / "vm-config" / record.vm_name
-    assert plan.manifest_sha256 == hashlib.sha256((record.workspace / "manifest.json").read_bytes()).hexdigest()
+    assert plan.control == record.control
+    assert packet["inputs"]["manifest"] == str(record.manifest)
+    assert plan.manifest_sha256 == hashlib.sha256((_control(record.workspace) / "manifest.json").read_bytes()).hexdigest()
     monkeypatch.setattr(launch.shutil, "disk_usage", lambda path: SimpleNamespace(free=99 * 1024**3))
     assert launch.build_preparation_launch_plan(record, _GUID) == plan
     assert host.calls == calls
@@ -160,11 +164,11 @@ def test_integrated_start_once_then_guid_bound_discard_keeps_disk(ready) -> None
     started = _start(record, plan, host)
     assert started.status == "installer_vm_started_not_reviewed"
     assert host.started == 1 and host.state == "Running"
-    snapshot = json.loads((record.workspace / "manifest.json").read_bytes())
+    snapshot = json.loads((_control(record.workspace) / "manifest.json").read_bytes())
     assert snapshot["vm_id"] == _GUID
     assert snapshot["launch_plan_sha256"] == plan.sha256
     assert snapshot["launch_mode"] == "attended_install_only"
-    assert not (record.workspace / "vm-operation.lock").exists()
+    assert not (_control(record.workspace) / "vm-operation.lock").exists()
     with pytest.raises(PreparationError):
         _start(record, plan, host)
     assert host.started == 1
@@ -173,26 +177,26 @@ def test_integrated_start_once_then_guid_bound_discard_keeps_disk(ready) -> None
     assert retired.status == "retired_vm_disk_retained"
     assert host.removed == 1 and host.state == "Missing"
     assert plan.disk.read_bytes() == disk_before
-    assert (record.workspace / "launch.claim").is_file()
-    assert (record.workspace / "retirement.claim").is_file()
+    assert (_control(record.workspace) / "launch.claim").is_file()
+    assert (_control(record.workspace) / "retirement.claim").is_file()
     assert "-ExpectedVmId" in host.calls[-1][1]
 
 
 @pytest.mark.parametrize("flags", [(False, True, True), (True, False, True), (True, True, False), (False, False, False)])
 def test_separate_launch_consent_is_required_before_mutation(ready, flags) -> None:
     record, plan, host = ready
-    before = (record.workspace / "manifest.json").read_bytes()
+    before = (_control(record.workspace) / "manifest.json").read_bytes()
     with pytest.raises(PreparationError, match="authorization"):
         launch.launch_image_preparation_vm(record, plan, operator_authorized=flags[0], iso_provenance_reviewed=flags[1], host_state_reviewed=flags[2], runner=host)
     assert host.started == 0 and len(host.calls) == 2
-    assert (record.workspace / "manifest.json").read_bytes() == before
-    assert not (record.workspace / "launch.claim").exists()
+    assert (_control(record.workspace) / "manifest.json").read_bytes() == before
+    assert not (_control(record.workspace) / "launch.claim").exists()
 
 
 @pytest.mark.parametrize("change", ["manifest", "iso", "bundle", "seed", "resource-plan", "typed-plan", "guid-plan", "busy", "retirement", "launch-claim", "pending", "disk", "config", "space"])
 def test_stale_packet_or_bad_local_inputs_rejected_without_launch_claim(ready, change: str, monkeypatch: pytest.MonkeyPatch) -> None:
     record, plan, host = ready
-    manifest = record.workspace / "manifest.json"
+    manifest = _control(record.workspace) / "manifest.json"
     if change == "manifest":
         data = json.loads(manifest.read_bytes())
         data["review_note"] = "changed after approval"
@@ -208,7 +212,7 @@ def test_stale_packet_or_bad_local_inputs_rejected_without_launch_claim(ready, c
         plan = replace(plan, vm_id="not-a-guid")
     elif change in {"busy", "retirement", "launch-claim", "pending"}:
         filename = {"busy": "vm-operation.lock", "retirement": "retirement.claim", "launch-claim": "launch.claim", "pending": "manifest.pending"}[change]
-        (record.workspace / filename).write_bytes(b"earlier unresolved operation")
+        (_control(record.workspace) / filename).write_bytes(b"earlier unresolved operation")
     elif change == "disk":
         plan.disk.unlink()
     elif change == "config":
@@ -221,13 +225,13 @@ def test_stale_packet_or_bad_local_inputs_rejected_without_launch_claim(ready, c
     assert host.started == 0 and len(host.calls) == 2
     assert manifest.read_bytes() == before
     if change != "launch-claim":
-        assert not (record.workspace / "launch.claim").exists()
+        assert not (_control(record.workspace) / "launch.claim").exists()
 
 
 @pytest.mark.parametrize("field,bad", [("cpu_count", True), ("cpu_count", 9), ("memory_mb", 0), ("disk_gb", 41), ("network_enabled", True), ("seed_kind", "generic"), ("version", True)])
 def test_invalid_manifest_policy_cannot_generate_packet(ready, field: str, bad) -> None:
     record, _, host = ready
-    manifest = record.workspace / "manifest.json"
+    manifest = _control(record.workspace) / "manifest.json"
     data = json.loads(manifest.read_bytes())
     data[field] = bad
     manifest.write_text(json.dumps(data), encoding="utf-8")
@@ -239,7 +243,7 @@ def test_invalid_manifest_policy_cannot_generate_packet(ready, field: str, bad) 
 @pytest.mark.parametrize("problem", ["missing-root", "legacy-root", "wrong-root", "wrong-vm", "different-guid", "invalid-guid"])
 def test_wrong_configuration_or_reconciled_guid_cannot_generate_packet(ready, problem: str) -> None:
     record, _, host = ready
-    path = record.workspace / "manifest.json"
+    path = _control(record.workspace) / "manifest.json"
     snapshot = json.loads(path.read_bytes())
     if problem == "missing-root":
         del snapshot["vm_config_root"]
@@ -257,12 +261,12 @@ def test_wrong_configuration_or_reconciled_guid_cannot_generate_packet(ready, pr
         launch.build_preparation_launch_plan(record, _GUID)
     assert path.read_bytes() == previous
     assert len(host.calls) == 2 and host.started == 0
-    assert not (record.workspace / "launch.claim").exists()
+    assert not (_control(record.workspace) / "launch.claim").exists()
 
 
 def test_reconciled_guid_and_exact_config_survive_integrated_lifecycle(ready) -> None:
     record, _, host = ready
-    path = record.workspace / "manifest.json"
+    path = _control(record.workspace) / "manifest.json"
     snapshot = json.loads(path.read_bytes())
     snapshot["vm_id"] = _GUID
     path.write_text(json.dumps(snapshot), encoding="utf-8")
@@ -278,12 +282,12 @@ def test_reconciled_guid_and_exact_config_survive_integrated_lifecycle(ready) ->
 @pytest.mark.parametrize("timeout", [0.0, 301.0, True, float("nan"), float("inf")])
 def test_invalid_packet_timeout_has_no_side_effect(ready, timeout) -> None:
     record, _, host = ready
-    before = (record.workspace / "manifest.json").read_bytes()
+    before = (_control(record.workspace) / "manifest.json").read_bytes()
     with pytest.raises(PreparationError, match="timeout"):
         launch.build_preparation_launch_plan(record, _GUID, command_timeout_seconds=timeout)
-    assert (record.workspace / "manifest.json").read_bytes() == before
+    assert (_control(record.workspace) / "manifest.json").read_bytes() == before
     assert host.started == 0 and len(host.calls) == 2
-    assert not (record.workspace / "launch.claim").exists()
+    assert not (_control(record.workspace) / "launch.claim").exists()
 
 
 @pytest.mark.parametrize("value", ["", "not-a-guid", "00000000-0000-0000-0000-000000000000", None, 123])
@@ -299,12 +303,12 @@ def test_unknown_launch_retains_guid_claim_and_blocks_retry(ready, change: str) 
     host.timeout_after_start = change == "timeout"
     with pytest.raises(PreparationError, match="launch status unknown"):
         _start(record, plan, host)
-    snapshot = json.loads((record.workspace / "manifest.json").read_bytes())
+    snapshot = json.loads((_control(record.workspace) / "manifest.json").read_bytes())
     assert snapshot["status"] == "launch_unknown"
     assert snapshot["vm_id"] == _GUID
     assert snapshot["launch_plan_sha256"] == plan.sha256
-    assert (record.workspace / "launch.claim").is_file()
-    assert not (record.workspace / "vm-operation.lock").exists()
+    assert (_control(record.workspace) / "launch.claim").is_file()
+    assert not (_control(record.workspace) / "vm-operation.lock").exists()
     with pytest.raises(PreparationError):
         _start(record, plan, host)
     assert host.started == 1 and host.removed == 0
@@ -322,8 +326,8 @@ def test_fake_host_preflight_refusal_is_unknown_not_an_automatic_retry(ready, re
     with pytest.raises(PreparationError, match="launch status unknown"):
         _start(record, plan, host)
     assert host.started == 0 and host.removed == 0
-    assert json.loads((record.workspace / "manifest.json").read_bytes())["status"] == "launch_unknown"
-    assert (record.workspace / "launch.claim").is_file()
+    assert json.loads((_control(record.workspace) / "manifest.json").read_bytes())["status"] == "launch_unknown"
+    assert (_control(record.workspace) / "launch.claim").is_file()
 
 
 def test_discard_cannot_overlap_inflight_launch_even_with_unknown_review(ready) -> None:
@@ -333,7 +337,7 @@ def test_discard_cannot_overlap_inflight_launch_even_with_unknown_review(ready) 
         unknown = replace(record, status="launch_unknown")
         with pytest.raises(PreparationError, match="busy or interrupted"):
             _discard(unknown, host, unknown_state_reviewed=True)
-        assert not (record.workspace / "retirement.claim").exists()
+        assert not (_control(record.workspace) / "retirement.claim").exists()
 
     host.on_start = concurrent_discard
     assert _start(record, plan, host).status == "installer_vm_started_not_reviewed"
@@ -357,29 +361,89 @@ def test_launch_manifest_storage_failure_never_retries(ready, monkeypatch: pytes
     with pytest.raises(PreparationError, match="launch status unknown"):
         _start(record, plan, host)
     assert host.started == fail_on - 1
-    assert (record.workspace / "launch.claim").is_file()
+    assert (_control(record.workspace) / "launch.claim").is_file()
     with pytest.raises(PreparationError):
         _start(record, plan, host)
     assert host.started == fail_on - 1
 
 
 def test_operation_guard_excludes_nested_operations_and_releases_on_exception(tmp_path: Path) -> None:
+    workspace = tmp_path / ("a" * 32)
+    workspace.mkdir()
+    _control(workspace).mkdir()
     with pytest.raises(OSError, match="test fault"):
-        with preparation_operation(tmp_path, "launch"):
-            with pytest.raises(PreparationError, match="busy or interrupted"):
-                with preparation_operation(tmp_path, "retire"):
-                    pytest.fail("nested operation must never start")
+        with preparation_operation(workspace, "launch"):
+            for operation in ("attach", "retire"):
+                with pytest.raises(PreparationError, match="busy or interrupted"):
+                    with preparation_operation(workspace, operation):
+                        pytest.fail("nested operation must never start")
             raise OSError("test fault")
-    assert not (tmp_path / "vm-operation.lock").exists()
-    with preparation_operation(tmp_path, "retire"):
+    assert not (_control(workspace) / "vm-operation.lock").exists()
+    with preparation_operation(workspace, "retire"):
         pass
 
 
 def test_changed_operation_guard_is_retained_for_inspection(tmp_path: Path) -> None:
+    workspace = tmp_path / ("a" * 32)
+    workspace.mkdir()
+    _control(workspace).mkdir()
     with pytest.raises(PreparationError, match="guard changed"):
-        with preparation_operation(tmp_path, "launch"):
-            (tmp_path / "vm-operation.lock").write_bytes(b"unexpected replacement")
-    assert (tmp_path / "vm-operation.lock").read_bytes() == b"unexpected replacement"
+        with preparation_operation(workspace, "launch"):
+            (_control(workspace) / "vm-operation.lock").write_bytes(b"unexpected replacement")
+    assert (_control(workspace) / "vm-operation.lock").read_bytes() == b"unexpected replacement"
+
+
+def test_worker_metadata_and_claim_decoys_never_become_authority(ready) -> None:
+    record, plan, host = ready
+    decoys = {name: b"worker-controlled decoy" for name in ("manifest.json", "manifest.pending", "launch.claim", "retirement.claim", "vm-operation.lock")}
+    for name, data in decoys.items():
+        (record.workspace / name).write_bytes(data)
+    assert launch.build_preparation_launch_plan(record, _GUID) == plan
+    started = _start(record, plan, host)
+    assert started.status == "installer_vm_started_not_reviewed"
+    assert (record.control / "launch.claim").is_file()
+    assert _discard(started, host).status == "retired_vm_disk_retained"
+    assert (record.control / "retirement.claim").is_file()
+    assert not (record.control / "vm-operation.lock").exists()
+    assert host.started == 1 and host.removed == 1
+    for name, data in decoys.items():
+        assert (record.workspace / name).read_bytes() == data
+
+
+@pytest.mark.parametrize("problem", ["control-path", "workspace-path", "legacy-version", "missing-control", "unsafe-acl"])
+def test_host_only_control_binding_refusal_never_starts_or_claims(ready, monkeypatch, problem) -> None:
+    record, plan, host = ready
+    if problem == "missing-control":
+        (record.workspace / "manifest.json").write_bytes(record.manifest.read_bytes())
+        record.control.rename(record.control.with_name(record.control.name + ".retained-test"))
+    elif problem == "unsafe-acl":
+        def unsafe(path):
+            raise PreparationError("test model: VM worker may write control")
+        monkeypatch.setattr("night_shifts.ubuntu_preparation_control._check_control_permissions", unsafe)
+    else:
+        snapshot = json.loads(record.manifest.read_bytes())
+        field = {"control-path": "control", "workspace-path": "workspace", "legacy-version": "version"}[problem]
+        snapshot[field] = 1 if field == "version" else str(record.workspace.parent)
+        record.manifest.write_text(json.dumps(snapshot), encoding="utf-8")
+    with pytest.raises(PreparationError):
+        launch.build_preparation_launch_plan(record, _GUID)
+    with pytest.raises(PreparationError):
+        _start(record, plan, host)
+    assert len(host.calls) == 2 and host.started == 0
+    assert not (record.control / "launch.claim").exists()
+
+
+def test_permission_drift_before_launch_persistence_retains_claim_and_guard(ready, monkeypatch) -> None:
+    record, plan, host = ready
+    def unsafe_after_claim(path):
+        if (record.control / "launch.claim").exists():
+            raise PreparationError("test model: control permissions changed")
+    monkeypatch.setattr("night_shifts.ubuntu_preparation_control._check_control_permissions", unsafe_after_claim)
+    with pytest.raises(PreparationError):
+        _start(record, plan, host)
+    assert host.started == 0 and len(host.calls) == 2
+    assert (record.control / "launch.claim").is_file()
+    assert (record.control / "vm-operation.lock").is_file()
 
 
 def test_start_script_guards_before_only_power_action_and_never_repairs() -> None:

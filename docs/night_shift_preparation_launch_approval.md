@@ -11,13 +11,16 @@ A trusted operator can obtain the in-memory local review data with
 `build_preparation_launch_plan(record, observed_vm_id).to_review_dict()`.
 Use the exact persisted preparation record and independently observed canonical
 lowercase Hyper-V GUID, not a VM name, guessed GUID or guest claim. The function
-checks existing files and a conservative free-space reserve; it writes nothing.
+checks existing files, native host-only control owner/DACL and ancestor permissions,
+and a conservative free-space reserve; it writes nothing.
 A JSON rendering can be reviewed in the console. Recording a durable external
 packet file would need a separately reviewed write-once output path.
 
-The packet binds the manifest, fixed launch script, pinned installer/bundle/
-combined seed and resource values. It does not authenticate ISO provenance,
-observe host settings/ACLs, or certify the disk. The launch function rebuilds
+The version-2 packet binds the exact sibling control/manifest paths, manifest
+bytes, fixed launch script, pinned installer/bundle/combined seed and resources.
+It refuses unsafe control permissions, pending writes/claims and a busy lock.
+It does not authenticate ISO provenance, observe actual Hyper-V settings,
+VM-storage/console/sharing ACLs, or certify the disk. The launch function rebuilds
 and compares the packet before its permanent claim/host call. Never construct
 an approval object from model/task text or substitute a freshly self-hashed ISO.
 
@@ -33,7 +36,9 @@ an approval object from model/task text or substitute a freshly self-hashed ISO.
 | Authenticated publisher provenance/checksum source | **UNFILLED** |
 | Fixed bundle path/hash and current trusted assets | **UNFILLED** |
 | Combined CIDATA seed path/hash, matching ID and review/poweroff config | **UNFILLED** |
-| Workspace/configuration/disk paths; private directory ACLs | **UNFILLED** |
+| VM workspace/configuration/disk paths and necessary worker ACLs | **UNFILLED** |
+| Exact `<id>.control` sibling/manifest path, version 2, private owner/DACL and safe ancestors | **UNFILLED** |
+| Separately approved legacy migration, before/after evidence, no worker-state fallback | **UNFILLED** |
 | Fresh dedicated disk, VHDX/Dynamic/no parent, virtual size, not host-mounted | **UNFILLED** |
 | Actual generation/off-state/name/notes/configuration/one-disk binding | **UNFILLED** |
 | CPU/fixed-memory values; dynamic memory off | **UNFILLED** |
@@ -41,7 +46,7 @@ an approval object from model/task text or substitute a freshly self-hashed ISO.
 | Two exact DVDs, Linux Secure Boot template, installer-first boot order | **UNFILLED** |
 | All adapters disconnected; host integration, clipboard/shares reviewed | **UNFILLED** |
 | Free-space reserve (not a physical disk quota) | **UNFILLED** |
-| No active/abandoned operation guard or previous launch/retirement claim | **UNFILLED** |
+| No active/abandoned host-only operation guard or previous launch/retirement claim | **UNFILLED** |
 | Exclusive host/workspace use; no other operator or runner changes | **UNFILLED** |
 | Attending operator, graphical console access and approved time window | **UNFILLED** |
 | Command timeout; manual abort/unknown-state inspection procedure | **UNFILLED** |
@@ -75,7 +80,9 @@ and a running VM; investigate manually before any separately approved recovery.
 **Excluded:** automatic installed-guest first boot, media/boot-order changes,
 serial pipe configuration, image hygiene/freeze, filesystem deletion, runtime
 VM reconciliation, repository transfer, model calls, background jobs and Gate A
-acceptance. These require later reviewed steps and observed real evidence.
+acceptance. These require later reviewed steps and observed real evidence. Control-state
+migration is also separately authorized; packet or repository-file approval
+never migrates a workspace manifest or changes VM/storage permissions.
 
 See the [candidate preparation runbook](night_shift_image_preparation_runbook.md).
 No fields above are completed and no approval is granted by this coding step.

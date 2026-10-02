@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from night_shifts.ubuntu_preparation_control import preparation_control_path as _control
+
 from night_shifts.protocol_image_bundle import build_protocol_image_bundle
 from night_shifts.ubuntu_image_preparation import (
     PreparationError,
@@ -79,8 +81,10 @@ def test_exact_owned_off_vm_is_only_attachment_target(
         ("-SeedIsoSha256", sha256),
     ):
         assert args[args.index(name) + 1] == expected
-    manifest = json.loads((record.workspace / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads((_control(record.workspace) / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == result.status
+    assert not (record.control / "vm-operation.lock").exists()
+    assert not (record.workspace / "manifest.json").exists()
     assert manifest["seed_iso_sha256"] == sha256
     assert manifest["seed_kind"] == "ubuntu-protocol-install-v1"
     assert manifest["network_enabled"] is False
@@ -103,7 +107,7 @@ def test_authorization_required_without_manifest_mutation(
     prepared: tuple[UbuntuPreparationRecord, Path, str], authorized: bool, reviewed: bool,
 ) -> None:
     record, media, sha256 = prepared
-    previous = (record.workspace / "manifest.json").read_bytes()
+    previous = (_control(record.workspace) / "manifest.json").read_bytes()
     runner = FakeRunner()
     with pytest.raises(PreparationError, match="authorization"):
         attach_preparation_seed(
@@ -111,7 +115,7 @@ def test_authorization_required_without_manifest_mutation(
             runner=runner,
         )
     assert not runner.calls
-    assert (record.workspace / "manifest.json").read_bytes() == previous
+    assert (_control(record.workspace) / "manifest.json").read_bytes() == previous
 
 
 def test_modified_iso_or_manifest_rejected_before_host_call(
@@ -126,7 +130,7 @@ def test_modified_iso_or_manifest_rejected_before_host_call(
         )
     assert not runner.calls
     media.write_bytes(media.read_bytes()[:-7])
-    manifest_path = record.workspace / "manifest.json"
+    manifest_path = _control(record.workspace) / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["owner_marker"] = "wrong"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -142,7 +146,7 @@ def test_modified_iso_or_manifest_rejected_before_host_call(
 ])
 def test_configuration_binding_refusal_has_no_host_call_or_manifest_change(prepared, problem: str) -> None:
     record, media, digest = prepared
-    path = record.workspace / "manifest.json"
+    path = _control(record.workspace) / "manifest.json"
     snapshot = json.loads(path.read_bytes())
     if problem == "missing-root-binding":
         del snapshot["vm_config_root"]
@@ -167,7 +171,7 @@ def test_configuration_binding_refusal_has_no_host_call_or_manifest_change(prepa
 
 def test_reconciled_guid_is_forwarded_without_deriving_it_from_name(prepared) -> None:
     record, media, digest = prepared
-    path = record.workspace / "manifest.json"
+    path = _control(record.workspace) / "manifest.json"
     snapshot = json.loads(path.read_bytes())
     guid = "12345678-1234-1234-1234-123456789abc"
     snapshot["vm_id"] = guid
@@ -181,7 +185,7 @@ def test_reconciled_guid_is_forwarded_without_deriving_it_from_name(prepared) ->
 @pytest.mark.parametrize("guid", [None, 123, "not-a-guid", "00000000-0000-0000-0000-000000000000"])
 def test_invalid_recorded_guid_refused_before_attachment_mutation(prepared, guid) -> None:
     record, media, digest = prepared
-    path = record.workspace / "manifest.json"
+    path = _control(record.workspace) / "manifest.json"
     snapshot = json.loads(path.read_bytes())
     snapshot["vm_id"] = guid
     path.write_text(json.dumps(snapshot), encoding="utf-8")
@@ -201,7 +205,7 @@ def test_old_generic_seed_is_rejected_without_host_call_or_manifest_change(
     generic_dir.mkdir()
     staged = stage_ubuntu_seed(generic_dir, record.vm_name)
     generic = build_ubuntu_seed_iso(staged.directory)
-    manifest = record.workspace / "manifest.json"
+    manifest = _control(record.workspace) / "manifest.json"
     previous = manifest.read_bytes()
     runner = FakeRunner()
     with pytest.raises(PreparationError, match="combined install seed rejected"):
@@ -218,7 +222,7 @@ def test_invalid_combined_seed_is_rejected_before_manifest_update(
     prepared: tuple[UbuntuPreparationRecord, Path, str], changed: str,
 ) -> None:
     record, media, digest = prepared
-    manifest_path = record.workspace / "manifest.json"
+    manifest_path = _control(record.workspace) / "manifest.json"
     manifest = json.loads(manifest_path.read_bytes())
     if changed == "missing-bundle-binding":
         del manifest["bundle"]
@@ -251,11 +255,35 @@ def test_invalid_combined_seed_is_rejected_before_manifest_update(
     assert manifest_path.read_bytes() == previous
 
 
+@pytest.mark.parametrize("problem", ["control-binding", "workspace-binding", "legacy-version", "busy", "unsafe-acl"])
+def test_control_refusal_blocks_attachment_without_host_call(prepared, monkeypatch, problem) -> None:
+    record, media, digest = prepared
+    snapshot = json.loads(record.manifest.read_bytes())
+    if problem == "busy":
+        (record.control / "vm-operation.lock").write_bytes(b"interrupted operation")
+    elif problem == "unsafe-acl":
+        def unsafe(path):
+            raise PreparationError("test model: VM worker access")
+        monkeypatch.setattr("night_shifts.ubuntu_preparation_control._check_control_permissions", unsafe)
+    else:
+        field = {"control-binding": "control", "workspace-binding": "workspace", "legacy-version": "version"}[problem]
+        snapshot[field] = 1 if field == "version" else str(record.workspace)
+        if field == "workspace":
+            snapshot[field] = str(record.workspace.parent)
+        record.manifest.write_text(json.dumps(snapshot), encoding="utf-8")
+    previous = record.manifest.read_bytes()
+    runner = FakeRunner()
+    with pytest.raises(PreparationError):
+        attach_preparation_seed(record, media, digest, operator_authorized=True, seed_iso_reviewed=True, runner=runner)
+    assert not runner.calls
+    assert record.manifest.read_bytes() == previous
+
+
 def test_missing_inspection_dependency_blocks_attachment_without_mutation(
     prepared: tuple[UbuntuPreparationRecord, Path, str], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     record, media, digest = prepared
-    previous = (record.workspace / "manifest.json").read_bytes()
+    previous = (_control(record.workspace) / "manifest.json").read_bytes()
     original_import = builtins.__import__
 
     def without_pycdlib(name, *args, **kwargs):
@@ -270,7 +298,7 @@ def test_missing_inspection_dependency_blocks_attachment_without_mutation(
             record, media, digest, operator_authorized=True, seed_iso_reviewed=True, runner=runner,
         )
     assert not runner.calls
-    assert (record.workspace / "manifest.json").read_bytes() == previous
+    assert (_control(record.workspace) / "manifest.json").read_bytes() == previous
 
 
 @pytest.mark.parametrize("fail,mismatched", [(True, False), (False, True)])
@@ -283,7 +311,7 @@ def test_unknown_result_retains_exact_id_and_blocks_retry(
         attach_preparation_seed(
             record, media, sha256, operator_authorized=True, seed_iso_reviewed=True, runner=runner
         )
-    manifest = json.loads((record.workspace / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads((_control(record.workspace) / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "seed_attach_unknown"
     assert manifest["seed_iso_sha256"] == sha256
     with pytest.raises(PreparationError, match="manifest differs"):

@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from night_shifts.hyperv_image_preflight import _checked_path
-from night_shifts.ubuntu_image_preparation import PreparationError
+from night_shifts.ubuntu_preparation_control import PreparationError, checked_preparation_control
 
 _GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
@@ -36,13 +36,14 @@ def preparation_operation(workspace: Path, operation: str) -> Iterator[None]:
     crash or failed release leaves it for manual inspection, not stale-lock
     guessing. Permanent launch/retirement claims are never removed here.
     """
-    if operation not in {"launch", "retire"}:
+    if operation not in {"attach", "launch", "retire"}:
         raise PreparationError("unsupported preparation operation")
     root = _checked_path(workspace, "preparation operation workspace")
     checkout = Path(__file__).resolve().parents[1]
     if not root.is_dir() or checkout == root or checkout in root.parents:
         raise PreparationError("operation workspace must be outside checkout")
-    guard = root / "vm-operation.lock"
+    control = checked_preparation_control(root)
+    guard = control / "vm-operation.lock"
     token = (json.dumps({"operation": operation, "token": uuid.uuid4().hex}, sort_keys=True) + "\n").encode("ascii")
     try:
         with guard.open("xb") as stream:
@@ -55,9 +56,11 @@ def preparation_operation(workspace: Path, operation: str) -> Iterator[None]:
     except OSError as exc:
         raise PreparationError("preparation operation guard uncertain; inspect exact workspace") from exc
     try:
+        checked_preparation_control(root)
         yield
     finally:
         try:
+            checked_preparation_control(root)
             current = guard.lstat()
             if not stat.S_ISREG(current.st_mode) or current.st_size != len(token) or (
                 current.st_dev, current.st_ino
@@ -66,6 +69,7 @@ def preparation_operation(workspace: Path, operation: str) -> Iterator[None]:
             with guard.open("rb") as stream:
                 if stream.read(len(token) + 1) != token:
                     raise PreparationError("preparation operation guard changed; inspect, never delete blindly")
-            guard.unlink()  # only our transient, identity/content-verified guard
+            guard.unlink()  # only our transient, identity/content-verified host-only guard
+            checked_preparation_control(root)
         except OSError as exc:
             raise PreparationError("preparation operation guard release uncertain; inspect exact workspace") from exc
