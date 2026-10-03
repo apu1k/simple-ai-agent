@@ -56,6 +56,7 @@ def test_combined_seed_contains_exact_fixed_payload_and_late_command(tmp_path: P
             extracted = io.BytesIO()
             iso.get_file_from_iso_fp(extracted, rr_path="/" + name)
             contents[name] = extracted.getvalue()
+            assert b"\r" not in contents[name]
             joliet = io.BytesIO()
             iso.get_file_from_iso_fp(joliet, joliet_path="/" + name)
             assert joliet.getvalue() == contents[name]
@@ -70,7 +71,7 @@ def test_combined_seed_contains_exact_fixed_payload_and_late_command(tmp_path: P
             assert hashlib.sha256(contents[filename]).hexdigest() == digest
         for name in _FILES - {"user-data", "meta-data", "SHA256SUMS"}:
             trusted = Path(__file__).resolve().parents[2] / "night_shifts" / "guest" / name
-            assert contents[name] == trusted.read_bytes()
+            assert contents[name] == trusted.read_bytes().replace(b"\r\n", b"\n")
     finally:
         iso.close()
     with pytest.raises(SeedIsoError, match="already exists"):
@@ -91,7 +92,7 @@ def _untrusted_candidate(path: Path, variant: str) -> str:
     payload_names = (
         "protocol_test_bootstrap.py", "night-shift-protocol-test.service", "install_protocol_test_target.sh",
     )
-    contents = {name: (guest / name).read_bytes() for name in payload_names}
+    contents = {name: (guest / name).read_bytes().replace(b"\r\n", b"\n") for name in payload_names}
     contents["SHA256SUMS"] = "".join(
         f"{hashlib.sha256(contents[name]).hexdigest()}  {name}\n" for name in payload_names
     ).encode("ascii")
@@ -113,6 +114,13 @@ def _untrusted_candidate(path: Path, variant: str) -> str:
         contents["protocol_test_bootstrap.py"] = b"!" + original[1:]
     elif variant == "checksums":
         contents["SHA256SUMS"] = b"!" + contents["SHA256SUMS"][1:]
+    elif variant == "crlf":
+        name = "install_protocol_test_target.sh"
+        contents[name] = contents[name].replace(b"\n", b"\r\n")
+        # Even correct checksums and a newly reviewed self-hash cannot bless CRLF.
+        contents["SHA256SUMS"] = "".join(
+            f"{hashlib.sha256(contents[name]).hexdigest()}  {name}\n" for name in payload_names
+        ).encode("ascii")
     iso = pycdlib.PyCdlib()
     rr = variant != "no-rr"
     joliet = variant != "no-joliet"
@@ -139,7 +147,7 @@ def _untrusted_candidate(path: Path, variant: str) -> str:
 
 @pytest.mark.parametrize("variant", [
     "missing", "extra-file", "extra-directory", "symlink", "config", "instance",
-    "bootstrap", "checksums", "rr-name", "joliet-name", "no-rr", "no-joliet", "malformed",
+    "bootstrap", "checksums", "crlf", "rr-name", "joliet-name", "no-rr", "no-joliet", "malformed",
 ])
 def test_inspection_rejects_untrusted_contents_even_with_matching_hash(tmp_path: Path, variant: str) -> None:
     bundle, bundle_hash = _bundle(tmp_path)

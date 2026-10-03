@@ -1,24 +1,49 @@
 # Candidate one-time Ubuntu preparation runbook (NOT launch authorization)
 
 This is a review procedure for a separate preparation VM, not Gate A itself.
-**No preparation VM has been launched and no installed VHDX is reviewed.**
-One operator-reported preparation attempt has been observed OFF after creation
-and separately approved combined-seed attachment. The persisted manifest records
-`created_seed_attached_not_started` and the local seed verification passes.
-Host observations exposed configuration-path, fixed-memory and control-state
-permission assumptions that the fake runners missed. A separately approved
-exact-GUID memory correction now has matching private before/after receipts:
-fixed 2 GiB RAM, Dynamic Memory disabled, VM OFF and unchanged manifest.
-The installer DVD is observed first, the 20 GiB VHDX is Dynamic/parentless/not
-host-mounted, and GPU partition/DDA/Fibre Channel queries succeeded with zero
-devices. Windows capability derivation exactly identifies the additional SID as
-`vmWorkerProcess`; the old manifest inherits its FullControl permission.
-This VM must remain OFF pending separately reviewed host-only control migration
-and final sharing/attended-console review. Launch and retirement still have only
-offline/fake-runner evidence; successful attachment does not certify readiness.
-The shell/YAML candidates have not been executed in Ubuntu. The operator must separately
-approve actual paths, independently reviewed digests, resources, permissions,
-a time window and the exact actions before any real host operation.
+**One attended installer attempt failed; no installed VHDX is reviewed.**
+The fixed-memory correction and host-only version-2 control migration were
+verified before a separately approved exact-GUID launch. The operator checked
+the live instance ID, sole 20 GiB disk, loaded autoinstall configuration and both
+DVD hashes before approving disk modification. Subiquity then failed in the
+first late-command with exit status 2, before the target-review checkpoint.
+Host extraction confirms all 59 target-installer lines were CRLF, including
+`set -eu\r\n`; this is the likely shell failure, not a guest-log-confirmed cause.
+The existing seed and bundle faithfully hashed those unsuitable Linux bytes.
+
+On 2026-10-03 the operator's read-only inspection reports the exact VM
+`1691b381-a69b-4c6c-95bf-c3000d169191` OFF throughout, fixed 2 GiB RAM, 2 CPUs,
+one Dynamic/parentless/not-host-mounted 20 GiB VHDX, disconnected networking,
+Guest Service Interface disabled and zero GPU/DDA/Fibre Channel devices.
+The installer DVD slot is now empty; the old CIDATA seed remains attached.
+The operator recalls shutting it off without manually ejecting the installer;
+the cause of the empty slot remains unresolved. Do not silently repair it,
+restart the VM to retrieve logs, or bypass its retained permanent launch claim.
+The manifest remains `installer_vm_started_not_reviewed`, not success.
+Keep this failed candidate and its evidence intact; never hot-patch/retry its
+payload or promote its disk to a trusted image. Gate A remains unrun.
+
+### Linux payload bytes and recovery boundary
+
+All fixed guest text must be UTF-8/LF before packaging, lengths and hashes.
+Both ZIP assets and the target-installer script use the same CRLF-to-LF
+canonicalization, without rewriting checkout files. Invalid UTF-8, a leading
+UTF-8 BOM, NUL or remaining lone CR refuses authoring. Git LF attributes help
+checkout hygiene, but packaging does not rely on Git or the host platform.
+Archive/media inspection compares exact canonical bytes: a legacy CRLF bundle
+or seed is stale even if its own hash/checksums are internally consistent.
+Do not normalize an untrusted archive during verification or weaken its pinned
+hash check. Previously approved live assets are evidence, not overwritten outputs.
+
+Offline newline tests do not prove shell syntax, Subiquity compatibility,
+service behavior or a trusted installed image. After code/test review, authorize
+new write-once assets and a fresh preparation identity/workspace/disk in separate
+bounded steps. Do not reuse the failed disk. Any disposal/retirement remains a
+separate approval, and must inspect actual state without repairing media drift.
+The operator must separately approve actual paths, independently reviewed
+digests, resources, permissions, a time window and exact real-host actions.
+The never-started migration procedure below is historical; it is NOT applicable
+to this already-launched failed attempt.
 
 ## 1. Approval packet and host checkpoints
 

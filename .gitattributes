@@ -1,0 +1,5 @@
+# Linux guest text must remain LF in checkouts, including on Windows.
+# Packaging also canonicalizes bytes; do not rely on Git for correctness.
+night_shifts/guest/*.sh text eol=lf
+night_shifts/guest/*.py text eol=lf
+night_shifts/guest/*.service text eol=lf

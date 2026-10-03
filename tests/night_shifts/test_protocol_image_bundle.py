@@ -38,6 +38,8 @@ def test_bundle_is_deterministic_and_contains_only_reviewed_assets(
         sums = archive.read("SHA256SUMS").decode("ascii")
         for name in _ASSETS:
             content = archive.read(name)
+            assert b"\r" not in content
+            content.decode("utf-8")
             digest = hashlib.sha256(content).hexdigest()
             assert manifest["files"][name] == {"sha256": digest, "bytes": len(content)}
             assert f"{digest}  {name}\n" in sums

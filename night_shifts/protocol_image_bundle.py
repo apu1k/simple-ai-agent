@@ -58,6 +58,23 @@ def _zip_entry(name: str) -> zipfile.ZipInfo:
     return info
 
 
+def _linux_text_bytes(data: bytes, name: str) -> bytes:
+    """Canonical UTF-8/LF payload bytes, independent of checkout newlines.
+
+    Normalize CRLF before hashing or packaging, without modifying sources.
+    Refuse ambiguous/binary text rather than silently dropping lone CRs,
+    a UTF-8 BOM or NUL bytes. This is not a shell or service syntax check.
+    """
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise BundleError(f"guest text asset is not UTF-8: {name}") from exc
+    canonical = data.replace(b"\r\n", b"\n")
+    if canonical.startswith(b"\xef\xbb\xbf") or b"\r" in canonical or b"\x00" in canonical:
+        raise BundleError(f"guest text asset has a BOM, lone CR or NUL: {name}")
+    return canonical
+
+
 def _assets() -> dict[str, bytes]:
     guest_dir = Path(__file__).resolve().parent / "guest"
     result: dict[str, bytes] = {}
@@ -70,14 +87,16 @@ def _assets() -> dict[str, bytes]:
             data = stream.read(_MAX_ASSET_BYTES + 1)
         if len(data) > _MAX_ASSET_BYTES or path.stat().st_size != len(data):
             raise BundleError(f"guest asset changed or exceeds limit: {name}")
-        result[name] = data
+        result[name] = _linux_text_bytes(data, name)
     return result
 
 
 def build_protocol_image_bundle(output: Path) -> BundleReport:
     """Write once to a new external path, with deterministic contents and hashes.
 
-    Only repository-owned asset filenames are admitted. The archive contains
+    Only repository-owned asset filenames are admitted. All fixed Linux text
+    is canonical UTF-8/LF before its length, checksums and manifest are computed,
+    even from a CRLF checkout. Source files remain unchanged. The archive contains
     no OS disk, secrets, provider config, arbitrary host directory or repo
     checkout. Its shell installer requires an explicit action inside a guest.
     """

@@ -236,7 +236,13 @@ def test_invalid_combined_seed_is_rejected_before_manifest_update(
     else:
         data = media.read_bytes()
         if changed == "payload":
-            trusted = (Path(__file__).resolve().parents[2] / "night_shifts" / "guest" / "protocol_test_bootstrap.py").read_bytes()
+            trusted_path = (
+                Path(__file__).resolve().parents[2]
+                / "night_shifts" / "guest" / "protocol_test_bootstrap.py"
+            )
+            # Find the actual LF-packaged payload, not raw CRLF checkout bytes.
+            # Keep the tamper, fresh hash and pre-host-call refusal assertions.
+            trusted = trusted_path.read_bytes().replace(b"\r\n", b"\n")
             assert trusted in data
             data = data.replace(trusted, b"!" + trusted[1:])
         else:

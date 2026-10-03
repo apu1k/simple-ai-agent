@@ -2,6 +2,8 @@
 
 This does NOT invoke the Ubuntu installer or attach media to a VM. The source
 bundle's pinned hash and fixed trusted contents are rechecked before packaging.
+Fixed Linux text is canonical UTF-8/LF before hashes and media are written.
+Previously packaged CRLF payloads are stale, even with matching self-hashes.
 The resulting ISO requires independent review and a real guest validation.
 """
 
@@ -19,7 +21,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from night_shifts.hyperv_image_preflight import _checked_path
-from night_shifts.protocol_image_bundle import _ASSET_NAMES, _assets
+from night_shifts.protocol_image_bundle import (
+    _ASSET_NAMES,
+    BundleError,
+    _assets,
+    _linux_text_bytes,
+)
 from night_shifts.ubuntu_seed import render_ubuntu_install_seed
 from night_shifts.ubuntu_seed_iso import SeedIsoError
 
@@ -54,7 +61,10 @@ def _fixed_payload(bundle: Path, expected_sha256: str) -> dict[str, bytes]:
             digest.update(chunk)
     if source.stat().st_size > 4 * 1024 * 1024 or digest.hexdigest() != expected_sha256.lower():
         raise SeedIsoError("guest bundle differs from reviewed SHA-256")
-    trusted = _assets()
+    try:
+        trusted = _assets()
+    except BundleError as exc:
+        raise SeedIsoError(f"invalid trusted guest payload: {exc}") from exc
     expected_sums = "".join(
         f"{hashlib.sha256(trusted[name]).hexdigest()}  {name}\n" for name in _ASSET_NAMES
     ).encode("ascii")
@@ -86,7 +96,10 @@ def _fixed_payload(bundle: Path, expected_sha256: str) -> dict[str, bytes]:
     if len(data) != info.st_size:
         raise SeedIsoError("target installer changed during read")
     contents = {name: trusted[name] for name in _GUEST_NAMES}
-    contents[_TARGET_SCRIPT] = data
+    try:
+        contents[_TARGET_SCRIPT] = _linux_text_bytes(data, _TARGET_SCRIPT)
+    except BundleError as exc:
+        raise SeedIsoError(f"invalid target installer text: {exc}") from exc
     contents["SHA256SUMS"] = "".join(
         f"{hashlib.sha256(contents[name]).hexdigest()}  {name}\n"
         for name in (*_GUEST_NAMES, _TARGET_SCRIPT)
