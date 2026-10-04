@@ -109,6 +109,13 @@ def _untrusted_candidate(path: Path, variant: str) -> str:
         contents["user-data"] += b"\n"
     elif variant == "instance":
         contents["meta-data"] = render_ubuntu_install_seed("night-shift-image-prep-" + "a" * 32).meta_data
+    elif variant == "cwd-leak":
+        # A self-consistent LF seed with the old parent-cwd bug remains stale.
+        original = contents["user-data"]
+        assert b"(cd " in original and b"install_protocol_test_target.sh); " in original
+        contents["user-data"] = original.replace(b"(cd ", b"cd ", 1).replace(
+            b"install_protocol_test_target.sh); ", b"install_protocol_test_target.sh; ", 1,
+        )
     elif variant == "bootstrap":
         original = contents["protocol_test_bootstrap.py"]
         contents["protocol_test_bootstrap.py"] = b"!" + original[1:]
@@ -147,7 +154,7 @@ def _untrusted_candidate(path: Path, variant: str) -> str:
 
 @pytest.mark.parametrize("variant", [
     "missing", "extra-file", "extra-directory", "symlink", "config", "instance",
-    "bootstrap", "checksums", "crlf", "rr-name", "joliet-name", "no-rr", "no-joliet", "malformed",
+    "bootstrap", "checksums", "crlf", "cwd-leak", "rr-name", "joliet-name", "no-rr", "no-joliet", "malformed",
 ])
 def test_inspection_rejects_untrusted_contents_even_with_matching_hash(tmp_path: Path, variant: str) -> None:
     bundle, bundle_hash = _bundle(tmp_path)

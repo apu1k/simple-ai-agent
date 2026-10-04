@@ -23,9 +23,11 @@ _TARGET_INSTALL_COMMAND = (
     "mkdir -m 0700 /run/night-shift-protocol-seed; "
     "mount -t iso9660 -o ro,nodev,nosuid,noexec "
     "/dev/disk/by-label/CIDATA /run/night-shift-protocol-seed; "
-    "cd /run/night-shift-protocol-seed; "
+    # Leave the mount directory in a child shell only. The parent must not
+    # retain a cwd on CIDATA when it unmounts after successful installation.
+    "(cd /run/night-shift-protocol-seed; "
     "sha256sum -c -- SHA256SUMS; "
-    "sh ./install_protocol_test_target.sh; "
+    "sh ./install_protocol_test_target.sh); "
     "umount /run/night-shift-protocol-seed"
 )
 

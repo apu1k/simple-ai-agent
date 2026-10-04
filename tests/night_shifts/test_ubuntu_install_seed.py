@@ -33,7 +33,17 @@ def test_candidate_command_mounts_only_fixed_local_payload() -> None:
     assert "/dev/disk/by-label/CIDATA" in command
     assert "sha256sum -c -- SHA256SUMS" in command
     assert "sh ./install_protocol_test_target.sh" in command
+    # A parent cwd inside the seed made the real late-command fail with
+    # 'target is busy' after the payload completed. Keep all seed-local work
+    # in a subshell; ordinary unmount must run only after that child exits.
+    assert (
+        "(cd /run/night-shift-protocol-seed; "
+        "sha256sum -c -- SHA256SUMS; "
+        "sh ./install_protocol_test_target.sh); "
+        "umount /run/night-shift-protocol-seed"
+    ) in command
     assert command.endswith("umount /run/night-shift-protocol-seed")
+    assert not any(token in command for token in ("umount -l", "umount -f", "|| true"))
     assert not any(token in command for token in ("http://", "https://", "curl ", "wget ", "apt ", "ssh "))
     assert "password" not in candidate.user_data.decode("utf-8").lower()
     assert "identity" not in settings

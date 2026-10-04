@@ -1,7 +1,7 @@
 # Candidate one-time Ubuntu preparation runbook (NOT launch authorization)
 
 This is a review procedure for a separate preparation VM, not Gate A itself.
-**One attended installer attempt failed; no installed VHDX is reviewed.**
+**Two attended installer attempts failed; no installed VHDX is reviewed.**
 The fixed-memory correction and host-only version-2 control migration were
 verified before a separately approved exact-GUID launch. The operator checked
 the live instance ID, sole 20 GiB disk, loaded autoinstall configuration and both
@@ -22,6 +22,51 @@ restart the VM to retrieve logs, or bypass its retained permanent launch claim.
 The manifest remains `installer_vm_started_not_reviewed`, not success.
 Keep this failed candidate and its evidence intact; never hot-patch/retry its
 payload or promote its disk to a trusted image. Gate A remains unrun.
+
+### Second attempt: confirmed busy seed mount (2026-10-04)
+
+A fresh LF-only candidate used sandbox `8e3e0fce76414f0495b70bccbbef559c`,
+VM GUID `a1f7ef97-692d-4755-b780-5c70c425fa7a`, the same pinned Ubuntu ISO,
+bundle SHA-256 `fc8ac8a92e9d3eb787180583ae38f47bbd4c4532d0ab612aef4a3b994ee01b5d`
+and identity-bound CIDATA SHA-256
+`f18f5665c40643ed5e202b6ce9b376a1f3422d6587f5d248afb7ce9b0d4d39d2`.
+The operator's launch receipt observed the exact VM running, fixed 2 GiB RAM,
+2 CPUs, one new 20 GiB disk, both DVDs and disconnected networking. The operator
+verified root inspection, the live instance ID (using an exact shell comparison
+after a transcription omission), disk inventory, loaded YAML and both guest DVD
+hashes before answering the installer confirmation.
+
+Subiquity's first late-command then failed with exit status 32. Read-only guest
+journal inspection shows both of these messages at guest-displayed 06:15:16:
+
+- `Candidate target service installed; inspect guest before freezing image.`
+- `umount: /run/night-shift-protocol-seed: target is busy.`
+
+The wrapper had changed its parent cwd into the mounted seed and attempted to
+unmount without leaving it. This is a confirmed wrapper cleanup defect, not a
+second CRLF diagnosis. The target script reached its final message, but the
+manual target-review command did not run; this is NOT a reviewed installation.
+The correction scopes checksum verification and payload execution to a subshell,
+which must exit successfully before the parent performs an ordinary unmount.
+Keep `set -eu`, read-only mount flags and failure propagation; do not introduce
+lazy/forced unmount, ignored errors, an approval marker or an in-place retry.
+
+The operator approved orderly live-installer power-off and reports the VM OFF.
+This is an operator observation, not a new agent-side Hyper-V inspection. Keep
+the candidate, its host media and permanent launch claim intact. Its saved status
+remains `installer_vm_started_not_reviewed`, not prepared/accepted/retired.
+Neither candidate is a trusted image. Subsequent preparation must use fresh
+identity/disk and newly reviewed seed; unchanged fixed bundle bytes may be reused
+after verification. No shutdown/cleanup action or new launch is implied by code
+approval. Gate A remains unrun.
+
+Keyboard troubleshooting note: tty1 exhibited Meta-style input and numeric
+argument prompts. Windows Alt-release injection did not recover it; Hyper-V
+reported all modifiers up, and `Msvm_Keyboard.Reset` returned 1 (unsupported).
+Switching to the already-open tty2 restored usable typing. These observations do
+not establish a hardware/modifier cause; try the existing alternative live shell
+before further input-injection scripts. No guest commands were sent by those
+keyboard scripts. Console configuration was reset manually by the operator.
 
 ### Linux payload bytes and recovery boundary
 
