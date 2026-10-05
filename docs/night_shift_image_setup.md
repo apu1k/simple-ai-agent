@@ -15,15 +15,19 @@ The operator confirmed on this machine that `Microsoft-Hyper-V-All` is enabled
 and `Get-VM`, `New-VM`, `Start-VM`, and `Remove-VM` cmdlets are available. This
 is a **software-prerequisite observation**, not authorization to build an image
 or run the real-host suite; image, workspace, VM privileges and pipe ACLs have
-not been validated. No particular image source, location or SHA-256 has been
-approved.
+not been validated for a frozen base image. A pinned Ubuntu installer and LF
+bundle were separately reviewed for attended preparation attempts; no completed
+base VHDX or its final digest has been approved. See the preparation runbook for
+actual paths, observations and failed-attempt history.
 
 ## Candidate operator runbook and discard safeguard
 
 See the [candidate preparation runbook](night_shift_image_preparation_runbook.md)
 for the exact input/host review checkpoints, deliberate one-time installer
 confirmation, live-installer target inspection and separate discard consent.
-It is **not launch authorization**, and the actual ISO behavior is unvalidated.
+It is **not launch authorization**. Real-host launch, seed selection and manual
+disk confirmation were observed in three failed attempts; successful completion,
+the new auditor and installed-guest first boot remain unvalidated.
 The combined seed now requests a finite manual late-command review wait and
 `shutdown: poweroff`; it does not automatically boot the installed guest.
 The optional `retire_image_preparation_vm` path only force-stops/unregisters
@@ -41,8 +45,9 @@ and accepts only a matching running/network-off receipt. Successful launch is
 Retirement recognizes these launch states, requires their original GUID/plan
 claim, and refuses a same-name replacement. Launch and retirement share an
 exclusive transient operation guard; crashes/changed guards need manual review,
-not stale-lock guessing. These are offline-tested candidates, not observed
-Hyper-V behavior or a hard installation/VM-lifetime supervisor.
+not stale-lock guessing. Offline tests model these contracts; separately retained
+operator receipts cover exact-GUID launches, not successful images or a hard
+installation/VM-lifetime supervisor.
 First-boot serial configuration, image hygiene and final preservation/review
 remain separate prerequisites. No real VM operation is authorized here.
 
@@ -201,30 +206,42 @@ and an absent service identity. It creates a locked `night-shift` user, installs
 root-owned fixed files into the new target, and masks the serial login and
 enables the fixed service with `systemctl --root=/target` (not `--now`). It is
 **not** the existing `install_protocol_test.sh`, which expects a running,
-installed guest. Its checks are static on this Windows host; the target script
-has **not** been invoked or reviewed against Ubuntu 24.04's live installer.
+installed guest. Its automated tests are static on this Windows host. The
+operator observed payload installation and reviewed target files/accounts in
+failed real attempts; no successful completion/first boot is certified.
 `render_ubuntu_install_seed(instance_id)` now defines **candidate** Subiquity
 `late-commands` that would mount the fixed `CIDATA` volume read-only,
-check `SHA256SUMS`, call this installer-target script, then pause for manual
-inspection of `/target` from the live installer shell. A fresh root-owned
-mode-0600 `/run/night-shift-image-review-approved` marker releases the wait;
-a stale marker or exhaustion of 1800 polling attempts fails installation.
-This is roughly a 30-minute cooperative review window, not a host-enforced
-deadline or image certification. The seed requests `shutdown: poweroff` after
-review; actual acceptance/off-state must be observed. The existing
+check `SHA256SUMS`, call this installer-target script, and stage the verified
+read-only auditor in the ephemeral installer before leaving the subshell and
+unmounting CIDATA normally. The separate late-command runs that fixed auditor
+before starting a human review window, with UTC start/estimated deadline and
+remaining-attempt messages. It checks fixed target paths and emits sanitized
+PASS/FAIL labels without credentials, network access, target execution, service
+startup, approval markers or report-file writes. Live PyYAML is required for safe
+parsing; absence or unknown target/configuration shapes fails closed. Python `-B`
+prevents bytecode writes. A fresh root-owned regular non-symlink mode-0600
+`/run/night-shift-image-review-approved` marker permits a SECOND audit before
+release. A stale marker, audit failure/drift or exhaustion of **3600 one-second
+polling attempts** fails installation. This is approximately a **60-minute
+cooperative review window**, not a host-enforced deadline or image certification.
+The one-command journal report also displays explicit BLOCKED/EXPIRED status;
+a prior PASS must never be treated as permission to acknowledge a failed run.
+The seed still requests `shutdown: poweroff` only after successful completion;
+actual acceptance/off-state must be observed. The existing
 `stage_ubuntu_seed` and `build_ubuntu_seed_iso` still use the **old generic
 configuration** and include only `user-data`/`meta-data`: they do not include
 or invoke this payload. The **separate offline**
 `build_ubuntu_install_seed_iso(parent, instance_id, bundle, reviewed_bundle_sha256)`
 now builds a candidate write-once `CIDATA` ISO containing the late-command
-configuration, fixed trusted guest bootstrap/service/target installer, and a
-`SHA256SUMS` for those files. It rechecks the reviewed bundle hash and contents
+configuration, fixed trusted guest bootstrap/service/target installer/read-only
+auditor, and a `SHA256SUMS` for those payloads. The existing LF bundle is unchanged;
+the new auditor is a separately verified seed-only asset. It rechecks the reviewed bundle hash and contents
 against the current trusted files; tests open the ISO through both Rock Ridge
 and Joliet. Its returned SHA-256 must be independently reviewed before use.
 The read-only `inspect_ubuntu_install_seed_iso` checks the pinned ISO hash and
 bounded byte snapshot, exact ID-bound late-command configuration, and fixed
 payload against the preparation manifest's reviewed guest bundle and current
-trusted sources. It requires exactly the six expected regular files, with
+trusted sources. It requires exactly the seven expected regular files, with
 matching bytes in the ISO9660, Rock Ridge and Joliet namespaces; extra files,
 directories, symlinks, missing extensions and bootable/UDF media are refused.
 The attach-only path now requires this check **before changing the manifest or
@@ -235,23 +252,28 @@ inspection as well as ISO authoring; missing inspection support fails closed.
 The existing PowerShell script independently rechecks the reviewed ISO hash
 immediately before its attach-only operation. These checks assume reviewed,
 operator-controlled input directories; they do not replace host ACL review or
-establish guest safety. No Subiquity boot, installed VHDX inspection, or
-guest-service operation has occurred. A failed late-command must
+establish guest safety. Subiquity boot and live target inspection were observed
+in failed attempts; no installed-guest boot or running service validation has
+occurred. The new auditor has no real-guest evidence yet. A failed late-command must
 block freezing the image; manually inspect or discard the exact-owned prep VM,
 never reuse a partially installed disk as a trusted base.
 
-A separately approved seed attachment is operator-observed on one exact-owned,
-OFF preparation VM; its persisted status is `created_seed_attached_not_started`.
-No guest bundle has been copied into Ubuntu and no preparation VM has booted.
-Host-only control-state migration and final isolation/console review remain
-required before separately approving installation.
-There is **no actual unattended installer yet**. Offline YAML
-parsing cannot prove Subiquity accepts this on the reviewed 24.04.5 ISO;
-verify the disk guard and installed user state in the real guest. Since
-there is no login, failure recovery should discard the exact-owned disposable
-image instead of adding a generic password or enabling networking. Do not
-power up the create-only VM with the expectation that this code has installed
-Ubuntu or the protocol service.
+Three separately approved exact-owned preparation candidates have failed and
+are retained with their permanent launch claims. The first failed before review
+with a likely CRLF issue; the second confirmed the parent-cwd/busy-unmount bug;
+the third reached target review but expired after 30 minutes 2 seconds. The
+operator reports them OFF; failed candidates remain `installer_vm_started_not_reviewed`,
+not completed/accepted images. The full history and receipt boundaries are in
+the preparation runbook. The redesigned audit/60-minute checkpoint requires a
+freshly reviewed seed and a separately authorized fresh candidate, not a live
+retry or overwriting retained media.
+
+There is **no unattended end-to-end image builder**. Offline YAML/audit models
+cannot prove successful installer completion, first-boot cloud-init behaviour or
+a safe running service. Review host isolation and actual inputs again before
+a separately approved attended launch. Do not add a generic password/network
+to recover a failed candidate, reset an expired timer, automatically delete it,
+or power up an unreviewed installed guest.
 
 ## Opt-in create-only preparation VM (offline-tested, not authorized to run)
 
@@ -287,10 +309,11 @@ operator must inspect owned leftovers; never blindly sweep other VMs.
 The fake runners verify identities, bounded choices, opt-in guards and
 host-only manifest/claim persistence with an explicitly substituted ACL model.
 Control-policy models and a read-only native ACL reader test are separate.
-These tests have **not** executed the PowerShell scripts or proved actual
+These offline tests have **not** executed the PowerShell scripts or proved
 host configuration, DVD attachment, VM cleanup, ISO boot or disk quotas work.
-Separately retained operator observations cover this VM's create/attach and
-fixed-memory correction; they do not certify boot or a base image. Directory
+Separately retained operator receipts cover create/attach, fixed-memory settings,
+start-once launch and live-installer checks in failed candidates; they do not
+certify installed-guest boot or a base image. Directory
 ACLs, named pipes and all host-generated paths still require review. No preparation VM or directories on D: were created in the
 offline tests. Ubuntu installation, offline guest-bundle transfer, first-boot
 protocol service, image cleaning, final digest and real lifecycle Gate A remain

@@ -19,7 +19,7 @@ from night_shifts import ubuntu_install_seed_iso as seed_module
 from night_shifts.ubuntu_seed_iso import SeedIsoError
 
 _ID = "night-shift-image-prep-" + "e" * 32
-_NAMES = (*bundle_module._ASSET_NAMES, seed_module._TARGET_SCRIPT)
+_NAMES = (*bundle_module._ASSET_NAMES, seed_module._TARGET_SCRIPT, seed_module._REVIEW_SCRIPT)
 
 
 def _sources(
@@ -45,7 +45,7 @@ def _iso_files(path: Path) -> dict[str, bytes]:
     iso = pycdlib.PyCdlib()
     iso.open(str(path))
     try:
-        names = (*seed_module._GUEST_NAMES, seed_module._TARGET_SCRIPT, "SHA256SUMS", "user-data", "meta-data")
+        names = (*seed_module._GUEST_NAMES, seed_module._TARGET_SCRIPT, seed_module._REVIEW_SCRIPT, "SHA256SUMS", "user-data", "meta-data")
         result = {}
         for name in names:
             out = io.BytesIO()
@@ -83,7 +83,7 @@ def test_packaged_zip_and_iso_are_lf_only_without_editing_sources(
     ) == media
     contents = _iso_files(media.path)
     assert all(b"\r" not in data for data in contents.values())
-    for name in (*seed_module._GUEST_NAMES, seed_module._TARGET_SCRIPT):
+    for name in (*seed_module._GUEST_NAMES, seed_module._TARGET_SCRIPT, seed_module._REVIEW_SCRIPT):
         assert contents[name] == canonical[name]
     assert b"set -eu\n" in contents[seed_module._TARGET_SCRIPT]
     for line in contents["SHA256SUMS"].decode("ascii").splitlines():
@@ -134,7 +134,7 @@ def test_invalid_text_refused_before_output_without_source_changes(
         assert not list(output.iterdir())
     else:
         report = bundle_module.build_protocol_image_bundle(bundle)
-        with pytest.raises(SeedIsoError, match="invalid target installer text"):
+        with pytest.raises(SeedIsoError, match="invalid target installer/auditor text"):
             seed_module.build_ubuntu_install_seed_iso(output, _ID, bundle, report.sha256)
         assert {entry.name for entry in output.iterdir()} == {"bundle.zip"}
     assert path.read_bytes() == bad

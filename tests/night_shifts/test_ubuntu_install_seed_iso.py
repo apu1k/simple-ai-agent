@@ -20,7 +20,8 @@ from night_shifts.ubuntu_seed_iso import SeedIsoError
 _ID = "night-shift-image-prep-" + "f" * 32
 _FILES = {
     "user-data", "meta-data", "protocol_test_bootstrap.py",
-    "night-shift-protocol-test.service", "install_protocol_test_target.sh", "SHA256SUMS",
+    "night-shift-protocol-test.service", "install_protocol_test_target.sh",
+    "review_protocol_test_target.py", "SHA256SUMS",
 }
 
 
@@ -64,6 +65,9 @@ def test_combined_seed_contains_exact_fixed_payload_and_late_command(tmp_path: P
         assert "late-commands" in config
         assert "identity" not in config
         assert "sh ./install_protocol_test_target.sh" in config["late-commands"][0][2]
+        assert "install -o 0 -g 0 -m 0600 review_protocol_test_target.py" in config["late-commands"][0][2]
+        assert "remaining=3600" in config["late-commands"][1][2]
+        assert config["late-commands"][1][2].count("python3 -B /run/night-shift-target-review.py") == 2
         sums = contents["SHA256SUMS"].decode("ascii").splitlines()
         assert {line.split("  ")[1] for line in sums} == _FILES - {"user-data", "meta-data", "SHA256SUMS"}
         for line in sums:
@@ -91,6 +95,7 @@ def _untrusted_candidate(path: Path, variant: str) -> str:
     guest = Path(__file__).resolve().parents[2] / "night_shifts" / "guest"
     payload_names = (
         "protocol_test_bootstrap.py", "night-shift-protocol-test.service", "install_protocol_test_target.sh",
+        "review_protocol_test_target.py",
     )
     contents = {name: (guest / name).read_bytes().replace(b"\r\n", b"\n") for name in payload_names}
     contents["SHA256SUMS"] = "".join(
@@ -101,7 +106,8 @@ def _untrusted_candidate(path: Path, variant: str) -> str:
         "user-data": "/USERDATA.;1", "meta-data": "/METADATA.;1",
         "protocol_test_bootstrap.py": "/BOOTSTRP.PY;1",
         "night-shift-protocol-test.service": "/PROTUNIT.SRV;1",
-        "install_protocol_test_target.sh": "/TARGETSH.SH;1", "SHA256SUMS": "/SHASUMS.;1",
+        "install_protocol_test_target.sh": "/TARGETSH.SH;1", "review_protocol_test_target.py": "/REVIEW.PY;1",
+        "SHA256SUMS": "/SHASUMS.;1",
     }
     if variant == "missing":
         del contents["install_protocol_test_target.sh"]
@@ -111,11 +117,25 @@ def _untrusted_candidate(path: Path, variant: str) -> str:
         contents["meta-data"] = render_ubuntu_install_seed("night-shift-image-prep-" + "a" * 32).meta_data
     elif variant == "cwd-leak":
         # A self-consistent LF seed with the old parent-cwd bug remains stale.
-        original = contents["user-data"]
-        assert b"(cd " in original and b"install_protocol_test_target.sh); " in original
-        contents["user-data"] = original.replace(b"(cd ", b"cd ", 1).replace(
-            b"install_protocol_test_target.sh); ", b"install_protocol_test_target.sh; ", 1,
+        # Mutate the parsed shell command, not the YAML emitter's line wrapping.
+        document = yaml.safe_load(contents["user-data"])
+        argv = document["autoinstall"]["late-commands"][0]
+        original = argv[2]
+        assert "(cd " in original and "night-shift-target-review.py); " in original
+        argv[2] = original.replace("(cd ", "cd ", 1).replace(
+            "night-shift-target-review.py); ", "night-shift-target-review.py; ", 1,
         )
+        contents["user-data"] = ("#cloud-config\n" + yaml.safe_dump(document, sort_keys=False)).encode("utf-8")
+    elif variant == "old-review-window":
+        assert b"remaining=3600" in contents["user-data"]
+        contents["user-data"] = contents["user-data"].replace(b"remaining=3600", b"remaining=1800", 1)
+    elif variant == "missing-audit":
+        del contents["review_protocol_test_target.py"]
+    elif variant == "audit":
+        contents["review_protocol_test_target.py"] += b"\n# self-hashed but stale auditor\n"
+        contents["SHA256SUMS"] = "".join(
+            f"{hashlib.sha256(contents[name]).hexdigest()}  {name}\n" for name in payload_names
+        ).encode("ascii")
     elif variant == "bootstrap":
         original = contents["protocol_test_bootstrap.py"]
         contents["protocol_test_bootstrap.py"] = b"!" + original[1:]
@@ -154,7 +174,8 @@ def _untrusted_candidate(path: Path, variant: str) -> str:
 
 @pytest.mark.parametrize("variant", [
     "missing", "extra-file", "extra-directory", "symlink", "config", "instance",
-    "bootstrap", "checksums", "crlf", "cwd-leak", "rr-name", "joliet-name", "no-rr", "no-joliet", "malformed",
+    "bootstrap", "checksums", "crlf", "cwd-leak", "old-review-window", "missing-audit", "audit",
+    "rr-name", "joliet-name", "no-rr", "no-joliet", "malformed",
 ])
 def test_inspection_rejects_untrusted_contents_even_with_matching_hash(tmp_path: Path, variant: str) -> None:
     bundle, bundle_hash = _bundle(tmp_path)

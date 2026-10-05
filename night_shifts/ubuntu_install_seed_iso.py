@@ -33,6 +33,7 @@ from night_shifts.ubuntu_seed_iso import SeedIsoError
 _DIGEST = re.compile(r"^[0-9a-fA-F]{64}$")
 _GUEST_NAMES = ("protocol_test_bootstrap.py", "night-shift-protocol-test.service")
 _TARGET_SCRIPT = "install_protocol_test_target.sh"
+_REVIEW_SCRIPT = "review_protocol_test_target.py"
 _MAX_MEDIA = 2 * 1024 * 1024
 
 
@@ -88,21 +89,22 @@ def _fixed_payload(bundle: Path, expected_sha256: str) -> dict[str, bytes]:
                 raise SeedIsoError("guest bundle manifest or checksums are inconsistent")
     except (zipfile.BadZipFile, UnicodeDecodeError, ValueError) as exc:
         raise SeedIsoError("invalid guest bundle") from exc
-    script = Path(__file__).resolve().parent / "guest" / _TARGET_SCRIPT
-    info = script.lstat()
-    if not stat.S_ISREG(info.st_mode) or info.st_size > 128 * 1024:
-        raise SeedIsoError("target installer is not a bounded regular trusted file")
-    data = script.read_bytes()
-    if len(data) != info.st_size:
-        raise SeedIsoError("target installer changed during read")
     contents = {name: trusted[name] for name in _GUEST_NAMES}
-    try:
-        contents[_TARGET_SCRIPT] = _linux_text_bytes(data, _TARGET_SCRIPT)
-    except BundleError as exc:
-        raise SeedIsoError(f"invalid target installer text: {exc}") from exc
+    for name in (_TARGET_SCRIPT, _REVIEW_SCRIPT):
+        script = Path(__file__).resolve().parent / "guest" / name
+        info = script.lstat()
+        if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= 128 * 1024:
+            raise SeedIsoError("target installer/auditor is not a bounded regular trusted file")
+        data = script.read_bytes()
+        if len(data) != info.st_size:
+            raise SeedIsoError("target installer/auditor changed during read")
+        try:
+            contents[name] = _linux_text_bytes(data, name)
+        except BundleError as exc:
+            raise SeedIsoError(f"invalid target installer/auditor text: {exc}") from exc
     contents["SHA256SUMS"] = "".join(
         f"{hashlib.sha256(contents[name]).hexdigest()}  {name}\n"
-        for name in (*_GUEST_NAMES, _TARGET_SCRIPT)
+        for name in (*_GUEST_NAMES, _TARGET_SCRIPT, _REVIEW_SCRIPT)
     ).encode("ascii")
     return contents
 
@@ -116,6 +118,7 @@ def _install_seed_files(instance_id: str, payload: dict[str, bytes]) -> dict[str
         "protocol_test_bootstrap.py": (payload["protocol_test_bootstrap.py"], "/BOOTSTRP.PY;1"),
         "night-shift-protocol-test.service": (payload["night-shift-protocol-test.service"], "/PROTUNIT.SRV;1"),
         _TARGET_SCRIPT: (payload[_TARGET_SCRIPT], "/TARGETSH.SH;1"),
+        _REVIEW_SCRIPT: (payload[_REVIEW_SCRIPT], "/REVIEW.PY;1"),
         "SHA256SUMS": (payload["SHA256SUMS"], "/SHASUMS.;1"),
     }
 

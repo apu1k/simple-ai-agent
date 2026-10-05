@@ -1,7 +1,7 @@
 # Candidate one-time Ubuntu preparation runbook (NOT launch authorization)
 
 This is a review procedure for a separate preparation VM, not Gate A itself.
-**Two attended installer attempts failed; no installed VHDX is reviewed.**
+**Three attended installer attempts failed; no completed/first-boot-validated image exists.**
 The fixed-memory correction and host-only version-2 control migration were
 verified before a separately approved exact-GUID launch. The operator checked
 the live instance ID, sole 20 GiB disk, loaded autoinstall configuration and both
@@ -67,6 +67,58 @@ Switching to the already-open tty2 restored usable typing. These observations do
 not establish a hardware/modifier cause; try the existing alternative live shell
 before further input-injection scripts. No guest commands were sent by those
 keyboard scripts. Console configuration was reset manually by the operator.
+
+### Third attempt: review checkpoint expired (2026-10-05)
+
+Sandbox `6584fc35942046dcbeae7953647aca13`, VM GUID
+`18e00e9e-e5f0-41e7-b00b-33ace333c83b`, used repository commit
+`319c473909c0ed04f7acec61a90ba65c6426c908`, the same reviewed installer and LF bundle,
+and corrected seed SHA-256
+`9e51f3fe184911beeac613381a7079b682e01ff64780e29e17e65b3e11132b62`.
+The operator's start-once receipt observed the exact VM running, fixed 2 GiB RAM,
+2 CPUs, one new 20 GiB disk, both DVDs and disconnected networking. Both previous
+failed candidates were observed OFF and unchanged. The live instance ID, sole
+disk, loaded corrected YAML and both guest DVD hashes were checked before the
+operator confirmed disk modification.
+
+`command_0` completed and `command_1` began. The operator's read-only review
+found `/target` on `/dev/sda2` (ext4), exact reviewed bootstrap/service hashes,
+root-owned mode-0644 files and mode-0755 trusted directories, an enabled service
+and serial-getty mask pointing to `/dev/null`. `night-shift` was UID 999/GID 988,
+with only its primary group and dialout, a `/nonexistent` home and nologin shell.
+All reported local password statuses, including root and the worker, were locked.
+No serial-console conflicts were found in live/generated/default GRUB inputs;
+Python reported 3.12.3 and openssh-server was not installed. Root's `.ssh` was
+empty and no `.ssh` directory was found in target homes. The actual target
+cloud-init input was `/target/etc/cloud/cloud.cfg.d/99-installer.cfg`, not the
+assumed `/target/var/lib/cloud/seed` directory. It contained a separate target
+instance UUID, `users: []`, root/password-SSH restrictions, no package updates,
+and the installer's deferred `/etc/cloud/cloud-init.disabled` write.
+These observations do NOT establish effective accounts or service behavior
+following a first boot.
+
+The guest journal records review start at **13:09:25** and explicit expiry at
+**13:39:27**, after 30 minutes 2 seconds. The operator discovered failure upon
+returning to tty1 and did not create the approval marker; `ls` confirmed it absent.
+This was the intended fail-closed expiry path, NOT a new CRLF/mount failure or an
+intended successful test. The manually typed/chat-driven audit was too lengthy
+for the configured window. Do not retroactively release it, reset the timer,
+rerun the payload, or call the disk a completed image.
+
+The operator reports orderly live-installer power-off. This is an operator
+observation, NOT a fresh agent-side Hyper-V OFF inspection. Local protected
+control inspection still finds only `manifest.json` and `launch.claim`, status
+`installer_vm_started_not_reviewed`, and manifest SHA-256
+`d7feac6b60415557de8e59ec2006d6dfa2aa5d64bb2c42161c86b7e63578435c`.
+Retain this candidate and both previous failures, media and permanent claims.
+The crash-report path was transcribed from the guest; its contents were not
+exported or independently inspected. No candidate is accepted or frozen.
+
+The new review procedure below replaces this timed manual exchange with a fixed
+read-only audit and a longer finite wait. Repository approval is NOT permission
+to build/attach a new seed, create/start another VM, reuse a failed disk, change
+retained manifests, retire resources, or boot an installed guest. Each real-host
+step remains separately reviewed/authorized. Gate A remains unrun.
 
 ### Linux payload bytes and recovery boundary
 
@@ -332,13 +384,60 @@ The current seed/installer input tests do not prove disk selection or ISO boot.
 
 ## 3. Candidate live-installer inspection checkpoint
 
-The combined seed first runs the fixed `/target` service installer, then a
-separate fixed late-command review wait. It refuses a stale acknowledgment,
-checks for a root-owned regular non-symlink acknowledgment with mode `0600`,
-and makes at most 1800 one-second polling attempts. This is roughly a 30-minute
-review window, **not a host-enforced deadline**. Exhaustion fails installation;
-it must not be treated as a completed image. It requests `shutdown: poweroff`
-after successful review, instead of the installer's default reboot.
+The combined seed first runs the fixed `/target` service installer. Inside the
+same verified, read-only CIDATA subshell it stages the checksum-covered
+`review_protocol_test_target.py` as root-owned mode-0600
+`/run/night-shift-target-review.py` in the ephemeral installer, NOT in `/target`.
+The parent then unmounts CIDATA normally; no cwd is left inside the mount.
+The combined ISO now has seven fixed files and its payload checksums include
+the auditor. The existing three-file LF bundle is unchanged; old combined seeds
+are intentionally stale and must remain retained evidence, not overwritten.
+
+The separate review late-command rejects any preexisting marker, runs the fixed
+read-only auditor before starting the human review clock, then prints a UTC
+start, estimated deadline and **3600 one-second polling attempts**. It reports
+remaining attempts every 300 polls. This is approximately a **60-minute
+cooperative review window**, NOT a host-enforced lifetime deadline; sleep and
+command overhead can extend it and the displayed wall-clock estimate is not a
+trusted monotonic deadline. Attend installation plus the complete window and
+shutdown reserve; do not rely on it to stop a VM when the operator leaves.
+
+The auditor is bound to the live seed identity and current canonical bootstrap
+and unit hashes. It checks the mounted sole-disk target, files/trusted parents,
+locked system accounts and groups, service enable/mask links, serial-console
+configuration, prerequisites, SSH/credential absence and actual installer-written
+cloud-init policy. It reads fixed files and only invokes live `findmnt`/`lsblk`;
+it runs no target executable, starts no service, accesses no network and writes
+no marker or report file. Python is invoked with `-B` to prevent bytecode writes.
+Live-installer PyYAML is required for safe cloud-config parsing; missing support,
+unknown account/config shapes or inspection errors refuse, without installation
+of dependencies or weakening policy. Output contains only fixed check names and
+PASS/FAIL summaries, never password hashes, key material, raw YAML or tracebacks.
+Offline fixture metadata/commands are models, not real Unix/Hyper-V evidence.
+
+A fresh root-owned regular non-symlink mode-0600 acknowledgment is STILL required.
+After observing it, the late-command reruns the read-only audit and releases only
+on success. Neither a passing report nor a timeout approves the image. Exhaustion,
+audit failure or drift fails installation and must not be bypassed in place.
+`shutdown: poweroff` is still requested only after successful completion; no
+automatic installed-guest first boot is introduced.
+
+**Prepare this procedure and review its exact source before launching.** At the
+checkpoint, use tty2 and one read-only report command (no pipes/quotation marks):
+
+```sh
+sudo -n journalctl -b --no-pager --grep=^NS-REVIEW -n 40
+```
+
+Review all eight PASS checks, the final RESULT and the current WINDOW/WAIT records.
+The same report prefix includes BLOCKED/EXPIRED status, so an initial PASS is not
+the last word if the gate subsequently refuses or times out. Do not assume an
+old PASS report means the wait is still active: check tty1 for
+current state/expiry before any release, and never acknowledge a failed run.
+Retain failures and only collect narrow sanitized diagnostics, not another long
+unplanned audit. The manual commands below are fallback inspection examples,
+not the default multi-round timed procedure. Host/ISO/disk/seed pre-install checks
+remain necessary and are NOT replaced by this target audit.
 
 Canonical documents **Help -> Enter shell**, Control+Z or F2 for the live
 installer. Validate that console access actually works on our ISO. Confirm
@@ -437,8 +536,10 @@ exact-path action; start a new attempt only in a fresh reviewed workspace.
 
 ## 5. Still required before a trusted base or Gate A
 
-The first real launch packet and the actual ISO's seed/confirmation/checkpoint
-behavior remain unvalidated. After an observed successful install/power-off,
+Real-host start-once launches, seed selection, disk confirmation and the old
+checkpoint were observed in failed attempts. No successful installer completion,
+new-auditor guest execution or installed first boot has been observed. After an
+observed successful install/power-off,
 review exact-VM DVD removal/boot order, serial configuration/pipe ACLs and a
 separately approved first boot; verify cloud-init's resulting accounts and the
 running service. Image hygiene, machine-specific state cleanup, graceful final

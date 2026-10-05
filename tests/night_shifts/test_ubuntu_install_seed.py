@@ -39,7 +39,9 @@ def test_candidate_command_mounts_only_fixed_local_payload() -> None:
     assert (
         "(cd /run/night-shift-protocol-seed; "
         "sha256sum -c -- SHA256SUMS; "
-        "sh ./install_protocol_test_target.sh); "
+        "sh ./install_protocol_test_target.sh; "
+        "install -o 0 -g 0 -m 0600 review_protocol_test_target.py "
+        "/run/night-shift-target-review.py); "
         "umount /run/night-shift-protocol-seed"
     ) in command
     assert command.endswith("umount /run/night-shift-protocol-seed")
@@ -58,13 +60,30 @@ def test_combined_candidate_has_finite_manual_review_checkpoint_then_poweroff() 
     command = review[2]
     assert "ack=/run/night-shift-image-review-approved" in command
     assert '[ -e "$ack" ] || [ -L "$ack" ]' in command
-    assert "remaining=1800" in command
+    assert "remaining=3600" in command and "remaining=1800" not in command
+    assert "NS-REVIEW WINDOW start=%s estimated_deadline=%s" in command
+    assert "date -u -d '+3600 seconds'" in command
+    assert "NS-REVIEW WAIT %s polling attempts left" in command
+    assert "not a host lifetime bound" in command
+    assert "NS-REVIEW BLOCKED preexisting approval marker" in command
+    assert "NS-REVIEW EXPIRED; no release, retry or first-boot approval" in command
+    audit = "python3 -B /run/night-shift-target-review.py --instance-id " + _ID
+    assert command.count(audit) == 2  # Before the timer AND after valid manual acknowledgment.
+    assert command.index(audit) < command.index("remaining=3600")
+    from night_shifts.protocol_image_bundle import _assets
+    assets = _assets()
+    for name, option in (("protocol_test_bootstrap.py", "--bootstrap-sha256"),
+                         ("night-shift-protocol-test.service", "--unit-sha256")):
+        assert command.count(option + " " + hashlib.sha256(assets[name]).hexdigest()) == 2
+    assert "__AUDIT__" not in command
     assert 'while [ "$remaining" -gt 0 ]' in command
     assert "sleep 1; remaining=$((remaining - 1))" in command
     assert '[ -f "$ack" ] && [ ! -L "$ack" ]' in command
     assert 'stat -c %u -- "$ack"' in command
     assert 'stat -c %a -- "$ack"' in command
-    assert '= 600 ]; then exit 0' in command
+    assert '= 600 ]; then python3 -B /run/night-shift-target-review.py' in command
+    assert command.index("NS-REVIEW RELEASE accepted") > command.rindex(audit)
+    assert not any(token in command for token in ("touch ", "umask ", ": >", "install -", "tee "))
     assert command.endswith("exit 1")  # no acknowledgment must fail, not continue to first boot
     assert settings["shutdown"] == "poweroff"
     assert settings["user-data"]["users"] == []
