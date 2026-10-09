@@ -1,5 +1,58 @@
 # Night-shift implementation status and validation gates
 
+## Current image-preparation handoff — 2026-10-09 (Gate A unrun)
+
+The detailed [image diagnostic record](night_shift_image_diagnostic_record.md)
+separates saved host receipts, operator-console observations and pending work.
+Three earlier failed installer candidates remain retained. A fourth identity,
+built from commit `48343aa`, passed both native `/target` audits and manual review
+release; saved logs show curtin/post-install success and automatic power-off.
+An unmasked installed boot then failed in the serial bootstrap with an I/O error
+before cloud-init finalization. No protocol task/result exchange was captured.
+
+A separate isolated recovery VM inspected a post-boot copy, then booted that copy
+after approved offline service masking and temporary root tty9 preparation.
+The operator observed ext4 installed root, worker `masked`/`inactive`, completed
+cloud-init `DataSourceNone` with all stages finished and no errors/recoverable
+errors, and the intended root-owned disable marker. Root/worker passwords remained
+locked; worker identity/groups/home/shell matched policy; no UID 1000–65533 account
+appeared and OpenSSH server was not installed. Root authorized_keys was empty;
+generated SSH host keys still existed and require hygiene. The operator reports
+the diagnostic copy VM OFF after orderly shutdown. Original disks, backups, media,
+claims and the original `018` lock remain retained; no fresh agent-side OFF
+inventory is implied by that console report.
+
+**No cleaned/frozen accepted base or final digest exists.** Temporary root access,
+worker mask, guest-generated keys and machine/log/cache state must be removed or
+restored in a reviewed offline copy-only procedure. Normal COM1/pipe behavior and
+permissions, protocol responses and real lifecycle/cleanup remain unvalidated.
+Gates A/B and live model jobs remain **BLOCKED**. This initialized diagnostic
+copy is not a successful Gate A run or acceptance of the original source disk.
+
+Code-review disposition: earlier repository fixes addressed LF packaging, the
+seed-unmount cwd and bounded review workflow. Later state/ACL/firmware/ejection
+errors were external one-shot operator-helper defects; first-boot masking is an
+explicit preparation prerequisite, not a reason to remove failure power-off or
+blindly add cloud-init ordering to the generic worker. The exact observed serial
+I/O operation/hardware cause is still unknown. Offline `main()` regressions cover
+open/read EIO, early EOF, channel closure, success and both unit power-off actions;
+no guest runtime asset changes are needed for this documentation/test batch.
+
+Pre-proposal focused validation of the new tests in temporary fixtures plus the
+existing bootstrap/bundle tests: **11 passed, 1 skipped**, with real Hyper-V opt-in
+explicitly disabled; Ruff on the new test file passed. The skip is the Windows
+symlink fixture, not successful native serial/termios validation. No full-suite
+rerun or new VM, mount, media/ACL change, WSL use, paid call or guest execution is
+claimed for this documentation/code-review step. Historical commit results below
+retain their original scope and are not current-state image attestations.
+
+Next: preserve completed diagnostic evidence; approve offline hygiene and
+restoration, audit/export a fresh read-only/private hash-pinned base, then review
+the actual serial binding/pipe policy before separately authorizing Gate A.
+Documentation/tests will advance the Git commit, not the payload bytes; future
+host procedures must bind the new reviewed clean commit without rewriting old
+receipts or rerunning their permanent claims.
+
 ## Commit 01 observed baseline
 
 - Checkout HEAD when inspected: `6ea7f75` (`feat(settings): add max OpenAI reasoning effort`); prior commits `3a04eb0`, `ad9b864`. `git status --short` returned no changes. The handoff's previously modified `config/knowledge.yaml` and `tools/knowledge/config.py` were clean when checked; do not bundle unrelated future changes.

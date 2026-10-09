@@ -1,7 +1,19 @@
 # Candidate one-time Ubuntu preparation runbook (NOT launch authorization)
 
 This is a review procedure for a separate preparation VM, not Gate A itself.
-**Three attended installer attempts failed; no completed/first-boot-validated image exists.**
+**Current handoff (2026-10-09): three earlier failed installer candidates are retained;
+a fourth candidate passed both native target audits and review release, and its
+separate diagnostic disk copy completed cloud-init and the recorded account/SSH-server
+checks. No cleaned/frozen base image exists; Gate A remains unrun.** The operator
+reports the diagnostic VM OFF after orderly shutdown. Original candidates, media,
+backups, manifests, permanent claims and the original `018` lock remain retained.
+See the [diagnostic record](night_shift_image_diagnostic_record.md) for identities,
+receipt hashes, observed failures/fixes, evidence limitations and next boundaries.
+
+## Historical failed installer attempts
+
+### First attempt: likely CRLF shell failure
+
 The fixed-memory correction and host-only version-2 control migration were
 verified before a separately approved exact-GUID launch. The operator checked
 the live instance ID, sole 20 GiB disk, loaded autoinstall configuration and both
@@ -536,15 +548,48 @@ exact-path action; start a new attempt only in a fresh reviewed workspace.
 
 ## 5. Still required before a trusted base or Gate A
 
-Real-host start-once launches, seed selection, disk confirmation and the old
-checkpoint were observed in failed attempts. No successful installer completion,
-new-auditor guest execution or installed first boot has been observed. After an
-observed successful install/power-off,
-review exact-VM DVD removal/boot order, serial configuration/pipe ACLs and a
-separately approved first boot; verify cloud-init's resulting accounts and the
-running service. Image hygiene, machine-specific state cleanup, graceful final
-shutdown, external base-image preservation/digest and independent image review
-are not automated here. Retirement is not a substitute for any of these.
+The [2026-10-09 diagnostic record](night_shift_image_diagnostic_record.md) now
+contains real native `/target` audit/re-audit/release evidence, successful curtin
+and post-install messages, and completed cloud-init plus bounded account/SSH-server
+checks on a separately prepared diagnostic copy. The original unmasked installed
+boot failed in the serial bootstrap before cloud-init finalization; it did not
+prove protocol success or a kernel crash. Recovery/copy initialization is not
+acceptance of the original candidate or a cleaned base.
+
+### Initialization before worker activation
+
+The generic protocol unit is enabled for the finished base and can power off on
+both success and failure. Its serial-device ordering is not a guarantee that
+cloud-init has completed. Do not simply start an uninitialized installed disk
+without a controller or rely on catching GRUB to apply a mask in time.
+
+Before an explicitly approved initialization/diagnostic boot, preserve original
+state/evidence and prepare a separate working copy using an approved live recovery
+environment. Mask the worker offline, preserve its exact original bytes/permissions,
+and separately review any temporary console-only root access. Recovery should boot
+its verified live ISO diskless before the copy is attached; verify guest block
+read-only flags and disable filesystem journal replay for forensic inspection.
+A writable transition/journal replay is a separate approved copy-only operation,
+not a silent continuation of read-only inspection. Never mount the guest filesystem
+on Windows or use the protected agent WSL distribution as a recovery sandbox.
+
+Verify the installed root, running service mask/inactive state, all cloud-init
+stage start/finish/error fields, the result and intended disable marker, and
+actual account/remote-access state. A bare `cloud-init status: disabled` or an
+Off console does not prove finalization. Do not disable the unit's power-off
+safety or add distribution-specific dependencies without reviewing the actual
+systemd ordering graph. Temporary debug/root access and the worker mask are
+preparation-only changes, not acceptable final-image configuration.
+
+Remaining work is separately reviewed offline hygiene and diagnostic removal,
+restoration/audit of the exact worker and serial-console policy, graceful completion,
+new external read-only/private base export, final digest/provenance and independent
+image review. Generated SSH host keys, logs/cache/history, installer/cloud/machine
+state and temporary root access remain pending on the current copy. Preserve the
+completed diagnostic evidence before destructive hygiene. Keep the intended
+cloud-init-disable policy; do not reset/re-run initialization as a cleanup shortcut.
+Retirement is not a substitute for any of these. No unattended end-to-end builder
+or reusable automated first-boot/hygiene pipeline is supplied by this runbook.
 
 Only a reviewed frozen bootable VHDX permits a separately authorized **Gate A**
 lifecycle/protocol run. Gate A still needs observed network-off boot, protocol,

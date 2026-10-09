@@ -1,6 +1,8 @@
 # One-time Hyper-V protocol-test image setup (not yet automated)
 
-**Current state: no reviewed bootable Linux VHDX and no unattended image builder.**
+**Current state (2026-10-09): a diagnostic copy boots and has completed cloud-init,
+but no cleaned/frozen protocol-test base VHDX is accepted; there is no unattended
+end-to-end image builder.**
 An offline guest-asset bundle can now be generated, but it does not install an OS,
 transfer files into a VM, or remove the need to review the resulting image.
 The `hyperv_image_preflight` command added here is read-only. It checks an
@@ -16,18 +18,22 @@ and `Get-VM`, `New-VM`, `Start-VM`, and `Remove-VM` cmdlets are available. This
 is a **software-prerequisite observation**, not authorization to build an image
 or run the real-host suite; image, workspace, VM privileges and pipe ACLs have
 not been validated for a frozen base image. A pinned Ubuntu installer and LF
-bundle were separately reviewed for attended preparation attempts; no completed
-base VHDX or its final digest has been approved. See the preparation runbook for
-actual paths, observations and failed-attempt history.
+bundle were separately reviewed for attended preparation attempts; no cleaned/frozen
+base VHDX or final digest has been approved. See the preparation runbook and
+[diagnostic record](night_shift_image_diagnostic_record.md) for actual paths,
+installer/recovery observations, evidence limits and retained failed attempts.
 
 ## Candidate operator runbook and discard safeguard
 
 See the [candidate preparation runbook](night_shift_image_preparation_runbook.md)
 for the exact input/host review checkpoints, deliberate one-time installer
 confirmation, live-installer target inspection and separate discard consent.
-It is **not launch authorization**. Real-host launch, seed selection and manual
-disk confirmation were observed in three failed attempts; successful completion,
-the new auditor and installed-guest first boot remain unvalidated.
+It is **not launch authorization**. Three earlier installer attempts failed and
+remain retained. The fourth candidate passed the native target audit and re-audit,
+released manual review and powered off. Its unmasked installed boot failed in the
+serial bootstrap before cloud-init finalization; a separately prepared diagnostic
+copy subsequently completed cloud-init and bounded account/SSH-server checks.
+The normal running worker, clean frozen image and Gate A remain unvalidated.
 The combined seed now requests a finite manual late-command review wait and
 `shutdown: poweroff`; it does not automatically boot the installed guest.
 The optional `retire_image_preparation_vm` path only force-stops/unregisters
@@ -72,8 +78,15 @@ remain separate prerequisites. No real VM operation is authorized here.
    system directory as root-owned, worker-nonwritable files. Create the locked
    `night-shift` service identity with access only to its serial device, enable
    the unit, disable `serial-getty@ttyS0`, and remove any kernel `console=ttyS0`.
+   For an uninitialized Ubuntu image, separately approve an offline worker mask
+   **before** a controlled first-boot/diagnostic pass; do not rely on catching GRUB.
+   Preserve the original unit and separately review temporary console-only access.
+   Check completed cloud-init stages/result and effective accounts, then remove
+   diagnostic access and restore the exact worker offline before freezing. The
+   worker's success/failure power-off is not a first-boot completion check.
    Review raw COM1 communication on `/dev/ttyS0`, systemd shutdown/disconnect
    behavior, other running services, accounts and permissions inside the guest.
+   The masked initialization pass does not validate normal protocol operation.
 4. Remove image-preparation accounts/credentials, secrets, host shares, remote
    login, installer leftovers and machine-specific state according to the
    reviewed distribution procedure. Shut down the VM, retain a clean base
@@ -207,8 +220,10 @@ root-owned fixed files into the new target, and masks the serial login and
 enables the fixed service with `systemctl --root=/target` (not `--now`). It is
 **not** the existing `install_protocol_test.sh`, which expects a running,
 installed guest. Its automated tests are static on this Windows host. The
-operator observed payload installation and reviewed target files/accounts in
-failed real attempts; no successful completion/first boot is certified.
+operator observed payload installation and target review in earlier failed
+attempts, then both native target audits/review release in the fourth candidate.
+Completed cloud-init and bounded account/SSH-server checks were subsequently
+observed on its offline-masked diagnostic copy, not a accepted/frozen base.
 `render_ubuntu_install_seed(instance_id)` now defines **candidate** Subiquity
 `late-commands` that would mount the fixed `CIDATA` volume read-only,
 check `SHA256SUMS`, call this installer-target script, and stage the verified
@@ -252,21 +267,26 @@ inspection as well as ISO authoring; missing inspection support fails closed.
 The existing PowerShell script independently rechecks the reviewed ISO hash
 immediately before its attach-only operation. These checks assume reviewed,
 operator-controlled input directories; they do not replace host ACL review or
-establish guest safety. Subiquity boot and live target inspection were observed
-in failed attempts; no installed-guest boot or running service validation has
-occurred. The new auditor has no real-guest evidence yet. A failed late-command must
-block freezing the image; manually inspect or discard the exact-owned prep VM,
-never reuse a partially installed disk as a trusted base.
+establish guest safety. The fourth candidate supplied real-guest evidence for the
+new target auditor, re-audit and release; saved logs also show curtin/post-install
+success. A diagnostic copy completed installed-system initialization after offline
+masking prevented the worker from powering off during first boot. These findings
+are recorded with receipt/evidence boundaries in the diagnostic record; normal
+protocol behavior, hygiene and image acceptance remain pending. A failed
+late-command must still block freezing the image; manually inspect or discard the
+exact-owned failed attempt, never call an incomplete disk a trusted base.
 
-Three separately approved exact-owned preparation candidates have failed and
-are retained with their permanent launch claims. The first failed before review
-with a likely CRLF issue; the second confirmed the parent-cwd/busy-unmount bug;
-the third reached target review but expired after 30 minutes 2 seconds. The
-operator reports them OFF; failed candidates remain `installer_vm_started_not_reviewed`,
-not completed/accepted images. The full history and receipt boundaries are in
-the preparation runbook. The redesigned audit/60-minute checkpoint requires a
-freshly reviewed seed and a separately authorized fresh candidate, not a live
-retry or overwriting retained media.
+Three separately approved exact-owned failed installer candidates remain
+retained with permanent launch claims: likely CRLF bytes, confirmed busy seed
+mount, and a 30-minute review expiry. Their saved states are historical, not
+rewritten as success after later work. A fourth identity used the redesigned
+audit/60-minute checkpoint and supplied the observations above. Its original disk,
+pre-first-boot backup and separate initialized diagnostic copy are distinct
+artifacts; temporary masks/root access and generated SSH host keys still preclude
+image acceptance. The operator reports the diagnostic VM OFF; source candidates
+were last observed OFF in the launch receipt. Full history is in the runbook and
+diagnostic record. A future new installer attempt still needs fresh identity,
+disk and reviewed seed; no in-place retry or retained-media overwrite is implied.
 
 There is **no unattended end-to-end image builder**. Offline YAML/audit models
 cannot prove successful installer completion, first-boot cloud-init behaviour or
