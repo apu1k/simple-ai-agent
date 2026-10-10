@@ -10,6 +10,12 @@ backups, manifests, permanent claims and the original `018` lock remain retained
 See the [diagnostic record](night_shift_image_diagnostic_record.md) for identities,
 receipt hashes, observed failures/fixes, evidence limitations and next boundaries.
 
+A candidate [copy-only, no-console image finalization workflow](night_shift_image_finalization.md)
+now provides separate inspection, reviewed cleanup and publication entry points.
+Its offline tests are not live recovery/NoCloud/serial evidence. First authorize an
+inspection-only run; neither this implementation nor code approval authorizes any
+VM launch, original-candidate change or Gate A run.
+
 ## Historical failed installer attempts
 
 ### First attempt: likely CRLF shell failure
