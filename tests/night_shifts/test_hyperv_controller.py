@@ -87,6 +87,53 @@ def test_creation_script_explicitly_locates_configuration_with_the_disposable_di
     assert "$expectedConfigPath = Join-Path (Split-Path -Parent $DiskPath) 'vm-config'" in source
 
 
+def test_creation_script_sets_and_reads_back_explicit_fixed_memory():
+    """Static regression only; does not prove actual Hyper-V memory behavior."""
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "night_shifts" / "backends" / "hyperv_scripts" / "create.ps1"
+    ).read_text(encoding="utf-8")
+    setting = "Set-VMMemory -VMName $VmName -DynamicMemoryEnabled $false -StartupBytes $MemoryBytes"
+    observation = "$memory = Get-VMMemory -VMName $VmName -ErrorAction Stop"
+    assert "MemoryStartupBytes = $MemoryBytes" in script
+    assert "-DynamicMemory:" not in script
+    assert script.index("$createdVm = $true") < script.index(setting)
+    assert script.index(setting) < script.index(observation)
+    assert "Start-VM" not in script
+
+
+def test_creation_script_rejects_missing_or_mismatched_memory_before_success():
+    """Static fail-closed guard; live read-back still needs approved host evidence."""
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "night_shifts" / "backends" / "hyperv_scripts" / "create.ps1"
+    ).read_text(encoding="utf-8")
+    expected_guard = (
+        "if ($null -eq $memory -or $memory.Startup -ne $MemoryBytes -or\n"
+        "        $memory.DynamicMemoryEnabled -ne $false) {\n"
+        "        throw 'Created VM does not have the exact requested fixed-memory settings'\n"
+        "    }"
+    )
+    observation = "$memory = Get-VMMemory -VMName $VmName -ErrorAction Stop"
+    success = "\n    $VmName\n"
+    assert script.index("try {") < script.index(observation) < script.index(expected_guard)
+    assert script.index(expected_guard) < script.index(success) < script.index("catch {")
+    cleanup = script[script.index("catch {"):]
+    assert "if ($createdVm) {" in cleanup
+    assert "Remove-VM -Name $VmName -Force" in cleanup
+    assert "Remove-Item -LiteralPath $DiskPath -Force" in cleanup
+
+
+def test_preflight_requires_memory_configuration_and_readback_commands():
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "night_shifts" / "backends" / "hyperv_scripts" / "preflight.ps1"
+    ).read_text(encoding="utf-8")
+    required = script.split("$required = @(", 1)[1].split(")", 1)[0]
+    assert "'Set-VMMemory'" in required
+    assert "'Get-VMMemory'" in required
+
+
 def test_lifecycle_updates_durable_host_observed_state(tmp_path: Path):
     controller, runner = build_controller(tmp_path)
     sandbox = controller.create(job_id="job-1", spec=SandboxSpec())

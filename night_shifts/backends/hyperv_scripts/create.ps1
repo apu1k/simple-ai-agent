@@ -53,8 +53,16 @@ try {
     }
     New-VM @parameters | Out-Null
     $createdVm = $true
-    Set-VM -Name $VmName -Notes $OwnerMarker -DynamicMemory:$false `
+    Set-VM -Name $VmName -Notes $OwnerMarker `
         -AutomaticStartAction Nothing -AutomaticStopAction ShutDown
+    # DynamicMemory is a Set-VM switch, not a Boolean memory policy. Set the
+    # actual Boolean explicitly and observe it before reporting create success.
+    Set-VMMemory -VMName $VmName -DynamicMemoryEnabled $false -StartupBytes $MemoryBytes
+    $memory = Get-VMMemory -VMName $VmName -ErrorAction Stop
+    if ($null -eq $memory -or $memory.Startup -ne $MemoryBytes -or
+        $memory.DynamicMemoryEnabled -ne $false) {
+        throw 'Created VM does not have the exact requested fixed-memory settings'
+    }
     Set-VMProcessor -VMName $VmName -Count $CpuCount
     Set-VMComPort -VMName $VmName -Number 1 -Path $ComPortPipe
     Set-VMFirmware -VMName $VmName -EnableSecureBoot On `
