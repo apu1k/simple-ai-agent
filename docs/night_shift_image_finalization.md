@@ -32,6 +32,36 @@ source writes/deletion during copying and maintenance, checks the copy against
 the source digest, and rechecks that the source is unchanged. Retained original
 VMs, disks, media, claims, manifests and the `018` lock are never changed.
 
+## 0. Collect fresh host evidence without launching anything
+
+Use the operator-only collector before choosing the inspection command:
+
+```powershell
+python -B -m night_shifts.host_evidence `
+  --source '<reviewed diagnostic VHDX>' `
+  --recovery-iso '<reviewed Ubuntu live ISO>' --recovery-iso-sha256 '<reviewed SHA-256>' `
+  --workspace '<proposed external workspace>'
+```
+
+This prints bounded JSON to stdout; it does not create report/workspace files,
+control claims, media or VMs, mount disks, modify ACLs, or elevate. Keep the report
+private: it includes local resource paths and source-VM names/GUIDs. Source
+references must be OFF and the VHD unattached/suitable before hashing. Temporary
+read-sharing handles deny content writes/deletion during hashes; current source
+SHA-256 is discovered rather than supplied from an old receipt. The recovery ISO
+hash must match the independently reviewed value. Workspace emptiness, native
+private ACL policy and physical space are checked without repair.
+
+A missing/unsafe workspace is reported as a blocker but does not prevent a safe
+source snapshot; the directory is never created automatically. Hyper-V query
+access may require a dedicated terminal with appropriate permissions. Do not
+run the AI application elevated. `blocked`/exit code 2 is not permission to fix,
+stop or start anything. `snapshot_ready_for_review`/exit code 0 is only an input
+snapshot: create/start permission, guest contents, pipe ACLs and provenance are
+not attested, and **launch is never authorized**. Actual inspection rechecks the
+inputs/state and needs separate authorization. This collector is offline-tested;
+native real-host observations still need recording.
+
 ## 1. Inspect automatically
 
 Proposed operator invocation after the inputs and launch are separately approved:
