@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from core.tool_progress import evidence_progress
 from night_shifts.host_evidence import collect_host_evidence
 from night_shifts.hyperv_image_preflight import _checked_path
 from night_shifts.ubuntu_preparation_control import _current_user_sid, _read_acl
@@ -123,6 +124,47 @@ def load_policy() -> tuple[Path, Path, dict[str, Any]]:
     return root, powershell, policy
 
 
+PHASES = (
+    ('inventory', 'Querying Hyper-V inventory'),
+    ('source_hash', 'Hashing source VHDX'),
+    ('iso_hash', 'Hashing recovery ISO'),
+    ('recheck', 'Rechecking source VM state'),
+)
+
+
+def _observed_phase(root: Path, request_id: str) -> str:
+    """Optional, protected display hints only; never infer completion here."""
+    for phase, label in reversed(PHASES):
+        path = root / 'receipts' / f'{request_id}.phase-{phase}.json'
+        try:
+            record = _bounded_json(path)
+            if (type(record.get('version')) is int and record['version'] == 1
+                    and record.get('request_id') == request_id and record.get('phase') == phase):
+                return label
+        except Exception:
+            # Old installations have no phase receipts. Missing, partial or
+            # unsafe hints must neither grant success nor abort contained work.
+            continue
+    return 'Collecting host evidence (fresh hashing may take several minutes)'
+
+
+def _wait_for_helper(kernel: Any, handle: Any, root: Path, claim: PrivilegedClaim) -> int:
+    """Short native waits keep display updates flowing; the deadline is fixed."""
+    started = time.monotonic()
+    next_update = started
+    while True:
+        remaining = claim.deadline_unix + 5 - time.time()
+        if remaining <= 0:
+            return 0x102
+        now = time.monotonic()
+        if now >= next_update:
+            evidence_progress(f'{_observed_phase(root, claim.request_id)} — {int(now - started)}s elapsed')
+            next_update = now + 5
+        wait = kernel.WaitForSingleObject(handle, min(1000, max(1, int(remaining * 1000))))
+        if wait != 0x102:
+            return int(wait)
+
+
 def _elevate(powershell: Path, helper: Path, claim: PrivilegedClaim) -> str:
     """RunAs with Windows consent, never shell/PATH lookup or arbitrary text."""
     from ctypes import wintypes as w
@@ -156,6 +198,7 @@ def _elevate(powershell: Path, helper: Path, claim: PrivilegedClaim) -> str:
     info.lpParameters = params
     info.lpDirectory = str(helper.parent)
     info.nShow = 1
+    evidence_progress('Waiting for Windows UAC consent…')
     if not shell.ShellExecuteExW(ctypes.byref(info)):
         if ctypes.get_last_error() == 1223:
             return 'uac_cancelled'
@@ -165,8 +208,7 @@ def _elevate(powershell: Path, helper: Path, claim: PrivilegedClaim) -> str:
     try:
         # Windows consent cannot be forcibly dismissed here. Late acceptance
         # is rejected by the helper's independent deadline.
-        remaining_ms = max(0, int((claim.deadline_unix - time.time() + 5) * 1000))
-        wait = kernel.WaitForSingleObject(info.hProcess, remaining_ms)
+        wait = _wait_for_helper(kernel, info.hProcess, helper.parent, claim)
         if wait == 0x102:
             return 'deadline_outcome_unknown'
         if wait != 0:
@@ -198,6 +240,7 @@ def collect_installed_evidence(claim: PrivilegedClaim) -> dict[str, Any]:
     state = _elevate(powershell, root / 'helper.ps1', claim)
     if state not in ('completed', 'helper_failed'):
         return {'status': state, 'request_id': claim.request_id, 'launch_authorized': False}
+    evidence_progress('Helper exited; validating protected receipt and workspace…')
     receipt_path = root / 'receipts' / f'{claim.request_id}.result.json'
     receipt = _bounded_json(receipt_path)
     if (receipt.get('request_id') != claim.request_id or type(receipt.get('version')) is not int

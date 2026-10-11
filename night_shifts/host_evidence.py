@@ -82,6 +82,12 @@ def collect_host_evidence(
                 or any(value not in {'source_vm_not_off', 'source_vhd_unsuitable', 'source_signature_invalid'}
                        for value in facts['blockers'])):
             raise ValueError('unexpected evidence schema')
+        timings = facts.get('phase_timings_ms')
+        if timings is not None:
+            if (not isinstance(timings, dict)
+                    or not set(timings) <= {'inventory', 'source_hash', 'iso_hash', 'recheck'}
+                    or any(type(v) is not int or not 0 <= v <= 1800000 for v in timings.values())):
+                raise ValueError('invalid evidence phase timings')
         for ref in facts['source_references']:
             if not isinstance(ref, dict) or set(ref) != {'name', 'id', 'state'}:
                 raise ValueError('unexpected VM reference')

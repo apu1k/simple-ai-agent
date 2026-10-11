@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Callable, Literal
 from config import MAX_AGENT_STEPS, MAX_BATCH_TOOL_CALLS
 from core import protocol
 from core.tool_registry import registry
+from core.tool_progress import tool_progress_listener
 from llm.base import LLMResponse, NativeToolOutput
 from night_shifts.models import ToolCallRecord, ToolCallStatus
 
@@ -408,10 +409,11 @@ class Agent:
         spec = self.registry.get(action)
 
         try:
-            if spec.requires_state:
-                raw_result = spec.function(self.state, **tool_input)
-            else:
-                raw_result = spec.function(**tool_input)
+            with tool_progress_listener(self._tool):
+                if spec.requires_state:
+                    raw_result = spec.function(self.state, **tool_input)
+                else:
+                    raw_result = spec.function(**tool_input)
 
             observation = str(raw_result)
             self._complete_tool_audit(audit_id, ToolCallStatus.SUCCESS, observation, None)

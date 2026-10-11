@@ -100,6 +100,34 @@ dismissed by the client; acceptance after expiration is rejected without startin
 the worker. Bootstrap/OS failures may leave an unknown outcome, never an automatic
 retry. Inspect retained evidence before granting another turn.
 
+## Live progress and timing
+
+Collection remains synchronous from the model's perspective: no final answer is
+returned before the helper exits and the protected result is validated. The
+Textual app already runs the agent in a background worker. It now shows an
+immediate collection notice and a rolling status-bar update with elapsed time
+roughly every five seconds, leaving typing and rendering responsive. Progress
+notifications are display-only; they are not added to model/API messages or
+persisted as assistant answers. Status is cleared when the turn finishes.
+
+The client observes the helper with short native waits against the same fixed
+deadline. There are no retries, extra operations or widened privileges. With an
+older installed helper it displays generic collection/elapsed-time updates. A
+newly reviewed helper also writes protected, create-new phase receipts for
+inventory, source hashing, ISO hashing and VM-state recheck. These bounded,
+identity-checked hints select fixed UI labels only; missing or invalid hints
+cannot imply success or authorize anything. The console shows an explanatory
+banner instead of staying empty. The collector reports `host.phase_timings_ms`
+for completed phases; hashes still cover every byte of both files.
+
+**Repository approval does not replace installed code.** Existing installations
+remain usable for generic progress, with their existing hashes and policy.
+Phase receipts, console banners and timings require separately reviewed protected
+code deployment. The installer still refuses an existing installation: do not
+rerun it blindly, overwrite installed files, repair ACLs or remove old receipts.
+A deployment/migration procedure must preserve existing audit evidence and must
+not run concurrently with collection. No automated upgrade is introduced here.
+
 ## Audit and limitations
 
 Normal requests and tool results use the existing tool-call audit. The elevated
@@ -108,6 +136,8 @@ helper additionally writes protected, create-new receipts:
 - `<request-id>.start.json`: single-use claim, input paths, script hashes,
   elevated identity, start time, deadline and fixed operation.
 - `<request-id>.worker.json`: exact executable/arguments before worker launch.
+- `<request-id>.phase-<fixed-phase>.json`: optional protected stage-start hints;
+  not completion evidence.
 - `<request-id>.facts.json`: raw bounded host answer when available.
 - `<request-id>.result.json`: finish time, status, worker exit code and answer.
 

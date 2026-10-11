@@ -22,6 +22,13 @@ class Function:
 def test_uac_native_paths_and_handle_cleanup(monkeypatch, scenario):
     seen = []
     closed = []
+    clock = [time.time()]
+    monkeypatch.setattr(module.time, 'time', lambda: clock[0])
+    monkeypatch.setattr(module.time, 'monotonic', lambda: clock[0])
+    def wait(handle, milliseconds):
+        assert 0 < milliseconds <= 1000
+        clock[0] += milliseconds / 1000
+        return 258 if scenario == 'timeout' else (0xffffffff if scenario == 'wait_error' else 0)
     def execute(pointer):
         info = pointer._obj
         seen.append((info.lpVerb, info.lpFile, info.lpParameters, info.lpDirectory))
@@ -32,8 +39,7 @@ def test_uac_native_paths_and_handle_cleanup(monkeypatch, scenario):
         return scenario != 'exit_unknown'
     shell = SimpleNamespace(ShellExecuteExW=Function(execute))
     kernel = SimpleNamespace(
-        WaitForSingleObject=Function(lambda handle, timeout: 258 if scenario == 'timeout'
-                                     else (0xffffffff if scenario == 'wait_error' else 0)),
+        WaitForSingleObject=Function(wait),
         GetExitCodeProcess=Function(get_exit),
         CloseHandle=Function(lambda handle: closed.append(handle) or True),
     )

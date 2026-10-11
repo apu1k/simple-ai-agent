@@ -26,6 +26,15 @@ Screen {
     text-align: right;
 }
 
+#privileged_progress {
+    dock: top;
+    height: auto;
+    width: 100%;
+    padding: 0 1;
+    background: $surface;
+    color: $text-muted;
+}
+
 .hidden {
     display: none;
 }

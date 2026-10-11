@@ -93,6 +93,22 @@ def test_invalid_pinned_iso_digest_refused_before_host_query(inputs):
     assert not runner.calls
 
 
+@pytest.mark.parametrize('timings', [
+    {'inventory': 1, 'source_hash': 80000, 'iso_hash': 40000, 'recheck': 2},
+    {'inventory': True}, {'source_hash': -1}, {'iso_hash': 1800001},
+    {'unknown': 1}, ['inventory'],
+])
+def test_optional_phase_timings_are_validated(inputs, timings):
+    runner = FakeRunner(inputs[0], inputs[1])
+    runner.facts['phase_timings_ms'] = timings
+    report = module.collect_host_evidence(*inputs, runner=runner)
+    valid = isinstance(timings, dict) and len(timings) == 4
+    assert report['status'] == ('snapshot_ready_for_review' if valid else 'blocked')
+    assert report['launch_authorized'] is False
+    if valid:
+        assert report['host']['phase_timings_ms'] == timings
+
+
 def test_query_script_has_no_host_mutations():
     source = (Path(module.__file__).parent / 'backends/hyperv_scripts/collect_host_evidence.ps1').read_text()
     for command in ('Start-VM', 'Stop-VM', 'New-VM', 'Remove-VM', 'Set-VM', 'Mount-VHD', 'Dismount-VHD', 'Set-Acl', 'New-Item', 'Remove-Item'):

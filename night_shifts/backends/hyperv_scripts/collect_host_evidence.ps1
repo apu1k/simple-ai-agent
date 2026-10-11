@@ -1,9 +1,26 @@
 param(
     [Parameter(Mandatory = $true)][string]$SourceDisk,
-    [Parameter(Mandatory = $true)][string]$RecoveryIso
+    [Parameter(Mandatory = $true)][string]$RecoveryIso,
+    [scriptblock]$PhaseCallback = $null
 )
 $ErrorActionPreference = 'Stop'
-# Query/hash only. NEVER start/stop/create/remove/mount a VM/disk or change ACLs.
+# Query/hash inputs only. NEVER start/stop/create/remove/mount a VM/disk or change input ACLs.
+# Only the fixed protected helper supplies this optional display/audit callback.
+$clock = [Diagnostics.Stopwatch]::StartNew()
+$phaseTimings = @{}
+$currentPhase = $null
+$phaseStarted = 0L
+function Begin-Phase([string]$Name) {
+    if ($script:currentPhase) {
+        $script:phaseTimings[$script:currentPhase] = $script:clock.ElapsedMilliseconds - $script:phaseStarted
+    }
+    $script:currentPhase = $Name
+    $script:phaseStarted = $script:clock.ElapsedMilliseconds
+    if ($PhaseCallback) {
+        try { & $PhaseCallback $Name | Out-Null }
+        catch { } # Display failure must not bypass or alter evidence collection.
+    }
+}
 function Read-References {
     $references = @()
     foreach ($vm in @(Get-VM -ErrorAction Stop)) {
@@ -16,6 +33,7 @@ function Read-References {
     }
     return $references
 }
+Begin-Phase 'inventory'
 $references = @(Read-References)
 $vhd = Get-VHD -Path $SourceDisk -ErrorAction Stop
 $blockers = @()
@@ -39,10 +57,13 @@ if ($blockers.Count -eq 0) {
             $blockers += 'source_signature_invalid'
         } else {
             $source.Position = 0
+            Begin-Phase 'source_hash'
             $sourceDigest = ([BitConverter]::ToString($algorithm.ComputeHash($source))).Replace('-', '').ToLowerInvariant()
+            Begin-Phase 'iso_hash'
             $iso = [IO.File]::Open($RecoveryIso, 'Open', 'Read', 'Read')
             $isoDigest = ([BitConverter]::ToString($algorithm.ComputeHash($iso))).Replace('-', '').ToLowerInvariant()
             # Re-observe references while source writers are still excluded.
+            Begin-Phase 'recheck'
             $references = @(Read-References)
             if (@($references | Where-Object { $_.state -ne 'Off' }).Count) {
                 $blockers += 'source_vm_not_off'
@@ -56,7 +77,9 @@ if ($blockers.Count -eq 0) {
         $source.Dispose()
     }
 }
+$phaseTimings[$currentPhase] = $clock.ElapsedMilliseconds - $phaseStarted
 @{ version = 1; source_references = @($references); blockers = @($blockers);
+   phase_timings_ms = $phaseTimings;
    source_sha256 = $sourceDigest; recovery_iso_sha256 = $isoDigest;
    vhd = @{ format = $vhd.VhdFormat.ToString(); type = $vhd.VhdType.ToString();
             virtual_bytes = $vhd.Size; attached = [bool]$vhd.Attached;

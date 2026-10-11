@@ -29,6 +29,7 @@ from textual.suggester import SuggestFromList
 from textual.widgets import Footer, Input, Static, Tree
 
 from core.tool_artifacts import is_internal_tool_artifact
+from core.tool_progress import PRIVILEGED_EVIDENCE_PREFIX
 from llm.providers import PROVIDERS, list_provider_models
 from runtime.bootstrap import build_model_config_and_client, create_agent
 from runtime.chat_store import record_final_turn, start_new_chat
@@ -125,6 +126,7 @@ class AgentTextualApp(App):
         ] = "chat"
 
         self._messages: list[tuple[str, str]] = []
+        self._privileged_evidence_progress = ''
         self._models_by_provider: dict[str, list[str]] = {}
         self._model_provider_status: dict[str, str] = {}
         self._model_tree_loaded = False
@@ -152,6 +154,7 @@ class AgentTextualApp(App):
             yield Static("", id="status_cwd")
             yield Static("", id="status_model")
             yield Static("", id="status_edits")
+        yield Static('', id='privileged_progress', classes='hidden')
         with VerticalScroll(id="chat_scroll"):
             yield Static("", id="chat")
         with Container(id="model_select", classes="hidden"):
@@ -1457,6 +1460,10 @@ class AgentTextualApp(App):
             self._from_any_thread(self._finish_agent_step)
 
     def _finish_agent_step(self) -> None:
+        self._privileged_evidence_progress = ''
+        progress = self.query_one('#privileged_progress', Static)
+        progress.update('')
+        progress.add_class('hidden')
         self._set_processing(False)
         self._refresh_state()
 
@@ -1724,6 +1731,22 @@ class AgentTextualApp(App):
 
     def _on_tool(self, message: str) -> None:
         self._append_log("tool", message)
+        if message.startswith(PRIVILEGED_EVIDENCE_PREFIX):
+            self._from_any_thread(
+                self._show_privileged_evidence_progress,
+                message[len(PRIVILEGED_EVIDENCE_PREFIX):],
+            )
+
+    def _show_privileged_evidence_progress(self, message: str) -> None:
+        # The agent already runs in a Textual worker. These notifications are
+        # display-only, not assistant answers or persisted conversation turns.
+        if not self._privileged_evidence_progress:
+            self._append_chat('System', 'Collecting read-only Hyper-V evidence; live progress appears above the chat.')
+        self._privileged_evidence_progress = message
+        progress = self.query_one('#privileged_progress', Static)
+        progress.update(Text(message))
+        progress.remove_class('hidden')
+        self._refresh_header()
 
     def _on_raw(self, message: str) -> None:
         self._append_log("raw", message)

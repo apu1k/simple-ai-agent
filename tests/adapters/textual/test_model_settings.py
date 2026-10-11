@@ -46,6 +46,45 @@ def make_app(tmp_path):
     )
 
 
+def test_privileged_progress_updates_while_worker_waits_and_input_remains_responsive(tmp_path, monkeypatch):
+    from threading import Event
+    from core.tool_progress import PRIVILEGED_EVIDENCE_PREFIX
+
+    started = Event()
+    release = Event()
+    monkeypatch.setattr('adapters.textual.app.record_final_turn', lambda *args: None)
+    async def run_test():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(160, 40)) as pilot:
+            def step(text):
+                app._on_tool(PRIVILEGED_EVIDENCE_PREFIX + 'Hashing source VHDX — 5s elapsed')
+                started.set()
+                assert release.wait(5), 'Test worker was not released'
+                app._on_tool(PRIVILEGED_EVIDENCE_PREFIX + 'Validating protected receipt')
+                return 'verified fixture result'
+            app.agent = SimpleNamespace(step=step)
+            app._start_agent_step('fixture only; no UAC')
+            try:
+                assert await asyncio.to_thread(started.wait, 2)
+                await pilot.press('a', 'b', 'c')
+                assert app.query_one('#input', Input).value == 'abc'
+                assert app._processing
+                assert app._privileged_evidence_progress == 'Hashing source VHDX — 5s elapsed'
+                assert not any(role == 'AI' for role, _ in app._messages)
+            finally:
+                release.set()
+            for _ in range(30):
+                await pilot.pause()
+                if not app._processing:
+                    break
+                await asyncio.sleep(0.05)
+            assert not app._processing
+            assert app._privileged_evidence_progress == ''
+            assert sum(role == 'System' for role, _ in app._messages) == 1
+            assert ('AI', 'verified fixture result') in app._messages
+    asyncio.run(run_test())
+
+
 def test_settings_command_search_and_tree_selection(tmp_path):
     async def run_test():
         app = make_app(tmp_path)
@@ -85,6 +124,32 @@ def test_settings_command_search_and_tree_selection(tmp_path):
             assert app.state.model_settings.include_diff == "model"
             assert app.state.model_settings.openai_flex is False
 
+    asyncio.run(run_test())
+
+
+def test_privileged_progress_is_full_width_plain_text_and_not_a_model_answer(tmp_path):
+    from textual.widgets import Static
+    from core.tool_progress import PRIVILEGED_EVIDENCE_PREFIX
+
+    async def run_test():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(80, 24)) as pilot:
+            progress = app.query_one('#privileged_progress', Static)
+            assert progress.has_class('hidden')
+            message = 'Hashing source VHDX — 125s elapsed [not markup]'
+            app._on_tool(PRIVILEGED_EVIDENCE_PREFIX + message)
+            await pilot.pause()
+            assert not progress.has_class('hidden')
+            assert progress.region.width == 80  # Includes the two padding columns.
+            assert progress.render_line(0).text.strip() == message
+            assert len(app._messages) == 1 and app._messages[0][0] == 'System'
+            app._on_tool(PRIVILEGED_EVIDENCE_PREFIX + 'Rechecking source VM state — 130s elapsed')
+            await pilot.pause()
+            assert len(app._messages) == 1
+            app._finish_agent_step()
+            await pilot.pause()
+            assert progress.has_class('hidden')
+            assert app._privileged_evidence_progress == ''
     asyncio.run(run_test())
 
 

@@ -154,6 +154,32 @@ def test_receipt_runner_cannot_select_new_script_or_inputs(install):
         runner.run(Path('collect_host_evidence.ps1'), ('-SourceDisk', 'other', '-RecoveryIso', policy['recovery_iso']))
 
 
+@pytest.mark.parametrize('fault', [None, 'identity', 'phase', 'version', 'oversized', 'malformed', 'unsafe'])
+def test_phase_hints_are_bounded_protected_identity_checked_and_display_only(install, monkeypatch, fault):
+    root, _, _ = install
+    request_id = 'a' * 32
+    record = {'version': 1, 'request_id': request_id, 'phase': 'iso_hash'}
+    if fault == 'identity':
+        record['request_id'] = 'b' * 32
+    elif fault == 'phase':
+        record['phase'] = 'SUCCESS; arbitrary injected label'
+    elif fault == 'version':
+        record['version'] = True
+    path = root / 'receipts' / (request_id + '.phase-iso_hash.json')
+    path.write_text(' ' * 65537 if fault == 'oversized' else ('{' if fault == 'malformed' else json.dumps(record)))
+    if fault == 'unsafe':
+        monkeypatch.setattr(module, '_read_acl', lambda p: AclSnapshot('operator', (AclRule(module.ADMINS, 0x1f01ff),)))
+    result = module._observed_phase(root, request_id)
+    assert result == ('Hashing recovery ISO' if fault is None else
+                      'Collecting host evidence (fresh hashing may take several minutes)')
+    assert 'SUCCESS' not in result
+    assert len(list((root / 'receipts').iterdir())) == 1
+
+
+def test_old_installation_needs_no_upgrade_for_generic_elapsed_progress(install):
+    assert module._observed_phase(install[0], 'a' * 32).startswith('Collecting host evidence')
+
+
 def test_fixed_helper_has_containment_deadline_and_protected_receipts():
     scripts = Path(__file__).resolve().parents[2] / 'scripts'
     helper = (scripts / 'privileged_host_helper.ps1').read_text()

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 
+from core.tool_progress import evidence_progress
 from runtime.privileged_host import collect_installed_evidence
 from tools._base import tool
 
@@ -28,10 +29,13 @@ def collect_privileged_host_evidence(state) -> str:
         claim = gate.claim()
     except PermissionError:
         return 'Error: Enable privileged Hyper-V evidence in settings for the next turn; one attempt only.'
+    evidence_progress('Starting read-only host evidence collection…')
     try:
         report = collect_installed_evidence(claim)
+        evidence_progress('Collection returned; final report follows. No VM launch.')
         return json.dumps(report, sort_keys=True, indent=2)
     except Exception:
+        evidence_progress('Collection blocked or outcome unknown; no automatic retry.')
         # Exceptions can include private host paths; the protected audit and
         # normal tool audit carry execution identity. Do not retry/escalate.
         return json.dumps({'status': 'blocked_or_outcome_unknown',

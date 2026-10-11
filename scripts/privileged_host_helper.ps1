@@ -53,6 +53,9 @@ $workerExit = $null
 try {
     $remaining = $DeadlineUnix - [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     if ($remaining -le 0 -or $remaining -gt 1800) { throw 'Expired or excessive deadline' }
+    Write-Host 'Read-only Hyper-V host evidence collection' -ForegroundColor Cyan
+    Write-Host 'Fresh VHDX and ISO SHA-256 hashing may take several minutes.'
+    Write-Host 'Live progress and elapsed time appear in the AI application. No VM will be launched.'
     # Start suspended, assign a kill-on-close job, then resume. Watchdog also
     # enforces timeout. No worker survives helper failure or window closure.
     Add-Type -TypeDefinition @'
@@ -132,8 +135,30 @@ public static class EvidenceWatchdog {
     if ($remaining -le 0) { throw 'Expired before worker launch' }
     $factsPath = [IO.Path]::Combine($receipts, $RequestId + '.facts.json')
     function Quote-Fixed([string]$Value) { return "'" + $Value.Replace("'", "''") + "'" }
-    $query = "try { `$ErrorActionPreference = 'Stop'; `$json = & " + (Quote-Fixed $collector) +
+    # Fixed phase names and create-new records only. No caller-selected paths,
+    # mutable status file, executable, callback or command text is accepted.
+    $phaseCode = @'
+function Write-EvidencePhase([string]$Phase) {
+    if (@('inventory', 'source_hash', 'iso_hash', 'recheck') -cnotcontains $Phase) {
+        throw 'Unknown evidence phase'
+    }
+    $path = $phasePrefix + '.phase-' + $Phase + '.json'
+    $value = @{ version = 1; request_id = $phaseRequestId; phase = $Phase;
+        started_at_utc = [DateTime]::UtcNow.ToString('o') }
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($value | ConvertTo-Json -Compress))
+    $stream = [IO.File]::Open($path, 'CreateNew', 'Write', 'Read')
+    try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) }
+    finally { $stream.Dispose() }
+    $acl = Get-Acl -LiteralPath $path
+    $acl.SetOwner((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))
+    Set-Acl -LiteralPath $path -AclObject $acl
+}
+'@
+    $query = '$phasePrefix = ' + (Quote-Fixed ([IO.Path]::Combine($receipts, $RequestId))) +
+        '; $phaseRequestId = ' + (Quote-Fixed $RequestId) + '; ' + $phaseCode +
+        "`ntry { `$ErrorActionPreference = 'Stop'; `$json = & " + (Quote-Fixed $collector) +
         ' -SourceDisk ' + (Quote-Fixed $policy.source) + ' -RecoveryIso ' + (Quote-Fixed $policy.recovery_iso) +
+        ' -PhaseCallback ${function:Write-EvidencePhase}' +
         '; [IO.File]::WriteAllText(' + (Quote-Fixed $factsPath) +
         ", `$json, (New-Object Text.UTF8Encoding(`$false))); exit 0 } catch { exit 2 }"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($query))
@@ -159,6 +184,7 @@ public static class EvidenceWatchdog {
         Set-Acl -LiteralPath $factsPath -AclObject $acl
         $status = 'completed'
         $exitCode = 0
+        Write-Host 'Read-only collection completed. Returning protected evidence.'
     }
 } catch {
     $status = 'failed_or_unknown'
