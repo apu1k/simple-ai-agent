@@ -183,7 +183,9 @@ class Agent:
             f"- current working directory: {self.state.cwd}\n"
             f"- selected provider: {self.state.model_config.provider_label}\n"
             f"- selected model: {self.state.model_config.model}\n"
-            f"- proposal diff results: {diff_setting}\n\n"
+            f"- proposal diff results: {diff_setting}\n"
+            f"- privileged Hyper-V evidence: {getattr(getattr(self.state, 'privileged_turn', None), 'status', 'disabled')}\n"
+            "- run_shell_command is never elevated by this setting; only the fixed evidence tool is eligible.\n\n"
             "Important:\n"
             "- You are controlling a local agent runtime through tools.\n"
             "- If the user asks where you are in the filesystem, use the current working directory.\n"
@@ -496,6 +498,14 @@ class Agent:
     # ------------------------------------------------------------------
 
     def step(self, user_input: str) -> str:
+        """Consume next-turn authority and revoke it on every exit path."""
+        gate = getattr(self.state, "privileged_turn", None)
+        if gate is None:
+            return self._step(user_input)
+        with gate.turn(self.agent_profile):
+            return self._step(user_input)
+
+    def _step(self, user_input: str) -> str:
         """
         Process one user message and return the agent's final reply.
 
@@ -840,7 +850,10 @@ class Agent:
         return "Error: Too many agent steps."
 
     def reset(self, system_prompt: str) -> None:
-        """Reset conversation history, keeping the current state."""
+        """Reset conversation history and discard any unused privilege grant."""
+        gate = getattr(self.state, "privileged_turn", None)
+        if gate is not None:
+            gate.revoke()
         self.messages = [{"role": "system", "content": system_prompt}]
         self._pending_native_tool_calls = None
 

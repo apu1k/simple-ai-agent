@@ -552,6 +552,11 @@ class AgentTextualApp(App):
             return
 
         options: list[tuple[str, ModelSettingValue, str, str]] = [
+            ("privileged_host_evidence", True, "Privileged Hyper-V evidence: Enable next turn",
+             "One read-only collection of operator-pinned inputs; UAC required. "
+             "Arm expires in 2 minutes; turn deadline 30 minutes. Shell commands stay unelevated."),
+            ("privileged_host_evidence", False, "Privileged Hyper-V evidence: Disabled",
+             "Revoke unused authority. No VM lifecycle or arbitrary administrator commands."),
             ("include_diff", True, "Include diff: Enabled (True)",
              "Always include generated diffs in proposal results."),
             ("include_diff", "model", "Include diff: Model choice",
@@ -585,7 +590,11 @@ class AgentTextualApp(App):
         root.expand()
 
         for key, value, label, description in visible:
-            current = getattr(self.state.model_settings, key)
+            if key == "privileged_host_evidence":
+                gate = getattr(self.state, "privileged_turn", None)
+                current = gate is not None and gate.status == "armed for next turn"
+            else:
+                current = getattr(self.state.model_settings, key)
             marker = "✓ " if value == current else ""
             node = root.add_leaf(f"{marker}{label} — {description}")
             node.data = ("model_setting", key, value)
@@ -614,7 +623,23 @@ class AgentTextualApp(App):
         if self._processing:
             self._append_chat("System", "Cannot change model settings while AI is processing.")
             return
-        if key == "include_diff" and (isinstance(value, bool) or value == "model"):
+        if key == "privileged_host_evidence" and isinstance(value, bool):
+            gate = getattr(self.state, "privileged_turn", None)
+            if gate is None:
+                self._append_chat("System", "Privileged evidence is unavailable in this runtime.")
+                return
+            if value:
+                gate.arm()
+            else:
+                gate.revoke()
+            self._exit_model_settings_mode()
+            self._append_chat(
+                "System",
+                f"Privileged Hyper-V evidence: {gate.status}. Only the fixed, installed "
+                "read-only collector is eligible, once. UAC consent is still required. "
+                "run_shell_command remains unelevated; no VM launch is authorized.",
+            )
+        elif key == "include_diff" and (isinstance(value, bool) or value == "model"):
             self._set_include_diff_setting(value)
         elif key == "openai_flex" and isinstance(value, bool):
             self.state.model_settings.openai_flex = value
@@ -1404,6 +1429,11 @@ class AgentTextualApp(App):
             return
         self._enter_chat_select_mode()
 
+    def on_unmount(self) -> None:
+        gate = getattr(self.state, "privileged_turn", None)
+        if gate is not None:
+            gate.revoke()
+
     def _start_agent_step(self, text: str) -> None:
         self._set_processing(True)
         self._run_agent_step(text)
@@ -1502,7 +1532,11 @@ class AgentTextualApp(App):
 
         self.query_one("#status_cwd", Static).update(str(self.state.cwd))
         self.query_one("#status_model", Static).update(model_text)
-        self.query_one("#status_edits", Static).update(f"pending edits: {pending_count}")
+        gate = getattr(self.state, "privileged_turn", None)
+        privilege = gate.status if gate is not None else "disabled"
+        self.query_one("#status_edits", Static).update(
+            f"pending edits: {pending_count} | privileged evidence: {privilege}"
+        )
 
     def _refresh_state(self) -> None:
         self._refresh_header()
@@ -1544,6 +1578,8 @@ class AgentTextualApp(App):
             f"openai_flex (OpenAI only): {self.state.model_settings.openai_flex}\n"
             f"openai_reasoning_effort (OpenAI only): "
             f"{self.state.model_settings.openai_reasoning_effort or 'default'}\n"
+            f"privileged Hyper-V evidence: "
+            f"{getattr(getattr(self.state, 'privileged_turn', None), 'status', 'disabled')}\n"
             f"chat_session: {session_text}"
         )
 

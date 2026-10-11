@@ -9,6 +9,7 @@ from textual.widgets import Input, Tree
 
 from adapters.textual.app import AgentTextualApp
 from runtime.state import ModelSettings, OPENAI_REASONING_EFFORTS
+from runtime.privileged_turn import PrivilegedTurn
 
 
 class SettingsTestApp(AgentTextualApp):
@@ -34,6 +35,7 @@ def make_app(tmp_path):
         state=SimpleNamespace(
             cwd=tmp_path,
             model_settings=ModelSettings(),
+            privileged_turn=PrivilegedTurn(),
             model_config=SimpleNamespace(
                 provider_label="OpenAI", model="o3", api_type="responses",
             ),
@@ -53,7 +55,7 @@ def test_settings_command_search_and_tree_selection(tmp_path):
             await pilot.press("enter")
             await pilot.pause()
             assert app._mode == "model_settings_select"
-            assert len(app._visible_model_setting_matches) == 13
+            assert len(app._visible_model_setting_matches) == 15
 
             input_widget.value = "OpenAI Flex: Enabled"
             await pilot.pause()
@@ -146,6 +148,31 @@ def test_reasoning_search_tree_selection_and_default(tmp_path):
             assert app.state.model_settings.include_diff is False
             assert app.state.model_settings.openai_reasoning_effort is None
 
+    asyncio.run(run_test())
+
+
+def test_privileged_evidence_setting_is_ui_only_and_volatile(tmp_path):
+    async def run_test():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(150, 40)) as pilot:
+            assert app.state.privileged_turn.status == "disabled"
+            app._handle_command("\\settings")
+            app.query_one("#input", Input).value = "Privileged Hyper-V evidence: Enable next turn"
+            await pilot.pause()
+            assert app._visible_model_setting_matches == [("privileged_host_evidence", True)]
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.state.privileged_turn.status == "armed for next turn"
+            assert "armed for next turn" in app._state_text()
+            assert "UAC consent" in app._messages[-1][1]
+            app._processing = True
+            app._set_model_setting("privileged_host_evidence", False)
+            assert app.state.privileged_turn.status == "armed for next turn"
+            app._processing = False
+            app._handle_command("\\settings")
+            app._set_model_setting("privileged_host_evidence", False)
+            assert app.state.privileged_turn.status == "disabled"
+            assert not hasattr(app.state.model_settings, "privileged_host_evidence")
     asyncio.run(run_test())
 
 

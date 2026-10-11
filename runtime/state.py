@@ -20,6 +20,7 @@ from typing import Literal
 from editing.store import EditStore
 from runtime.chat_store import ChatStore
 from night_shifts.storage import ToolCallStore
+from runtime.privileged_turn import PrivilegedTurn
 
 
 ApiType = Literal["chat_completions", "responses", "completions", "gemini_vertex"]
@@ -69,3 +70,4 @@ class AgentState:
     chat_store: ChatStore = field(default_factory=ChatStore)
     chat_session_id: str | None = None
     tool_call_store: ToolCallStore | None = None
+    privileged_turn: PrivilegedTurn = field(default_factory=PrivilegedTurn)

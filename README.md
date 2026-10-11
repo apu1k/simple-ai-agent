@@ -185,7 +185,7 @@ Embedding and index data stay local unless you explicitly configure otherwise. T
 
 - `\help` — command overview
 - `\models` — select a provider/model
-- `\settings` — configure runtime behavior, including proposal-diff results, OpenAI Flex processing, and reasoning effort
+- `\settings` — configure runtime behavior, including proposal-diff results, OpenAI Flex processing, reasoning effort, and [one-turn privileged Hyper-V evidence](docs/privileged_hyperv_evidence.md) (fixed read-only operation; separate protected setup and UAC consent required)
 - `\chats` — browse saved chats
 - `\new_chat` — start a new chat
 - `\history` — list recent chats
