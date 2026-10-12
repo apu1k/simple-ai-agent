@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from openai import OpenAI
 from llm.base import LLMResponse, NativeToolCall, NativeToolOutput
 from llm.providers import ProviderConfig
-from llm.openai_flex import flex_request_options
+from llm.openai_flex import create_openai_request, flex_request_options
 from llm.openai_reasoning import reasoning_request_options
 from llm.worker_limits import WorkerRequestLimits
 
@@ -134,7 +134,10 @@ class OpenAIResponsesClient:
             kwargs["timeout"] = self._worker_limits.timeout(float(kwargs["timeout"]))
         self._debug_log_response_request_tools("chat", kwargs)
         self.last_usage = None
-        response = self._client.responses.create(**kwargs)
+        response = create_openai_request(
+            self._client, "responses", kwargs,
+            allow_flex_retries=self._worker_limits is None,
+        )
         self.last_usage = getattr(response, "usage", None)
         self._last_response_id = response.id
         return self._parse_response(response)
@@ -178,7 +181,10 @@ class OpenAIResponsesClient:
             kwargs["timeout"] = self._worker_limits.timeout(float(kwargs["timeout"]))
         self._debug_log_response_request_tools("submit_tool_outputs", kwargs)
         self.last_usage = None
-        response = self._client.responses.create(**kwargs)
+        response = create_openai_request(
+            self._client, "responses", kwargs,
+            allow_flex_retries=self._worker_limits is None,
+        )
         self.last_usage = getattr(response, "usage", None)
         self._last_response_id = response.id
         return self._parse_response(response)

@@ -15,7 +15,7 @@ from openai import OpenAI
 from config.settings import DEBUG_LOGS
 from llm.base import LLMResponse, NativeToolCall
 from llm.providers import ProviderConfig
-from llm.openai_flex import flex_request_options
+from llm.openai_flex import create_openai_request, flex_request_options
 from llm.openai_reasoning import reasoning_request_options
 from llm.worker_limits import WorkerRequestLimits
 
@@ -121,7 +121,10 @@ class OpenAIChatClient:
         for attempt in range(retries + 1):
             if self._worker_limits is not None:
                 kwargs["timeout"] = self._worker_limits.timeout(float(kwargs["timeout"]))
-            response = self._client.chat.completions.create(**kwargs)
+            response = create_openai_request(
+                self._client, "chat_completions", kwargs,
+                allow_flex_retries=self._worker_limits is None,
+            )
             # An empty-response retry may already have incurred unknown charges.
             self.last_usage = getattr(response, "usage", None) if attempt == 0 else None
             result = self._parse_response(response, attempt=attempt)
