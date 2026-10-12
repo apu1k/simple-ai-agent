@@ -3,7 +3,10 @@
 This operator-only workflow removes Ubuntu-console typing. Python authors fixed
 NoCloud data media and invokes fixed Hyper-V scripts; a Linux live recovery boot
 inspects/finalizes **only a fresh disk copy**, then returns bounded JSON over COM1.
-It is not an agent tool, an unattended installer, or permission to launch a VM.
+The operator CLI is not an unattended installer or permission to launch a VM.
+A separate [protected inspect-only adapter](privileged_image_inspection.md) exposes
+only inspection after distinct next-turn authorization, reviewed installation and
+UAC. It never exposes finalization/publication or elevates checkout code.
 
 **Validation boundary:** offline fixtures validate rendering, guards, deletion
 policy and receipts. Live ISO/NoCloud `runcmd` compatibility, UART/pipe behavior,

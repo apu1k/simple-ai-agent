@@ -153,7 +153,9 @@ returned host facts use the existing collector's validation.
 The result is a snapshot only. It does not approve image provenance, guest
 contents, pipe ACLs, VM creation permissions, finalization, publication or Gate A.
 The collector never starts/stops/creates/removes a VM, mounts a disk, repairs
-permissions or creates a workspace. Inputs and VM state can change after the
+permissions or creates a workspace. A separate [inspect-only protected adapter](privileged_image_inspection.md)
+has its own installation, pinned approval and UI operation; the evidence setting
+cannot authorize it. Selecting either operation replaces an unused grant for the other. Inputs and VM state can change after the
 snapshot; later operations require their own checks and authorization.
 
 ## Validation

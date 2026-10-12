@@ -45,6 +45,8 @@ Caddyfile
 /scripts/*
 !/scripts/privileged_host_helper.ps1
 !/scripts/install_privileged_host_helper.ps1
+!/scripts/privileged_inspection_helper.ps1
+!/scripts/install_privileged_inspection_helper.ps1
 logs
 
 # temporary logs

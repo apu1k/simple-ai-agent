@@ -52,6 +52,7 @@ _PROFILE_TOOLS: dict[AgentProfile, tuple[str, ...]] = {
         "http_get",
         "run_shell_command",
         "collect_privileged_host_evidence",
+        "inspect_privileged_image_copy",
     ),
     AgentProfile.CODING_WORKER: (
         *_INSPECTION_TOOLS,

@@ -560,6 +560,11 @@ class AgentTextualApp(App):
              "Arm expires in 2 minutes; turn deadline 30 minutes. Shell commands stay unelevated."),
             ("privileged_host_evidence", False, "Privileged Hyper-V evidence: Disabled",
              "Revoke unused authority. No VM lifecycle or arbitrary administrator commands."),
+            ("privileged_image_inspection", True, "Privileged image inspection: Enable next turn",
+             "One inspection-only recovery VM against a fresh copy; separate protected setup and UAC required. "
+             "No finalization, publication, retry or Gate A. Replaces any unused evidence grant."),
+            ("privileged_image_inspection", False, "Privileged image inspection: Disabled",
+             "Revoke unused privileged authority. Process cancellation does not prove VM cleanup."),
             ("include_diff", True, "Include diff: Enabled (True)",
              "Always include generated diffs in proposal results."),
             ("include_diff", "model", "Include diff: Model choice",
@@ -593,9 +598,10 @@ class AgentTextualApp(App):
         root.expand()
 
         for key, value, label, description in visible:
-            if key == "privileged_host_evidence":
+            if key in {"privileged_host_evidence", "privileged_image_inspection"}:
                 gate = getattr(self.state, "privileged_turn", None)
-                current = gate is not None and gate.status == "armed for next turn"
+                operation = 'inspect_image_copy' if key == 'privileged_image_inspection' else 'collect_host_evidence'
+                current = gate is not None and gate.armed_operation == operation
             else:
                 current = getattr(self.state.model_settings, key)
             marker = "✓ " if value == current else ""
@@ -626,7 +632,24 @@ class AgentTextualApp(App):
         if self._processing:
             self._append_chat("System", "Cannot change model settings while AI is processing.")
             return
-        if key == "privileged_host_evidence" and isinstance(value, bool):
+        if key == "privileged_image_inspection" and isinstance(value, bool):
+            gate = getattr(self.state, "privileged_turn", None)
+            if gate is None:
+                self._append_chat("System", "Privileged inspection is unavailable in this runtime.")
+                return
+            if value:
+                gate.arm('inspect_image_copy')
+            else:
+                gate.revoke()
+            self._exit_model_settings_mode()
+            self._append_chat(
+                "System",
+                f"Privileged image inspection: {gate.status}. One fresh-copy inspection attempt; "
+                "protected operator-pinned setup and UAC consent required. This may create/start/stop/remove "
+                "one recovery VM and retains files for review. No finalization, publication or Gate A. "
+                "Closing the helper does not prove VM cleanup; shell commands remain unelevated.",
+            )
+        elif key == "privileged_host_evidence" and isinstance(value, bool):
             gate = getattr(self.state, "privileged_turn", None)
             if gate is None:
                 self._append_chat("System", "Privileged evidence is unavailable in this runtime.")
@@ -1542,7 +1565,7 @@ class AgentTextualApp(App):
         gate = getattr(self.state, "privileged_turn", None)
         privilege = gate.status if gate is not None else "disabled"
         self.query_one("#status_edits", Static).update(
-            f"pending edits: {pending_count} | privileged evidence: {privilege}"
+            f"pending edits: {pending_count} | privileged operation: {privilege}"
         )
 
     def _refresh_state(self) -> None:
@@ -1741,7 +1764,10 @@ class AgentTextualApp(App):
         # The agent already runs in a Textual worker. These notifications are
         # display-only, not assistant answers or persisted conversation turns.
         if not self._privileged_evidence_progress:
-            self._append_chat('System', 'Collecting read-only Hyper-V evidence; live progress appears above the chat.')
+            notice = ('Inspecting a fresh image copy; live progress appears above the chat. '
+                      'No image acceptance or Gate A.' if 'inspection' in message.lower()
+                      else 'Collecting read-only Hyper-V evidence; live progress appears above the chat.')
+            self._append_chat('System', notice)
         self._privileged_evidence_progress = message
         progress = self.query_one('#privileged_progress', Static)
         progress.update(Text(message))

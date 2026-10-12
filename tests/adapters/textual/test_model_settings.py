@@ -85,6 +85,26 @@ def test_privileged_progress_updates_while_worker_waits_and_input_remains_respon
     asyncio.run(run_test())
 
 
+def test_inspection_setting_selects_distinct_operation_and_revokes_evidence():
+    messages = []
+    gate = PrivilegedTurn()
+    fake = SimpleNamespace(
+        _processing=False, state=SimpleNamespace(privileged_turn=gate),
+        _exit_model_settings_mode=lambda: None, _refresh_state=lambda: None,
+        _append_chat=lambda role, text: messages.append((role, text)),
+    )
+    gate.arm()
+    AgentTextualApp._set_model_setting(fake, "privileged_image_inspection", True)
+    assert gate.armed_operation == 'inspect_image_copy'
+    assert 'No finalization, publication or Gate A' in messages[-1][1]
+    fake._processing = True
+    AgentTextualApp._set_model_setting(fake, "privileged_host_evidence", True)
+    assert gate.armed_operation == 'inspect_image_copy'
+    fake._processing = False
+    AgentTextualApp._set_model_setting(fake, "privileged_image_inspection", False)
+    assert gate.status == 'disabled'
+
+
 def test_settings_command_search_and_tree_selection(tmp_path):
     async def run_test():
         app = make_app(tmp_path)
@@ -94,7 +114,7 @@ def test_settings_command_search_and_tree_selection(tmp_path):
             await pilot.press("enter")
             await pilot.pause()
             assert app._mode == "model_settings_select"
-            assert len(app._visible_model_setting_matches) == 15
+            assert len(app._visible_model_setting_matches) == 17
 
             input_widget.value = "OpenAI Flex: Enabled"
             await pilot.pause()

@@ -12,15 +12,14 @@ import json
 import math
 import os
 import re
+import shutil
 import stat
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml  # type: ignore[import-untyped]
-
-from night_shifts.backends.hyperv import PowerShellCommandRunner, SubprocessPowerShellRunner
+from night_shifts.maintenance_runner import PowerShellCommandRunner, SubprocessPowerShellRunner
 from night_shifts.guest.finalize_image_copy import validate_request
 from night_shifts.hyperv_image_preflight import _checked_path
 from night_shifts.protocol_image_bundle import _linux_text_bytes
@@ -95,9 +94,10 @@ def media_files(config: FinalizationConfig, identity: str) -> dict[str, bytes]:
              'runcmd': [['/bin/sh', '-c', script]]}
     files = {**payload,
              'request.json': (json.dumps(request, sort_keys=True) + '\n').encode(),
-             'user-data': ('#cloud-config\n' + yaml.safe_dump(cloud, sort_keys=False)).encode(),
-             'meta-data': yaml.safe_dump({'instance-id': 'night-shift-finalize-' + identity,
-                                         'local-hostname': 'night-shift-recovery'}).encode()}
+             'user-data': ('#cloud-config\n' + json.dumps(cloud, sort_keys=True) + '\n').encode(),
+             # JSON is a YAML subset; avoid loading third-party YAML code on the host.
+             'meta-data': (json.dumps({'instance-id': 'night-shift-finalize-' + identity,
+                                      'local-hostname': 'night-shift-recovery'}) + '\n').encode()}
     files['SHA256SUMS'] = ''.join(f'{hashlib.sha256(data).hexdigest()}  {name}\n'
                                  for name, data in sorted(files.items())).encode('ascii')
     return files
@@ -156,6 +156,7 @@ def run_image_maintenance(
     config: FinalizationConfig, *, operator_authorized: bool = False,
     iso_provenance_reviewed: bool = False, evidence_preserved: bool = False,
     runner: PowerShellCommandRunner | None = None,
+    vm_receipt_path: Path | None = None,
 ) -> Path:
     """Return the host-only manifest, NEVER an accepted base-image path.
 
@@ -185,6 +186,10 @@ def run_image_maintenance(
     with config.source.open('rb') as stream:
         if stream.read(8) != b'vhdxfile':
             raise PreparationError('source lacks VHDX signature')
+    # Recheck just before output creation. This is a reserve, not a disk quota.
+    required = max(config.source.stat().st_size, 20 * 1024**3) + 512 * 1024**2
+    if shutil.disk_usage(root).free < required:
+        raise PreparationError('insufficient fresh workspace space for copy and reserve')
     workspace = root / identity
     control = check_control_parent(workspace)
     control.mkdir(exist_ok=False)
@@ -212,6 +217,7 @@ def run_image_maintenance(
             '-RecoveryIso', str(config.recovery_iso), '-RecoveryIsoSha256', config.recovery_iso_sha256,
             '-Workspace', str(workspace), '-SeedIsoSha256', media_digest,
             '-GuestTimeoutSeconds', str(config.guest_timeout_seconds),
+            '-VmReceipt', str(vm_receipt_path or (control / 'host.vm.json')),
         ))
         if len(output) > 65536:
             raise PreparationError('oversized host receipt')

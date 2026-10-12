@@ -134,6 +134,8 @@ PHASES = (
 
 def _observed_phase(root: Path, request_id: str) -> str:
     """Optional, protected display hints only; never infer completion here."""
+    if root.name == 'AiAgentHyperVInspection':
+        return 'Inspecting a fresh image copy (VM outcome requires a verified receipt)'
     for phase, label in reversed(PHASES):
         path = root / 'receipts' / f'{request_id}.phase-{phase}.json'
         try:
@@ -236,6 +238,8 @@ class _ReceiptRunner:
 
 
 def collect_installed_evidence(claim: PrivilegedClaim) -> dict[str, Any]:
+    if claim.operation != 'collect_host_evidence':
+        raise PrivilegedHostError('Evidence requires its own operation grant')
     root, powershell, policy = load_policy()
     state = _elevate(powershell, root / 'helper.ps1', claim)
     if state not in ('completed', 'helper_failed'):
