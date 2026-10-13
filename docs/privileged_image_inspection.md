@@ -107,10 +107,37 @@ inventory, never guess or sweep.
 Normal caught script failures attempt an exact-ID/marker/path-bound stop and retain
 resources. If process termination prevents it, status is UNKNOWN. The helper writes
 protected `<request>.start.json`, `.worker.json`, `.vm.json` when provisioned,
+`.failure.json` on a normally caught maintenance failure when it can be written,
 `.facts.json` when returned, and `.result.json` when completion can be recorded.
+The create-new failure receipt contains only the fresh identity/mode, fixed phase
+and channel substage/code, an optional numeric Windows error, exact VM GUID when
+known, and `unknown` or `off_observed` stop observation. It never contains raw
+exceptions, SDDL, guest output or log/key contents. Its schema/bindings are checked
+before inclusion in the manifest, protected facts and app's UNKNOWN result.
+Missing/partial/malformed/mismatched evidence cannot infer Off. A killed process
+may produce no failure receipt. `off_observed` is an exact-owned snapshot after
+read-back, NOT current state, unmount, VM removal, inspection success or retry
+permission. The original GUID receipt remains unchanged.
 Only verified final receipts prove success; progress/time/GUID receipts do not.
 Manual recovery, another fresh workspace or replacement installation requires
 separate review and authorization. No claim release or automatic retry is allowed.
+
+## Retained first live attempt — 2026-10-13
+
+The first protected inspection request `9dc25cd0f6754a51b17efaa83d82de41`
+created maintenance identity `2f2ea761172a42f7bac11fe534158dd9` and VM GUID
+`51434da9-9168-428a-8624-72a246ccc18d`. The manifest records `CHANNEL` failure
+and `maintenance_unknown`; no successful guest inspection or final source-hash
+check was returned. The operator's later exact-ID query observed that VM Off,
+matching name/marker/config/COM1 path, and its copied VHDX unattached. This is not
+VM removal or image acceptance; the copy remains referenced by retained config.
+
+The installed `7253fe3` bundle did not preserve channel substages/native error
+codes. Later diagnostics cannot retroactively explain that failure. Preserve the
+old protected installation/claim/receipts, VM/config/copy/media and control claim.
+These checkout changes do not deploy to that installation. Another deployment or
+attempt needs separate review; no reset, overwrite, permission repair or retry is
+introduced. `DebuggerMode: On` was observed, not established as the cause.
 
 ## Validation boundary
 

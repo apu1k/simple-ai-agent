@@ -8,7 +8,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Workspace,
     [Parameter(Mandatory = $true)][string]$SeedIsoSha256,
     [Parameter(Mandatory = $true)][ValidateRange(120, 600)][int]$GuestTimeoutSeconds,
-    [Parameter(Mandatory = $true)][string]$VmReceipt
+    [Parameter(Mandatory = $true)][string]$VmReceipt,
+    [Parameter(Mandatory = $true)][string]$FailureReceipt
 )
 $ErrorActionPreference = 'Stop'
 # New, copy-only recovery workload. Never start/reconfigure retained candidates.
@@ -26,6 +27,8 @@ $copy = Join-Path $Workspace 'working-copy.vhdx'
 $seed = Join-Path $Workspace 'maintenance.iso'
 $configRoot = Join-Path $Workspace 'vm-config'
 $phase = 'COPY'
+$channelStage = 'not_applicable'
+$failureCode = 'operation_failed'
 $expectedConfig = Join-Path $configRoot $vmName
 if (Get-VM -Name $vmName -ErrorAction SilentlyContinue) { throw 'Maintenance VM already exists' }
 if ((Test-Path -LiteralPath $copy) -or (Test-Path -LiteralPath $configRoot) -or
@@ -62,6 +65,49 @@ function Assert-Owned($Candidate) {
         $Candidate.Path -ne $expectedConfig) {
         throw 'Exact maintenance VM identity changed; no action permitted'
     }
+}
+function Write-MaintenanceReceipt([string]$Path, $Value) {
+    # Apply the parent's reviewed DACL and Administrators ownership atomically.
+    # In the protected adapter both receipts live in its protected receipt tree.
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($Value | ConvertTo-Json -Depth 4 -Compress))
+    if ($bytes.Length -gt 4096) { throw 'Maintenance receipt exceeds bound' }
+    $security = New-Object Security.AccessControl.FileSecurity
+    $security.SetOwner((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))
+    $security.SetAccessRuleProtection($true, $false)
+    $parentAcl = Get-Acl -LiteralPath ([IO.Path]::GetDirectoryName($Path))
+    foreach ($rule in $parentAcl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        $security.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
+            $rule.IdentityReference, $rule.FileSystemRights, $rule.AccessControlType)))
+    }
+    $stream = New-Object IO.FileStream($Path, [IO.FileMode]::CreateNew,
+        [Security.AccessControl.FileSystemRights]::Write, [IO.FileShare]::Read,
+        4096, [IO.FileOptions]::WriteThrough, $security)
+    try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) }
+    finally { $stream.Dispose() }
+}
+function Get-MaintenanceFailureDetails($Failure, [string]$Phase, [string]$Stage,
+    [string]$Code, $VmId, [string]$StopObservation) {
+    # Do not serialize exception text, arbitrary Data, SDDL, guest bytes or paths.
+    $native = $null
+    $exception = $Failure.Exception
+    for ($depth = 0; $exception -and $depth -lt 8; $depth++) {
+        if ($exception -is [ComponentModel.Win32Exception]) {
+            $number = [long]$exception.NativeErrorCode
+            if ($number -ge 0 -and $number -le 4294967295) { $native = $number }
+        } elseif ($exception -is [IO.IOException]) {
+            $hr = ([long]$exception.HResult) -band 4294967295
+            if (($hr -band 4294901760) -eq 2147942400) { $native = $hr -band 65535 }
+        }
+        if ($Code -eq 'operation_failed' -and $exception -is [TimeoutException]) { $Code = 'timeout' }
+        if ($Code -eq 'operation_failed' -and $Stage -eq 'sid_resolve' -and
+            $exception -is [Security.Principal.IdentityNotMappedException]) { $Code = 'sid_unresolved' }
+        if ($null -ne $native) { break }
+        $exception = $exception.InnerException
+    }
+    if ($Code -eq 'operation_failed' -and $null -ne $native) { $Code = 'win32_error' }
+    return @{ version = 1; id = $Identity; mode = $Mode; phase = $Phase;
+        channel_stage = $Stage; code = $Code; win32_error = $native;
+        vm_id = $VmId; stop_observation = $StopObservation }
 }
 function Read-BoundedFrame($Channel, $Clock, $LimitMilliseconds) {
     $data = New-Object System.IO.MemoryStream
@@ -118,22 +164,8 @@ try {
     # a VM lifetime bound. This receipt is evidence, never a cleanup authorization.
     $vmRecord = @{ version = 1; id = $Identity; vm_id = $vm.Id.ToString();
         vm_name = $vmName; expected_owner = $owner; expected_config = $expectedConfig;
-        copy = $copy; cleanup = 'not_observed' } | ConvertTo-Json -Compress
-    $recordBytes = [Text.Encoding]::UTF8.GetBytes($vmRecord)
-    $recordSecurity = New-Object Security.AccessControl.FileSecurity
-    $recordSecurity.SetOwner((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))
-    $recordSecurity.SetAccessRuleProtection($true, $false)
-    $parentAcl = Get-Acl -LiteralPath ([IO.Path]::GetDirectoryName($VmReceipt))
-    foreach ($rule in $parentAcl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-        $recordSecurity.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
-            $rule.IdentityReference, $rule.FileSystemRights, $rule.AccessControlType)))
-    }
-    # FileStream's security overload applies ownership/DACL atomically at CreateNew.
-    $recordStream = New-Object IO.FileStream($VmReceipt, [IO.FileMode]::CreateNew,
-        [Security.AccessControl.FileSystemRights]::Write, [IO.FileShare]::Read,
-        4096, [IO.FileOptions]::WriteThrough, $recordSecurity)
-    try { $recordStream.Write($recordBytes, 0, $recordBytes.Length); $recordStream.Flush($true) }
-    finally { $recordStream.Dispose() }
+        copy = $copy; cleanup = 'not_observed' }
+    Write-MaintenanceReceipt $VmReceipt $vmRecord
     if ($vm.Path -ne $expectedConfig) { throw 'Unexpected maintenance configuration path' }
     Set-VM -VM $vm -Notes $owner -CheckpointType Disabled -AutomaticStartAction Nothing -AutomaticStopAction ShutDown
     Set-VMMemory -VM $vm -DynamicMemoryEnabled $false -StartupBytes 2147483648
@@ -174,9 +206,12 @@ try {
     $phase = 'BOOT'
     Start-VM -VM $vm -ErrorAction Stop
     $phase = 'CHANNEL'
+    $channelStage = 'pipe_create'
     $pipe = New-Object System.IO.Pipes.NamedPipeClientStream('.', ($vmName + '-com1'),
         [System.IO.Pipes.PipeDirection]::InOut, [System.IO.Pipes.PipeOptions]::Asynchronous)
+    $channelStage = 'pipe_connect'
     $pipe.Connect(90000)
+    $channelStage = 'security_compile'
     # Inspect the connected kernel object BEFORE sending the handshake. No repair.
     Add-Type -TypeDefinition @'
 using System;
@@ -192,39 +227,58 @@ public static class MaintenancePipeSecurity {
     public static string Read(IntPtr handle) {
         IntPtr owner, group, dacl, sacl, sd;
         uint code = GetSecurityInfo(handle, 6, 5, out owner, out group, out dacl, out sacl, out sd);
-        if (code != 0) throw new Exception("Cannot inspect COM1 security");
+        if (code != 0) throw new System.ComponentModel.Win32Exception(unchecked((int)code));
         IntPtr text = IntPtr.Zero;
         try {
             uint length;
             if (!ConvertSecurityDescriptorToStringSecurityDescriptor(sd, 1, 5, out text, out length))
-                throw new Exception("Cannot read COM1 security descriptor");
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             return Marshal.PtrToStringUni(text);
         } finally { if (text != IntPtr.Zero) LocalFree(text); LocalFree(sd); }
     }
 }
 '@
-    $descriptor = New-Object Security.AccessControl.RawSecurityDescriptor(
-        [MaintenancePipeSecurity]::Read($pipe.SafePipeHandle.DangerousGetHandle()))
+    $channelStage = 'security_query'
+    $sddl = [MaintenancePipeSecurity]::Read($pipe.SafePipeHandle.DangerousGetHandle())
+    $channelStage = 'security_parse'
+    $descriptor = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
+    $channelStage = 'sid_resolve'
     $vmSid = (New-Object Security.Principal.NTAccount('NT VIRTUAL MACHINE', $vm.Id.ToString())).Translate(
         [Security.Principal.SecurityIdentifier]).Value
     $pipeAllowed = @('S-1-5-18', 'S-1-5-32-544',
         [Security.Principal.WindowsIdentity]::GetCurrent().User.Value, $vmSid)
-    if (-not $descriptor.Owner -or $pipeAllowed -notcontains $descriptor.Owner.Value -or
-        -not $descriptor.DiscretionaryAcl -or $descriptor.DiscretionaryAcl.Count -eq 0) {
-        throw 'Untrusted COM1 owner or absent DACL'
+    $channelStage = 'acl_check'
+    if (-not $descriptor.Owner -or $pipeAllowed -notcontains $descriptor.Owner.Value) {
+        $failureCode = 'owner_rejected'
+        throw 'Untrusted COM1 owner'
+    }
+    if (-not $descriptor.DiscretionaryAcl -or $descriptor.DiscretionaryAcl.Count -eq 0) {
+        $failureCode = 'dacl_absent'
+        throw 'Absent COM1 DACL'
     }
     foreach ($ace in $descriptor.DiscretionaryAcl) {
         if ($ace -isnot [Security.AccessControl.CommonAce] -or $ace.IsCallback -or
-            $ace.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed -or
-            $pipeAllowed -notcontains $ace.SecurityIdentifier.Value) {
-            throw 'COM1 permits an unreviewed principal or ACE'
+            $ace.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed) {
+            $failureCode = 'ace_unsupported'
+            throw 'Unsupported COM1 ACE'
+        }
+        if ($pipeAllowed -notcontains $ace.SecurityIdentifier.Value) {
+            $failureCode = 'principal_rejected'
+            throw 'Unreviewed COM1 principal'
         }
     }
+    $channelStage = 'handshake_prepare'
     $frame = @{ id = $Identity; mode = $Mode } | ConvertTo-Json -Compress
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($frame + "`n")
+    $channelStage = 'handshake_write'
     $write = $pipe.WriteAsync($bytes, 0, $bytes.Length)
-    if (-not $write.Wait(5000)) { throw 'Controller handshake write timed out' }
+    $channelStage = 'handshake_wait'
+    if (-not $write.Wait(5000)) {
+        $failureCode = 'timeout'
+        throw 'Controller handshake write timed out'
+    }
     $phase = 'GUEST'
+    $channelStage = 'not_applicable'
     $receipt = (Read-BoundedFrame $pipe $clock ($GuestTimeoutSeconds * 1000)) | ConvertFrom-Json
     if ($receipt.version -ne 1 -or $receipt.id -cne $Identity -or $receipt.mode -cne $Mode -or
         $receipt.status -cne 'success' -or $receipt.unmounted_read_only -ne $true -or
@@ -270,15 +324,29 @@ public static class MaintenancePipeSecurity {
        guest = $receipt } | ConvertTo-Json -Depth 12 -Compress
 }
 catch {
-    # A normal failure attempts an exact-ID stop but retains VM/config/copy/media.
-    # A killed PowerShell process cannot execute this: host status stays UNKNOWN.
+    # Preserve the original error before nested cleanup changes PowerShell's $_.
+    # This observer does not add removal, retries or broader stop authority.
+    $originalFailure = $_
+    $stopObservation = 'unknown'
+    $failedVmId = $null
     if ($vm) {
+        $failedVmId = $vm.Id.ToString()
         try {
             $owned = Get-VM -Id $vm.Id -ErrorAction Stop
             Assert-Owned $owned
             if ($owned.State -ne 'Off') { Stop-VM -VM $owned -TurnOff -Force -ErrorAction Stop }
+            $owned = Get-VM -Id $vm.Id -ErrorAction Stop
+            Assert-Owned $owned
+            if ($owned.State -eq 'Off') { $stopObservation = 'off_observed' }
         } catch { }
     }
+    # Create-new, bounded and best-effort: a killed process or failed receipt write
+    # still leaves UNKNOWN. Off observation never proves unmount or VM removal.
+    try {
+        $details = Get-MaintenanceFailureDetails $originalFailure $phase $channelStage `
+            $failureCode $failedVmId $stopObservation
+        Write-MaintenanceReceipt $FailureReceipt $details
+    } catch { }
     throw ('NS-MAINTENANCE-FAIL ' + $phase)
 }
 finally {

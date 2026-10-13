@@ -5,6 +5,7 @@ import copy
 import hashlib
 import io
 import json
+import os
 import time
 import zipfile
 from pathlib import Path
@@ -154,6 +155,44 @@ def test_fresh_space_refusal_precedes_output_creation(tmp_path, monkeypatch):
     with pytest.raises(Exception, match='insufficient fresh workspace space'):
         host.run_image_maintenance(config, operator_authorized=True, iso_provenance_reviewed=True, evidence_preserved=True)
     assert not list(root.iterdir())
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='worker uses read-only native Windows system-directory lookup')
+@pytest.mark.parametrize('kind', ['diagnostics', 'missing', 'arbitrary_exception'])
+def test_worker_propagates_only_typed_failure_evidence_without_running_maintenance(monkeypatch, tmp_path, kind):
+    from night_shifts import inspection_worker as worker
+    from night_shifts.maintenance_runner import validate_failure_diagnostics
+    data = policy()
+    (tmp_path / 'policy.json').write_text(json.dumps(data))
+    monkeypatch.setattr(worker, 'installed_root', lambda: tmp_path)
+    monkeypatch.setattr('night_shifts.ubuntu_preparation_control._current_user_sid', lambda: SID)
+    details = validate_failure_diagnostics(dict(
+        version=1, id=ID, mode='inspect', phase='CHANNEL', channel_stage='acl_check',
+        code='principal_rejected', win32_error=None,
+        vm_id='12345678-1234-1234-1234-123456789012', stop_observation='off_observed'))
+    calls = []
+
+    def fail(config, **kwargs):
+        calls.append((config, kwargs))
+        if kind == 'arbitrary_exception':
+            raise RuntimeError('PRIVATE_EXCEPTION_CANARY')
+        manifest = Path(data['workspace']) / (ID + '.control') / 'manifest.json'
+        raise host.ImageMaintenanceError(ID, manifest, details if kind == 'diagnostics' else None)
+
+    monkeypatch.setattr(host, 'run_image_maintenance', fail)
+    saved = []
+    monkeypatch.setattr(worker, 'write_protected_json', lambda *args: saved.append(args))
+    assert worker.main(['--request-id', ID, '--deadline', str(int(time.time()) + 1800)]) == 2
+    assert len(calls) == len(saved) == 1
+    assert calls[0][0].mode == 'inspect' and calls[0][0].artifacts == {}
+    assert calls[0][1]['failure_receipt_path'] == tmp_path / 'receipts' / (ID + '.failure.json')
+    facts = saved[0][1]
+    assert facts['status'] == 'blocked_or_outcome_unknown' and facts['accepted'] is False
+    assert facts['gate_a'] == 'unrun' and 'PRIVATE_EXCEPTION_CANARY' not in json.dumps(facts)
+    if kind == 'diagnostics':
+        assert facts['failure_diagnostics'] == details
+    else:
+        assert 'failure_diagnostics' not in facts
 
 
 def test_native_inspection_records_guid_before_start_and_checks_connected_pipe():

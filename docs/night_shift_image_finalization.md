@@ -169,6 +169,16 @@ Connect, serial write and bounded receipt read have deadlines. JSON must echo th
 fresh identity/mode and successful unmount; malformed/oversized/mismatched data
 never accepts an image. Host operation failures retain a sanitized phase label
 when available: COPY, CREATE, BOOT, CHANNEL, GUEST, STOP, VERIFY or REMOVE.
+A normally caught failure also attempts a bounded create-new `host.failure.json`
+in the host-only control directory (or the protected adapter's request-specific
+failure receipt). CHANNEL substages distinguish pipe creation/connection, security
+compilation/query/parsing, VM SID resolution, ACL validation and handshake
+preparation/write/wait. Only fixed reason codes and optional numeric Windows
+errors are retained; arbitrary exception text and guest output are discarded.
+Exact-owned failure-stop read-back may record `off_observed`, but never upgrades
+UNKNOWN to successful unmount/inspection, VM removal or retry authorization.
+Missing, oversized, malformed or identity/mode/phase-mismatched failure receipts
+are not propagated. Failure receipts do not amend or replace the GUID receipt.
 
 Normal host failure attempts an exact-ID/owner-bound recovery stop, retaining the
 VM/config/copy/media for investigation. If the supervising PowerShell process is

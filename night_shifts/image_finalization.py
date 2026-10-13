@@ -19,7 +19,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from night_shifts.maintenance_runner import PowerShellCommandRunner, SubprocessPowerShellRunner
+from night_shifts.maintenance_runner import (
+    MAX_FAILURE_RECEIPT_BYTES, PowerShellCommandRunner, SubprocessPowerShellRunner,
+    validate_failure_diagnostics,
+)
 from night_shifts.guest.finalize_image_copy import validate_request
 from night_shifts.hyperv_image_preflight import _checked_path
 from night_shifts.protocol_image_bundle import _linux_text_bytes
@@ -31,6 +34,16 @@ from night_shifts.ubuntu_preparation_control import (
 
 _GUEST = ('finalize_image_copy.py', 'protocol_test_bootstrap.py',
           'review_protocol_test_target.py', 'night-shift-protocol-test.service')
+
+
+class ImageMaintenanceError(PreparationError):
+    """Unknown attempt with an exact manifest and optional validated diagnostics."""
+
+    def __init__(self, identity: str, manifest: Path,
+                 diagnostics: dict[str, Any] | None = None):
+        super().__init__(f'maintenance status UNKNOWN; inspect exact identity {identity}; never retry automatically')
+        self.manifest = manifest
+        self.diagnostics = diagnostics
 
 
 @dataclass(frozen=True)
@@ -157,6 +170,7 @@ def run_image_maintenance(
     iso_provenance_reviewed: bool = False, evidence_preserved: bool = False,
     runner: PowerShellCommandRunner | None = None,
     vm_receipt_path: Path | None = None,
+    failure_receipt_path: Path | None = None,
 ) -> Path:
     """Return the host-only manifest, NEVER an accepted base-image path.
 
@@ -210,6 +224,7 @@ def run_image_maintenance(
         claim.write((identity + '\n').encode('ascii'))
         claim.flush()
         os.fsync(claim.fileno())
+    failure_path = failure_receipt_path or (control / 'host.failure.json')
     try:
         output = selected.run(script, (
             '-Identity', identity, '-Mode', config.mode,
@@ -218,6 +233,7 @@ def run_image_maintenance(
             '-Workspace', str(workspace), '-SeedIsoSha256', media_digest,
             '-GuestTimeoutSeconds', str(config.guest_timeout_seconds),
             '-VmReceipt', str(vm_receipt_path or (control / 'host.vm.json')),
+            '-FailureReceipt', str(failure_path),
         ))
         if len(output) > 65536:
             raise PreparationError('oversized host receipt')
@@ -239,8 +255,26 @@ def run_image_maintenance(
     except Exception as exc:
         phase = re.search(r'NS-MAINTENANCE-FAIL (COPY|CREATE|BOOT|CHANNEL|GUEST|STOP|VERIFY|REMOVE)', str(exc))
         state['failure_phase'] = phase.group(1) if phase else 'host_or_receipt_unknown'
+        diagnostics = None
+        try:
+            info = failure_path.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_FAILURE_RECEIPT_BYTES:
+                raise ValueError('Invalid failure receipt file')
+            with failure_path.open('rb') as stream:
+                raw = stream.read(MAX_FAILURE_RECEIPT_BYTES + 1)
+            if len(raw) > MAX_FAILURE_RECEIPT_BYTES:
+                raise ValueError('Oversized failure receipt')
+            candidate = validate_failure_diagnostics(json.loads(raw), identity=identity, mode=config.mode)
+            if phase is not None and candidate['phase'] != phase.group(1):
+                raise ValueError('Failure receipt phase differs')
+            diagnostics = candidate
+            state['failure_phase'] = candidate['phase']
+            state['failure_diagnostics'] = candidate
+        except (OSError, ValueError, TypeError):
+            # Missing, partial, malformed or mismatched evidence never infers stop.
+            pass
         _manifest(workspace, state)
-        raise PreparationError(f'maintenance status UNKNOWN; inspect exact identity {identity}; never retry automatically') from exc
+        raise ImageMaintenanceError(identity, control / 'manifest.json', diagnostics) from exc
     return control / 'manifest.json'
 
 

@@ -129,6 +129,26 @@ def validate_result(result: dict[str, Any], claim: PrivilegedClaim, policy: dict
         raise PrivilegedHostError('Unexpected diagnostic content')
 
 
+def validate_failure_result(result: dict[str, Any], claim: PrivilegedClaim,
+                            policy: dict[str, Any]) -> dict[str, Any]:
+    """Bind sanitized failed-attempt evidence without upgrading UNKNOWN."""
+    if (type(result.get('version')) is not int or result['version'] != 1
+            or result.get('request_id') != claim.request_id
+            or result.get('operation') != INSPECTION_OPERATION
+            or result.get('status') != 'blocked_or_outcome_unknown'
+            or result.get('accepted') is not False or result.get('gate_a') != 'unrun'):
+        raise PrivilegedHostError('Failed inspection receipt binding differs')
+    from night_shifts.maintenance_runner import validate_failure_diagnostics
+    try:
+        details = validate_failure_diagnostics(result.get('failure_diagnostics'), mode='inspect')
+    except ValueError as exc:
+        raise PrivilegedHostError('Invalid inspection failure diagnostics') from exc
+    expected = Path(policy['workspace']) / (details['id'] + '.control') / 'manifest.json'
+    if not isinstance(result.get('manifest'), str) or result['manifest'] != str(expected):
+        raise PrivilegedHostError('Failure manifest binding differs')
+    return {'manifest': str(expected), 'failure_diagnostics': details}
+
+
 def inspect_installed_copy(claim: PrivilegedClaim) -> dict[str, Any]:
     if claim.operation != INSPECTION_OPERATION:
         raise PrivilegedHostError('Inspection requires its distinct operation grant')
@@ -137,7 +157,8 @@ def inspect_installed_copy(claim: PrivilegedClaim) -> dict[str, Any]:
     path = root / 'receipts' / (claim.request_id + '.result.json')
     unknown = {'status': 'blocked_or_outcome_unknown', 'request_id': claim.request_id,
                'accepted': False, 'gate_a': 'unrun', 'retry_authorized': False,
-               'receipt': str(path), 'vm_evidence': str(path.with_name(claim.request_id + '.vm.json'))}
+               'receipt': str(path), 'vm_evidence': str(path.with_name(claim.request_id + '.vm.json')),
+               'failure_evidence': str(path.with_name(claim.request_id + '.failure.json'))}
     if state not in ('completed', 'helper_failed'):
         return {**unknown, 'status': state}
     envelope = _bounded_json(path)
@@ -146,6 +167,10 @@ def inspect_installed_copy(claim: PrivilegedClaim) -> dict[str, Any]:
             or envelope.get('policy_sha256') != policy_digest):
         raise PrivilegedHostError('Protected inspection receipt binding differs')
     if state != 'completed' or envelope.get('status') != 'completed':
+        facts = envelope.get('result')
+        if isinstance(facts, dict) and 'failure_diagnostics' in facts:
+            details = validate_failure_result(facts, claim, policy)
+            return {**unknown, **details}
         return unknown
     result = envelope.get('result')
     if not isinstance(result, dict) or result.get('status') != 'inspected_not_accepted':

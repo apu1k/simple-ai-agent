@@ -1,6 +1,7 @@
 """Unelevated parser/watchdog/import fixtures. Never install or call Hyper-V."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -23,6 +24,19 @@ def powershell(command: str) -> str:
                             capture_output=True, text=True, timeout=15, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout
+
+
+def maintenance_functions(*names: str) -> str:
+    """Load reviewed pure functions only, never the maintenance entry point."""
+    path = str(ROOT / 'night_shifts/backends/hyperv_scripts/maintain_image_copy.ps1').replace("'", "''")
+    command = ("$ErrorActionPreference='Stop';$t=$null;$e=$null;"
+               f"$ast=[System.Management.Automation.Language.Parser]::ParseFile('{path}',[ref]$t,[ref]$e);"
+               "if($e.Count){throw 'parse failed'};")
+    for name in names:
+        command += ("$f=$ast.Find({param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] "
+                    f"-and $n.Name -ceq '{name}'" + "},$true);"
+                    "if(-not $f){throw 'missing fixture function'};Invoke-Expression $f.Extent.Text;")
+    return command
 
 
 def test_inspection_scripts_parse_without_execution():
@@ -50,6 +64,27 @@ def test_process_watchdog_preserves_exit_code_and_kills_timed_out_fixture(tmp_pa
     powershell(command)
 
 
+@pytest.mark.parametrize('exception,stage,initial_code,code,native', [
+    ("New-Object TimeoutException('PRIVATE_CANARY')", 'pipe_connect', 'operation_failed', 'timeout', None),
+    ("New-Object Security.Principal.IdentityNotMappedException('PRIVATE_CANARY')", 'sid_resolve',
+     'operation_failed', 'sid_unresolved', None),
+    ("New-Object IO.IOException('PRIVATE_CANARY', -2147024891)", 'handshake_write',
+     'operation_failed', 'win32_error', 5),
+    ("New-Object ComponentModel.Win32Exception(5,'PRIVATE_CANARY')", 'acl_check',
+     'principal_rejected', 'principal_rejected', 5),
+])
+def test_fixed_failure_labels_and_numeric_errors_never_include_exception_text(
+    exception, stage, initial_code, code, native,
+):
+    command = maintenance_functions('Get-MaintenanceFailureDetails')
+    command += ("$Identity='" + 'a' * 32 + "';$Mode='inspect';try{throw (" + exception + ")}" +
+                f"catch{{Get-MaintenanceFailureDetails $_ 'CHANNEL' '{stage}' '{initial_code}' $null 'unknown'|"
+                "ConvertTo-Json -Compress}")
+    details = json.loads(powershell(command))
+    assert details['code'] == code and details['win32_error'] == native
+    assert 'CANARY' not in json.dumps(details)
+
+
 def test_archive_reader_refuses_traversal_without_running_installer(tmp_path):
     good, bad = tmp_path / 'good.zip', tmp_path / 'bad.zip'
     for output, name in ((good, 'python.exe'), (bad, '../python.exe')):
@@ -67,6 +102,74 @@ def test_archive_reader_refuses_traversal_without_running_installer(tmp_path):
                f"Read-Archive ([IO.File]::ReadAllBytes('{bad}')) $true|Out-Null"
                "}catch{$refused=$true};if(-not $refused){throw 'traversal accepted'};")
     powershell(command)
+
+
+@pytest.mark.parametrize('state,bad_owner,fail_readback,expected_stop,expected_observation', [
+    ('Running', False, False, 1, 'off_observed'),
+    ('Off', False, False, 0, 'off_observed'),
+    ('Running', True, False, 0, 'unknown'),
+    ('Running', False, True, 1, 'unknown'),
+])
+def test_failure_handler_observes_only_exact_owned_fake_vm(
+    state, bad_owner, fail_readback, expected_stop, expected_observation,
+):
+    # Evaluate only the catch body with all Hyper-V operations shadowed by local
+    # fake functions. No real VM, privilege, protected receipt or entry point.
+    command = maintenance_functions('Assert-Owned', 'Get-MaintenanceFailureDetails')
+    command += ("$Identity='" + 'a' * 32 + "';$Mode='inspect';$phase='CHANNEL';"
+                "$channelStage='security_query';$failureCode='operation_failed';"
+                "$vmName='fixture';$owner='fixture-owner';$expectedConfig='C:\\fixture';"
+                "$vm=[pscustomobject]@{Id=[guid]'51434da9-9168-428a-8624-72a246ccc18d'};"
+                "$script:owned=[pscustomobject]@{Id=$vm.Id;Name=$vmName;Notes=$owner;Path=$expectedConfig;State='"
+                + state + "'};$script:queries=0;$script:stops=0;$script:captured=$null;")
+    if bad_owner:
+        command += "$script:owned.Notes='different-owner';"
+    command += ("function Get-VM {param($Id,$ErrorAction) $script:queries++;"
+                + ("if($script:queries -eq 2){throw 'READBACK_CANARY'};" if fail_readback else '')
+                + "$script:owned};"
+                "function Stop-VM {param($VM,[switch]$TurnOff,[switch]$Force,$ErrorAction)"
+                "$script:stops++;$script:owned.State='Off'};"
+                "function Write-MaintenanceReceipt {param($Path,$Value) $script:captured=$Value};"
+                "$FailureReceipt='UNUSED_FIXTURE_PATH';"
+                "$body=@($ast.EndBlock.Statements | Where-Object {$_ -is [System.Management.Automation.Language.TryStatementAst]})[0].CatchClauses[0].Body.Extent.Text;"
+                "$invoke=\"try { throw (New-Object ComponentModel.Win32Exception(5,'PRIVATE_CANARY')) } catch \"+$body;"
+                "try{Invoke-Expression $invoke;throw 'handler did not fail'}catch{"
+                "if($_.Exception.Message -cne 'NS-MAINTENANCE-FAIL CHANNEL'){throw 'phase lost'}};"
+                "@{details=$script:captured;stops=$script:stops}|ConvertTo-Json -Depth 4 -Compress")
+    result = json.loads(powershell(command))
+    assert result['stops'] == expected_stop
+    details = result['details']
+    assert details['stop_observation'] == expected_observation
+    assert details['code'] == 'win32_error' and details['win32_error'] == 5
+    assert details['channel_stage'] == 'security_query'
+    assert 'CANARY' not in json.dumps(result)
+
+
+def test_pipe_security_probe_uses_ordinary_fixture_and_preserves_numeric_error():
+    script = (ROOT / 'night_shifts/backends/hyperv_scripts/maintain_image_copy.ps1').read_text()
+    match = re.search("Add-Type -TypeDefinition @'\\n(.*?)\\n'@", script, re.S)
+    assert match is not None
+    command = maintenance_functions('Get-MaintenanceFailureDetails')
+    command += "Add-Type -TypeDefinition @'\n" + match[1] + "\n'@\n"
+    command += ("$Identity='" + 'a' * 32 + "';$Mode='inspect';"
+                "$name='maintenance-acl-fixture-'+[guid]::NewGuid().ToString('N');"
+                "$server=New-Object IO.Pipes.NamedPipeServerStream($name,[IO.Pipes.PipeDirection]::InOut,1,"
+                "[IO.Pipes.PipeTransmissionMode]::Byte,[IO.Pipes.PipeOptions]::Asynchronous);$client=$null;"
+                "try{$pending=$server.WaitForConnectionAsync();"
+                "$client=New-Object IO.Pipes.NamedPipeClientStream('.', $name,[IO.Pipes.PipeDirection]::InOut,"
+                "[IO.Pipes.PipeOptions]::Asynchronous);$client.Connect(3000);"
+                "if(-not $pending.Wait(3000)){throw 'fixture connect failed'};"
+                "$sddl=[MaintenancePipeSecurity]::Read($client.SafePipeHandle.DangerousGetHandle());"
+                "$sd=New-Object Security.AccessControl.RawSecurityDescriptor($sddl);"
+                "if(-not $sd.Owner -or -not $sd.DiscretionaryAcl){throw 'fixture descriptor absent'};"
+                "try{[MaintenancePipeSecurity]::Read([IntPtr]::Zero)|Out-Null;throw 'invalid handle accepted'}"
+                "catch{$details=Get-MaintenanceFailureDetails $_ 'CHANNEL' 'security_query' 'operation_failed' $null 'unknown';"
+                "if($null -eq $details.win32_error){throw 'numeric error lost'};"
+                "$details|ConvertTo-Json -Compress}"
+                "}finally{if($client){$client.Dispose()};$server.Dispose()}")
+    details = json.loads(powershell(command))
+    assert details['code'] == 'win32_error' and details['win32_error'] > 0
+    assert details['stop_observation'] == 'unknown' and details['vm_id'] is None
 
 
 def test_bundle_runs_without_app_packages_or_site_imports(tmp_path):

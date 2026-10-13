@@ -89,7 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     if not 900 <= remaining <= 1800 or policy['operation'] != 'inspect_image_copy':
         raise ValueError('inspection deadline or operation refused')
     sys.path.insert(0, str(root / 'payload'))  # Protected fixed assets only; -I -S -B at launch.
-    from night_shifts.image_finalization import FinalizationConfig, run_image_maintenance
+    from night_shifts.image_finalization import FinalizationConfig, ImageMaintenanceError, run_image_maintenance
     from night_shifts.maintenance_runner import SubprocessPowerShellRunner
     from night_shifts.ubuntu_preparation_control import _current_user_sid
     if _current_user_sid() != policy['operator_sid']:
@@ -115,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
             evidence_preserved=policy['evidence_preserved'] is True,
             runner=SubprocessPowerShellRunner(str(powershell), timeout_seconds=config.command_timeout_seconds),
             vm_receipt_path=root / 'receipts' / (args.request_id + '.vm.json'),
+            failure_receipt_path=root / 'receipts' / (args.request_id + '.failure.json'),
         )
         state = json.loads(manifest.read_bytes())
         receipt = state['receipt']
@@ -122,8 +123,14 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError('missing native inspection evidence')
         facts.update(status='inspected_not_accepted', manifest=str(manifest), receipt=receipt)
         code = 0
+    except ImageMaintenanceError as exc:
+        # Only the protected producer's schema-validated fixed labels/numbers cross.
+        # An Off snapshot is not inspection success, unmount, removal or retry consent.
+        facts['manifest'] = str(exc.manifest)
+        if exc.diagnostics is not None:
+            facts['failure_diagnostics'] = exc.diagnostics
     except Exception:
-        # No exception, key/log contents, retry or inferred cleanup crosses this boundary.
+        # No arbitrary exception, key/log contents or inferred cleanup crosses.
         pass
     write_protected_json(root / 'receipts' / (args.request_id + '.facts.json'), facts, policy['operator_sid'])
     return code

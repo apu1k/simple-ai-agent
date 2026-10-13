@@ -19,7 +19,7 @@ from night_shifts.hyperv_image_preflight import _checked_path
 
 _CONTROL_NAMES = frozenset({
     "manifest.json", "manifest.pending", "launch.claim", "retirement.claim", "publication.claim", "vm-operation.lock",
-    "host.vm.json",
+    "host.vm.json", "host.failure.json",
 })
 _SYSTEM = "S-1-5-18"
 _ADMINS = "S-1-5-32-544"
