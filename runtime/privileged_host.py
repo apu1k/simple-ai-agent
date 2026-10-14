@@ -134,6 +134,8 @@ PHASES = (
 
 def _observed_phase(root: Path, request_id: str) -> str:
     """Optional, protected display hints only; never infer completion here."""
+    if root.name == 'AiAgentElevatedCommands':
+        return 'Running an explicitly approved Administrator command (effects are not verified)'
     if root.name == 'AiAgentHyperVInspection':
         return 'Inspecting a fresh image copy (VM outcome requires a verified receipt)'
     for phase, label in reversed(PHASES):
@@ -167,7 +169,8 @@ def _wait_for_helper(kernel: Any, handle: Any, root: Path, claim: PrivilegedClai
             return int(wait)
 
 
-def _elevate(powershell: Path, helper: Path, claim: PrivilegedClaim) -> str:
+def _elevate(powershell: Path, helper: Path, claim: PrivilegedClaim, *,
+             request_sha256: str | None = None) -> str:
     """RunAs with Windows consent, never shell/PATH lookup or arbitrary text."""
     from ctypes import wintypes as w
 
@@ -192,6 +195,10 @@ def _elevate(powershell: Path, helper: Path, claim: PrivilegedClaim) -> str:
     kernel.CloseHandle.restype = w.BOOL
     params = (f'-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "{helper}" '
               f'-RequestId {claim.request_id} -DeadlineUnix {int(claim.deadline_unix)}')
+    if request_sha256 is not None:
+        if not re.fullmatch('[0-9a-f]{64}', request_sha256):
+            raise PrivilegedHostError('Invalid approved request digest')
+        params += f' -RequestSha256 {request_sha256}'
     info = ShellExecuteInfo()
     info.cbSize = ctypes.sizeof(info)
     info.fMask = 0x40 | 0x100  # NOCLOSEPROCESS, NOASYNC

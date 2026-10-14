@@ -161,7 +161,9 @@ The agent can:
 - extract PDFs as Markdown
 - inspect Python modules with the AST
 - propose file edits and filesystem operations for approval
-- run a small OS-specific shell-command allowlist
+- run a small OS-specific unelevated shell-command allowlist
+- request Administrator commands through [per-command pending approval and UAC](docs/elevated_commands.md),
+  after separate protected-launcher installation (Windows; maximum command execution: 60 seconds)
 - fetch public HTTP(S) URLs
 - search configured local knowledge sources and chat history
 

@@ -1,18 +1,21 @@
 # One-turn privileged Hyper-V evidence
 
-This is **not an elevated shell mode**. The head agent receives one fixed
-`collect_privileged_host_evidence()` operation with no model-selected arguments.
+This **fixed tool is not a general elevated shell**. It now uses the unified
+[Administrator approval workflow](elevated_commands.md). The head agent receives
+one fixed `collect_privileged_host_evidence()` operation with no model-selected arguments.
 Workers never receive the tool. `run_shell_command` is unchanged and must remain
 unelevated. Do not run the whole application as Administrator.
 
 ## Scope and expiration
 
-In `\settings`, choose **Privileged Hyper-V evidence: Enable next turn**. Submit
-the next message within two minutes. The next head-agent `Agent.step()` consumes
-the arm, even if it never calls the tool. The turn has a 30-minute deadline.
-Exactly one attempt is allowed; input/installation failure and UAC cancellation
-consume it too. No retry or parallel privileged operations. Completion, error,
-reset, unmount and restart discard unused authority. The current status appears
+In `\settings`, choose **Elevated commands: Enable next turn**. Submit the next
+message within two minutes. The next head-agent `Agent.step()` consumes the arm,
+even if it never calls a privileged tool. The turn has a 30-minute deadline.
+This fixed collection requires its own acceptance in `\pending`, then UAC.
+Exactly one collection attempt per turn is allowed; rejection, input/installation
+failure and UAC cancellation consume it too. Other elevated requests require
+separate approvals; no collection retry is inferred. Completion, error, reset,
+unmount and restart discard unused authority. The current status appears
 in `\state`, the header and the model's per-request runtime context.
 
 The setting is intentionally not in `.env`, provider config or chat history and

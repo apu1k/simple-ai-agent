@@ -8,12 +8,16 @@ Code approval is not installation, an inspection run, image acceptance or Gate A
 
 ## Action scope
 
-The UI setting **Privileged image inspection: Enable next turn** replaces any unused
-evidence grant. The arm expires after two minutes; the head turn has a 30-minute
-budget and one attempt. Workers never inherit it. The matching tool consumes the
-grant before checking installation/UAC. UAC cancellation and failure do not refund
-it. Unmount/reset/restart revoke unused authority. Windows UAC and protected code,
-not this in-process gate, are the security boundary.
+The UI now uses **Elevated commands: Enable next turn** and the shared
+[pending approval workflow](elevated_commands.md). The arm expires after two
+minutes; the head turn has a 30-minute budget. This fixed inspection gets at most
+one attempt per turn and still requires its separately installed permanent claim.
+Workers never inherit it. The matching tool consumes its fixed attempt before
+checking installation/approval/UAC. Rejection, UAC cancellation and failure do not
+refund it. Each request needs its own acceptance in `\pending`; other approved
+commands do not widen this helper's scope. Unmount/reset/restart revoke unused
+authority. Windows UAC and protected code, not this in-process gate, are the
+security boundary. Neither the old installation nor its consumed claim is changed.
 
 The installed policy binds source path/current reviewed SHA-256, recovery ISO
 path/reviewed SHA-256, existing empty private workspace, operator SID, preservation
@@ -87,9 +91,10 @@ installation remains unchanged.
    interpreter. No source/ISO/workspace mutation, VM action or permission repair.
    Partial setup failures are retained for review, never automatically retried.
    Different-account credential elevation is deliberately unsupported.
-5. Restart the app normally. Enable the distinct inspection setting and request one
-   inspection only after reviewing the exact action scope/approval window. Accept
-   only the expected UAC operation. The helper verifies the full deployed code/runtime
+5. Restart the app normally. Enable the unified elevated-commands setting and
+   request one inspection only after reviewing the exact action scope/approval
+   window. Review/accept the fixed inspection in `\pending`, then accept only the
+   expected UAC operation. The helper verifies the full deployed code/runtime
    inventory and makes a **permanent installation-level inspection claim** before
    worker launch. No retry/reset/upgrade/removal tool is supplied.
 

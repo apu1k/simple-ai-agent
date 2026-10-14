@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.agent import Agent
+from core.tool_progress import approval_ui_context, tool_progress_listener
 from runtime.privileged_turn import ARM_SECONDS, TURN_SECONDS, PrivilegedTurn
 from runtime.tool_profiles import AgentProfile, profile_tool_names
 from tools.system import privileged_host as tool_module
@@ -116,10 +117,15 @@ def test_tool_failure_is_not_refunded_or_leaked(gate, monkeypatch, failure):
             raise RuntimeError('PRIVATE_CANARY')
         return {'status': 'uac_cancelled', 'launch_authorized': False}
     monkeypatch.setattr(tool_module, 'collect_installed_evidence', collect)
+    from pathlib import Path
+    monkeypatch.setattr(tool_module, 'load_policy', lambda: (Path('fixed'), Path('powershell.exe'), {}))
     state = SimpleNamespace(privileged_turn=permit)
     assert tool_module.collect_privileged_host_evidence(state).startswith('Error:')
     permit.arm()
-    with permit.turn('head'):
+    def approve_notice(message):
+        if message.startswith('[privileged-approval] '):
+            permit.decide(message.removeprefix('[privileged-approval] '), accept=True)
+    with permit.turn('head'), approval_ui_context(), tool_progress_listener(approve_notice):
         result = tool_module.collect_privileged_host_evidence(state)
         assert 'PRIVATE_CANARY' not in result
         assert 'false' in result

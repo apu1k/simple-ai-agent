@@ -29,7 +29,10 @@ from textual.suggester import SuggestFromList
 from textual.widgets import Footer, Input, Static, Tree
 
 from core.tool_artifacts import is_internal_tool_artifact
-from core.tool_progress import PRIVILEGED_EVIDENCE_PREFIX
+from core.tool_progress import (
+    PRIVILEGED_APPROVAL_PREFIX, PRIVILEGED_EVIDENCE_PREFIX, approval_ui_context,
+)
+from runtime.privileged_turn import ELEVATED_OPERATION, PendingPrivilege
 from llm.providers import PROVIDERS, list_provider_models
 from runtime.bootstrap import build_model_config_and_client, create_agent
 from runtime.chat_store import record_final_turn, start_new_chat
@@ -138,8 +141,9 @@ class AgentTextualApp(App):
         self._visible_model_setting_matches: list[tuple[str, ModelSettingValue]] = []
 
         self._pending_search = ""
-        self._visible_pending_ids: list[int] = []
-        self._selected_pending_id: int | None = None
+        self._visible_pending_ids: list[int | str] = []
+        self._selected_pending_id: int | str | None = None
+        self._approval_notices: set[str] = set()
 
         self._chat_search = ""
         self._visible_chat_sessions: list[Any] = []
@@ -247,7 +251,7 @@ class AgentTextualApp(App):
         if not text:
             return
 
-        if self._processing:
+        if self._processing and text.lower() not in {"\\pending", "\\settings"}:
             return
 
         input_widget.value = ""
@@ -520,10 +524,8 @@ class AgentTextualApp(App):
             return
 
     def _enter_model_settings_mode(self) -> None:
-        if self._processing:
-            self._append_chat("System", "Cannot change model settings while AI is processing.")
-            return
-
+        # The overlay remains accessible while waiting; only revocation may
+        # change a setting during an active turn (enforced on selection).
         self._mode = "model_settings_select"
         self._refresh_footer_bindings()
         self._model_settings_search = ""
@@ -555,16 +557,12 @@ class AgentTextualApp(App):
             return
 
         options: list[tuple[str, ModelSettingValue, str, str]] = [
-            ("privileged_host_evidence", True, "Privileged Hyper-V evidence: Enable next turn",
-             "One read-only collection of operator-pinned inputs; UAC required. "
-             "Arm expires in 2 minutes; turn deadline 30 minutes. Shell commands stay unelevated."),
-            ("privileged_host_evidence", False, "Privileged Hyper-V evidence: Disabled",
-             "Revoke unused authority. No VM lifecycle or arbitrary administrator commands."),
-            ("privileged_image_inspection", True, "Privileged image inspection: Enable next turn",
-             "One inspection-only recovery VM against a fresh copy; separate protected setup and UAC required. "
-             "No finalization, publication, retry or Gate A. Replaces any unused evidence grant."),
-            ("privileged_image_inspection", False, "Privileged image inspection: Disabled",
-             "Revoke unused privileged authority. Process cancellation does not prove VM cleanup."),
+            ("elevated_commands", True, "Elevated commands: Enable next turn",
+             "Each request needs acceptance in pending and Windows UAC. Arm expires in 2 minutes; "
+             "turn budget 30 minutes. General command execution maximum 60 seconds. "
+             "Ordinary shell calls remain unelevated; arbitrary approved scripts are not sandboxed."),
+            ("elevated_commands", False, "Elevated commands: Disabled",
+             "Revoke unused approvals and wake pending requests. Already launched actions are not undone."),
             ("include_diff", True, "Include diff: Enabled (True)",
              "Always include generated diffs in proposal results."),
             ("include_diff", "model", "Include diff: Model choice",
@@ -598,12 +596,14 @@ class AgentTextualApp(App):
         root.expand()
 
         for key, value, label, description in visible:
-            if key in {"privileged_host_evidence", "privileged_image_inspection"}:
+            if key == "elevated_commands":
                 gate = getattr(self.state, "privileged_turn", None)
-                operation = 'inspect_image_copy' if key == 'privileged_image_inspection' else 'collect_host_evidence'
-                current = gate is not None and gate.armed_operation == operation
+                current = gate is not None and gate.armed_operation == ELEVATED_OPERATION
             else:
                 current = getattr(self.state.model_settings, key)
+            if key == 'elevated_commands':
+                gate = getattr(self.state, 'privileged_turn', None)
+                current = current or (gate is not None and gate.status.startswith('active'))
             marker = "✓ " if value == current else ""
             node = root.add_leaf(f"{marker}{label} — {description}")
             node.data = ("model_setting", key, value)
@@ -629,41 +629,25 @@ class AgentTextualApp(App):
         self._set_model_setting(*self._visible_model_setting_matches[0])
 
     def _set_model_setting(self, key: str, value: ModelSettingValue) -> None:
-        if self._processing:
-            self._append_chat("System", "Cannot change model settings while AI is processing.")
+        if self._processing and not (key == "elevated_commands" and value is False):
+            self._append_chat("System", "Cannot change model settings while AI is processing (except revoking elevation).")
             return
-        if key == "privileged_image_inspection" and isinstance(value, bool):
+        if key == "elevated_commands" and isinstance(value, bool):
             gate = getattr(self.state, "privileged_turn", None)
             if gate is None:
-                self._append_chat("System", "Privileged inspection is unavailable in this runtime.")
+                self._append_chat("System", "Elevated commands are unavailable in this runtime.")
                 return
             if value:
-                gate.arm('inspect_image_copy')
+                gate.arm(ELEVATED_OPERATION)
             else:
                 gate.revoke()
             self._exit_model_settings_mode()
             self._append_chat(
                 "System",
-                f"Privileged image inspection: {gate.status}. One fresh-copy inspection attempt; "
-                "protected operator-pinned setup and UAC consent required. This may create/start/stop/remove "
-                "one recovery VM and retains files for review. No finalization, publication or Gate A. "
-                "Closing the helper does not prove VM cleanup; shell commands remain unelevated.",
-            )
-        elif key == "privileged_host_evidence" and isinstance(value, bool):
-            gate = getattr(self.state, "privileged_turn", None)
-            if gate is None:
-                self._append_chat("System", "Privileged evidence is unavailable in this runtime.")
-                return
-            if value:
-                gate.arm()
-            else:
-                gate.revoke()
-            self._exit_model_settings_mode()
-            self._append_chat(
-                "System",
-                f"Privileged Hyper-V evidence: {gate.status}. Only the fixed, installed "
-                "read-only collector is eligible, once. UAC consent is still required. "
-                "run_shell_command remains unelevated; no VM launch is authorized.",
+                f"Elevated commands: {gate.status}. Each request needs pending acceptance and UAC consent. "
+                "General command limit: 60 seconds. Ordinary shell commands stay unelevated. "
+                "Arbitrary approved scripts can change the device; timeouts do not undo effects. "
+                "Fixed evidence/inspection helpers retain their installed scope and claims.",
             )
         elif key == "include_diff" and (isinstance(value, bool) or value == "model"):
             self._set_include_diff_setting(value)
@@ -694,6 +678,13 @@ class AgentTextualApp(App):
         label = "enabled" if value is True else "model choice" if value == "model" else "disabled"
         self._exit_model_settings_mode()
         self._append_chat("System", f"Proposal diff results set to {label}.")
+
+    def _pending_entries(self) -> dict[int | str, Any]:
+        entries: dict[int | str, Any] = dict(self.state.edit_store.pending())
+        gate = getattr(self.state, 'privileged_turn', None)
+        if gate is not None:
+            entries.update(gate.pending())
+        return entries
 
     def _enter_pending_select_mode(self) -> None:
         self._mode = "pending_select"
@@ -730,11 +721,11 @@ class AgentTextualApp(App):
         if self._mode != "pending_select":
             return
 
-        pending = self.state.edit_store.pending()
+        pending = self._pending_entries()
         query = self._pending_search.lower()
         visible = []
-        for edit_id, edit in sorted(pending.items()):
-            haystack = f"{edit.id} {edit.kind} {edit.status} {edit.path}".lower()
+        for edit_id, edit in sorted(pending.items(), key=lambda item: (isinstance(item[0], str), str(item[0]).zfill(32))):
+            haystack = f"{edit.id} {getattr(edit, 'kind', 'elevated')} {edit.path}".lower()
             if not query or query in haystack:
                 visible.append(edit_id)
 
@@ -742,8 +733,8 @@ class AgentTextualApp(App):
 
         if not visible:
             self._selected_pending_id = None
-            self._set_pending_header("No pending edits match your search. Ctrl+G returns to chat.")
-            self.query_one("#pending_list", Static).update(Text("No pending edits.", style="dim"))
+            self._set_pending_header("No pending requests match your search. Ctrl+G returns to chat.")
+            self.query_one("#pending_list", Static).update(Text("No pending requests.", style="dim"))
             self.query_one("#pending_diff", Static).update(Text("", style="dim"))
             return
 
@@ -751,21 +742,21 @@ class AgentTextualApp(App):
             self._selected_pending_id = visible[0]
 
         self._set_pending_header(
-            f"{len(visible)} pending edit(s) — Up/Down select, Enter approve, Delete/Backspace reject, PageUp/PageDown scroll diff, Ctrl+G back."
+            f"{len(visible)} pending request(s) — Up/Down select, Enter approve, Delete/Backspace reject, PageUp/PageDown scroll, Ctrl+G back."
         )
         self._render_pending_list()
         self._render_pending_diff()
 
     def _render_pending_list(self) -> None:
         text = Text()
-        pending = self.state.edit_store.pending()
+        pending = self._pending_entries()
         for edit_id in self._visible_pending_ids:
             edit = pending.get(edit_id)
             if edit is None:
                 continue
             marker = ">" if edit_id == self._selected_pending_id else " "
             path = str(edit.path)
-            line = f"{marker} #{edit.id} [{edit.kind}] {path}\n"
+            line = f"{marker} #{edit.id} [{getattr(edit, 'kind', 'ADMINISTRATOR')}] {path}\n"
             if edit_id == self._selected_pending_id:
                 text.append(line, style="bold reverse")
             else:
@@ -776,6 +767,18 @@ class AgentTextualApp(App):
         edit = self._selected_pending_edit()
         if edit is None:
             self.query_one("#pending_diff", Static).update(Text("No pending edit selected.", style="dim"))
+            return
+
+        if isinstance(edit, PendingPrivilege):
+            review = Text(
+                f'ADMINISTRATOR request #{edit.id}\n'
+                'Enter accepts this exact request and requests Windows UAC. Delete rejects.\n'
+                'Not sandboxed. Referenced dependencies may change. No rollback or automatic retry.\n'
+                f'Review SHA-256: {edit.review_sha256}\n\n', style='bold #E3A35C',
+            )
+            review.append(edit.review_json)
+            self.query_one('#pending_diff', Static).update(review)
+            self.query_one('#pending_diff_scroll', VerticalScroll).scroll_home(animate=False)
             return
 
         metadata = Text(
@@ -819,7 +822,7 @@ class AgentTextualApp(App):
     def _selected_pending_edit(self):
         if self._selected_pending_id is None:
             return None
-        return self.state.edit_store.get(self._selected_pending_id)
+        return self._pending_entries().get(self._selected_pending_id)
 
     def _select_pending_index(self, index: int) -> None:
         if not self._visible_pending_ids:
@@ -850,6 +853,13 @@ class AgentTextualApp(App):
             self._set_pending_header("No pending edit selected.")
             return
         try:
+            if isinstance(edit, PendingPrivilege):
+                decision = self.state.privileged_turn.decide(edit.id, accept=True)
+                self._append_chat('Approval', f'Administrator request #{edit.id}: {decision}. '
+                                  'Acceptance is not execution; Windows UAC follows if still eligible.')
+                self._render_pending_view()
+                self._refresh_state()
+                return
             message = self.state.edit_store.approve(edit.id)
             cwd_message = self._ensure_existing_cwd()
             self._append_chat("System", message)
@@ -866,6 +876,12 @@ class AgentTextualApp(App):
             self._set_pending_header("No pending edit selected.")
             return
         try:
+            if isinstance(edit, PendingPrivilege):
+                decision = self.state.privileged_turn.decide(edit.id, accept=False)
+                self._append_chat('Approval', f'Administrator request #{edit.id}: {decision}; no execution.')
+                self._render_pending_view()
+                self._refresh_state()
+                return
             message = self.state.edit_store.reject(edit.id)
             self._append_chat("System", message)
         except (KeyError, ValueError) as e:
@@ -1470,7 +1486,8 @@ class AgentTextualApp(App):
             if self.agent is None:
                 raise RuntimeError("Agent is not initialized.")
 
-            reply = self.agent.step(text)
+            with approval_ui_context():
+                reply = self.agent.step(text)
             try:
                 record_final_turn(self.state, text, reply)
             except Exception as history_error:
@@ -1489,6 +1506,8 @@ class AgentTextualApp(App):
         progress.add_class('hidden')
         self._set_processing(False)
         self._refresh_state()
+        if self._mode == 'pending_select':
+            self._render_pending_view()
 
     def _set_processing(self, processing: bool) -> None:
         self._processing = processing
@@ -1536,6 +1555,8 @@ class AgentTextualApp(App):
             return self._format_ai_markdown(text)
         if who == "Error":
             return Text(text, style="red")
+        if who == 'Approval':
+            return Text(text, style='bold #E3A35C' if self._theme_dark else 'bold #8A5A32')
         if who == "System":
             return Text(text, style="dim")
         return Text(text)
@@ -1559,13 +1580,15 @@ class AgentTextualApp(App):
             f"{self.state.model_config.model}"
         )
         pending_count = len(self.state.edit_store.pending())
+        gate = getattr(self.state, 'privileged_turn', None)
+        elevated_count = len(gate.pending()) if gate is not None else 0
 
         self.query_one("#status_cwd", Static).update(str(self.state.cwd))
         self.query_one("#status_model", Static).update(model_text)
         gate = getattr(self.state, "privileged_turn", None)
         privilege = gate.status if gate is not None else "disabled"
         self.query_one("#status_edits", Static).update(
-            f"pending edits: {pending_count} | privileged operation: {privilege}"
+            f"pending edits: {pending_count} | elevated requests: {elevated_count} | elevation: {privilege}"
         )
 
     def _refresh_state(self) -> None:
@@ -1608,7 +1631,7 @@ class AgentTextualApp(App):
             f"openai_flex (OpenAI only): {self.state.model_settings.openai_flex}\n"
             f"openai_reasoning_effort (OpenAI only): "
             f"{self.state.model_settings.openai_reasoning_effort or 'default'}\n"
-            f"privileged Hyper-V evidence: "
+            f"elevated commands: "
             f"{getattr(getattr(self.state, 'privileged_turn', None), 'status', 'disabled')}\n"
             f"chat_session: {session_text}"
         )
@@ -1754,19 +1777,32 @@ class AgentTextualApp(App):
 
     def _on_tool(self, message: str) -> None:
         self._append_log("tool", message)
+        if message.startswith(PRIVILEGED_APPROVAL_PREFIX):
+            self._from_any_thread(self._show_privileged_approval, message[len(PRIVILEGED_APPROVAL_PREFIX):])
+            return
         if message.startswith(PRIVILEGED_EVIDENCE_PREFIX):
             self._from_any_thread(
                 self._show_privileged_evidence_progress,
                 message[len(PRIVILEGED_EVIDENCE_PREFIX):],
             )
 
+    def _show_privileged_approval(self, identity: str) -> None:
+        gate = getattr(self.state, 'privileged_turn', None)
+        if gate is None or identity not in gate.pending() or identity in self._approval_notices:
+            return
+        self._approval_notices.add(identity)
+        self._append_chat('Approval', f'Administrator approval required — request #{identity}. '
+                          'Open \\pending (or F9) to review and accept or reject. Nothing has executed.')
+        if self._mode == 'pending_select':
+            self._render_pending_view()
+        self._refresh_header()
+
     def _show_privileged_evidence_progress(self, message: str) -> None:
         # The agent already runs in a Textual worker. These notifications are
         # display-only, not assistant answers or persisted conversation turns.
         if not self._privileged_evidence_progress:
-            notice = ('Inspecting a fresh image copy; live progress appears above the chat. '
-                      'No image acceptance or Gate A.' if 'inspection' in message.lower()
-                      else 'Collecting read-only Hyper-V evidence; live progress appears above the chat.')
+            notice = ('Privileged request progress appears above the chat. '
+                      'Progress is not proof of execution, completion, or cleanup.')
             self._append_chat('System', notice)
         self._privileged_evidence_progress = message
         progress = self.query_one('#privileged_progress', Static)

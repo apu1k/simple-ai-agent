@@ -85,7 +85,7 @@ def test_privileged_progress_updates_while_worker_waits_and_input_remains_respon
     asyncio.run(run_test())
 
 
-def test_inspection_setting_selects_distinct_operation_and_revokes_evidence():
+def test_unified_setting_arms_both_fixed_helpers_and_revokes_authority():
     messages = []
     gate = PrivilegedTurn()
     fake = SimpleNamespace(
@@ -94,14 +94,13 @@ def test_inspection_setting_selects_distinct_operation_and_revokes_evidence():
         _append_chat=lambda role, text: messages.append((role, text)),
     )
     gate.arm()
-    AgentTextualApp._set_model_setting(fake, "privileged_image_inspection", True)
-    assert gate.armed_operation == 'inspect_image_copy'
-    assert 'No finalization, publication or Gate A' in messages[-1][1]
+    AgentTextualApp._set_model_setting(fake, "elevated_commands", True)
+    assert gate.armed_operation == 'elevated_commands'
+    assert 'pending acceptance and UAC consent' in messages[-1][1]
     fake._processing = True
-    AgentTextualApp._set_model_setting(fake, "privileged_host_evidence", True)
-    assert gate.armed_operation == 'inspect_image_copy'
-    fake._processing = False
-    AgentTextualApp._set_model_setting(fake, "privileged_image_inspection", False)
+    AgentTextualApp._set_model_setting(fake, "elevated_commands", True)
+    assert gate.armed_operation == 'elevated_commands'
+    AgentTextualApp._set_model_setting(fake, "elevated_commands", False)
     assert gate.status == 'disabled'
 
 
@@ -114,7 +113,7 @@ def test_settings_command_search_and_tree_selection(tmp_path):
             await pilot.press("enter")
             await pilot.pause()
             assert app._mode == "model_settings_select"
-            assert len(app._visible_model_setting_matches) == 17
+            assert len(app._visible_model_setting_matches) == 15
 
             input_widget.value = "OpenAI Flex: Enabled"
             await pilot.pause()
@@ -236,28 +235,28 @@ def test_reasoning_search_tree_selection_and_default(tmp_path):
     asyncio.run(run_test())
 
 
-def test_privileged_evidence_setting_is_ui_only_and_volatile(tmp_path):
+def test_unified_elevation_setting_is_ui_only_volatile_and_revocable(tmp_path):
     async def run_test():
         app = make_app(tmp_path)
         async with app.run_test(size=(150, 40)) as pilot:
             assert app.state.privileged_turn.status == "disabled"
             app._handle_command("\\settings")
-            app.query_one("#input", Input).value = "Privileged Hyper-V evidence: Enable next turn"
+            app.query_one("#input", Input).value = "Elevated commands: Enable next turn"
             await pilot.pause()
-            assert app._visible_model_setting_matches == [("privileged_host_evidence", True)]
+            assert app._visible_model_setting_matches == [("elevated_commands", True)]
             await pilot.press("enter")
             await pilot.pause()
             assert app.state.privileged_turn.status == "armed for next turn"
             assert "armed for next turn" in app._state_text()
             assert "UAC consent" in app._messages[-1][1]
             app._processing = True
-            app._set_model_setting("privileged_host_evidence", False)
-            assert app.state.privileged_turn.status == "armed for next turn"
+            app._set_model_setting("elevated_commands", False)
+            assert app.state.privileged_turn.status == "disabled"
             app._processing = False
             app._handle_command("\\settings")
-            app._set_model_setting("privileged_host_evidence", False)
+            app._set_model_setting("elevated_commands", False)
             assert app.state.privileged_turn.status == "disabled"
-            assert not hasattr(app.state.model_settings, "privileged_host_evidence")
+            assert not hasattr(app.state.model_settings, "elevated_commands")
     asyncio.run(run_test())
 
 
@@ -284,7 +283,7 @@ def test_settings_cancel_ambiguous_search_and_processing_guard(tmp_path):
 
             app._processing = True
             app._handle_command("\\settings")
-            assert app._mode == "chat"
+            assert app._mode == "model_settings_select"
             app._set_model_setting("openai_flex", True)
             assert app.state.model_settings.openai_flex is False
             app._set_model_setting("openai_reasoning_effort", "high")
