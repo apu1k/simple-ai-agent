@@ -21,6 +21,17 @@ Windows UAC. Ordinary `run_shell_command` calls and the app remain unelevated.
 7. The result references a protected receipt. Another command requires another
    pending acceptance and UAC. There is no reusable elevated shell or batch approval.
 
+The pending review shows PowerShell scripts in a separate multiline block, not
+as a JSON string containing literal `\n` escapes. Scripts, hashes and metadata
+soft-wrap to the pane width; PageUp/PageDown scroll vertically to the end. Actual
+LF characters remain line breaks. Other non-printing characters (including tabs,
+CR, escape codes and invisible directional controls) are shown as `<U+XXXX>`
+markers so they cannot silently hide or reorder the displayed code. This is a
+review representation, not an edited script: the original frozen request JSON,
+script bytes, digest, acceptance binding and protected payload are unchanged.
+Fixed helper requests without a script retain their entire frozen JSON display.
+This UI-only correction needs an ordinary app restart, not helper reinstallation.
+
 While processing, settings are accessible to **disable** elevation; other setting
 changes remain blocked. Disable, turn exit, reset, shutdown or restart invalidate
 unused approvals and wake waiters. They cannot undo already launched changes or

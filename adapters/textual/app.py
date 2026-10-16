@@ -28,6 +28,7 @@ from textual.geometry import Region
 from textual.suggester import SuggestFromList
 from textual.widgets import Footer, Input, Static, Tree
 
+from adapters.textual.approval_review import render_privileged_review
 from core.tool_artifacts import is_internal_tool_artifact
 from core.tool_progress import (
     PRIVILEGED_APPROVAL_PREFIX, PRIVILEGED_EVIDENCE_PREFIX, approval_ui_context,
@@ -770,14 +771,7 @@ class AgentTextualApp(App):
             return
 
         if isinstance(edit, PendingPrivilege):
-            review = Text(
-                f'ADMINISTRATOR request #{edit.id}\n'
-                'Enter accepts this exact request and requests Windows UAC. Delete rejects.\n'
-                'Not sandboxed. Referenced dependencies may change. No rollback or automatic retry.\n'
-                f'Review SHA-256: {edit.review_sha256}\n\n', style='bold #E3A35C',
-            )
-            review.append(edit.review_json)
-            self.query_one('#pending_diff', Static).update(review)
+            self.query_one('#pending_diff', Static).update(render_privileged_review(edit))
             self.query_one('#pending_diff_scroll', VerticalScroll).scroll_home(animate=False)
             return
 
