@@ -136,3 +136,34 @@ stop and review failures rather than rerun, delete, or repair permissions.
 Code tests use fake operations and ordinary unelevated native processes. They do
 not establish live UAC, protected-install ACLs, or a successful Hyper-V inspection.
 The preserved first failed inspection and consumed claim remain untouched.
+
+## First deployment finding: empty file DACLs
+
+After deployment of `d53916b`, the operator reported `status=installed` with
+`launch_performed=false`. Unelevated read-back found the expected directory ACEs,
+but access to `helper.ps1` and `policy.json` was denied. The operator's subsequent
+Administrator read-only query reported both as Administrators-owned with a
+protected empty DACL (`O:BA...D:P`, with no ACEs). The app's launcher validation
+fails closed before approval/UAC. The request inbox and receipts directory were
+observed empty; no general elevated command or live approval-flow pass is claimed.
+
+Cause: passing an owner-only `FileSecurity` to the create-new `FileStream` does not
+supply the parent's expected access rules. The helper's receipt/snapshot writer
+used the same construction and requires the same correction. The code fix gives
+files an explicit protected DACL: SYSTEM and Administrators full control, the
+pinned operator read/execute only. Each write checks owner/group/DACL read-back
+before reporting success or proceeding. It does not grant the operator write
+access or change the separate writable-inbox policy.
+
+The regression exercises these exact function definitions and the native file
+creation overload in disposable unelevated fixtures. It checks the production
+Administrators owner/group in memory, then substitutes the current user as
+owner/group solely for fixture creation; the production DACL is unchanged. This
+is not live validation of Administrator-owned installation or UAC.
+
+The code fix does not modify the existing protected installation. Do not rerun
+the new-install-only installer, delete its directory, or perform ad-hoc ACL repair.
+Existing-install recovery needs a separately reviewed, hash-pinned procedure and
+authorization. It must cover the corrected helper and its policy digest as well
+as file access; merely unlocking the two old files leaves the receipt-writer bug.
+Preserve the existing installation and all Hyper-V helpers, claims and evidence.

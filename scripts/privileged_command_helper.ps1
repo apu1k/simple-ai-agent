@@ -108,16 +108,28 @@ if (@(Compare-Object $fields @($request.PSObject.Properties.Name)).Count -ne 0 -
     $request.reason.Length -gt 2000 -or $request.cwd -isnot [string]) { throw 'Invalid approved request schema' }
 Check-Local $request.cwd
 if (-not [IO.Directory]::Exists($request.cwd)) { throw 'Working directory missing' }
-$admins = New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')
-$fileSecurity = New-Object Security.AccessControl.FileSecurity
-$fileSecurity.SetOwner($admins)
-# Children inherit the protected receipt directory DACL at creation.
+function New-ProtectedFileSecurity([string]$OperatorSid) {
+    if ($OperatorSid -cnotmatch '^S-1-5-21-\d+-\d+-\d+-\d+$') { throw 'Invalid operator SID' }
+    $acl = New-Object Security.AccessControl.FileSecurity
+    # Owner-only FileSecurity creates a protected EMPTY DACL, not inherited access.
+    $acl.SetSecurityDescriptorSddlForm(
+        ('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;' + $OperatorSid + ')'))
+    return $acl
+}
+$fileSecurity = New-ProtectedFileSecurity $identity.User.Value
+# Give every claim, snapshot, payload and result its explicit protected file DACL.
 function Write-New([string]$Name,[byte[]]$Data) {
     $path = [IO.Path]::Combine($receipts,$Name)
     $out = New-Object IO.FileStream($path,[IO.FileMode]::CreateNew,
         [Security.AccessControl.FileSystemRights]::Write,[IO.FileShare]::Read,4096,[IO.FileOptions]::None,$fileSecurity)
     try { $out.Write($Data,0,$Data.Length); $out.Flush($true) }
     finally { $out.Dispose() }
+    $sections = [Security.AccessControl.AccessControlSections]'Owner,Group,Access'
+    $actual = Get-Acl -LiteralPath $path -ErrorAction Stop
+    if ($actual.GetSecurityDescriptorSddlForm($sections) -cne
+        $fileSecurity.GetSecurityDescriptorSddlForm($sections)) {
+        throw 'Created file security differs from the protected descriptor; retain for review'
+    }
 }
 function Write-Receipt([string]$Name,[object]$Value) {
     $data = $utf8.GetBytes(($Value | ConvertTo-Json -Depth 8 -Compress))

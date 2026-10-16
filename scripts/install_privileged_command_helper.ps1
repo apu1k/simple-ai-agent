@@ -65,13 +65,27 @@ $directory = New-Object IO.DirectoryInfo($root)
 $directory.Create($security)
 $receipts = New-Object IO.DirectoryInfo([IO.Path]::Combine($root,'receipts'))
 $receipts.Create($security)
-$fileSecurity = New-Object Security.AccessControl.FileSecurity
-$fileSecurity.SetOwner($admins)
+function New-ProtectedFileSecurity([string]$OperatorSid) {
+    if ($OperatorSid -cnotmatch '^S-1-5-21-\d+-\d+-\d+-\d+$') { throw 'Invalid operator SID' }
+    $acl = New-Object Security.AccessControl.FileSecurity
+    # Owner-only FileSecurity creates a protected EMPTY DACL, not inherited access.
+    $acl.SetSecurityDescriptorSddlForm(
+        ('O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FRFX;;;' + $OperatorSid + ')'))
+    return $acl
+}
+$fileSecurity = New-ProtectedFileSecurity $OperatorSid
 function Write-New([string]$Name,[byte[]]$Data) {
-    $out = New-Object IO.FileStream(([IO.Path]::Combine($root,$Name)),[IO.FileMode]::CreateNew,
+    $path = [IO.Path]::Combine($root,$Name)
+    $out = New-Object IO.FileStream($path,[IO.FileMode]::CreateNew,
         [Security.AccessControl.FileSystemRights]::Write,[IO.FileShare]::None,4096,[IO.FileOptions]::None,$fileSecurity)
     try { $out.Write($Data,0,$Data.Length); $out.Flush($true) }
     finally { $out.Dispose() }
+    $sections = [Security.AccessControl.AccessControlSections]'Owner,Group,Access'
+    $actual = Get-Acl -LiteralPath $path -ErrorAction Stop
+    if ($actual.GetSecurityDescriptorSddlForm($sections) -cne
+        $fileSecurity.GetSecurityDescriptorSddlForm($sections)) {
+        throw 'Created file security differs from the protected descriptor; retain for review'
+    }
 }
 Write-New 'helper.ps1' $bytes
 $policy = @{version=1; operator_sid=$OperatorSid; helper_sha256=$digest; max_timeout=60}
