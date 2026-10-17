@@ -119,7 +119,8 @@ $receipts = New-Object IO.DirectoryInfo([IO.Path]::Combine($root, 'receipts'))
 $receipts.Create($security)
 $policy = @{ version = 1; operator_sid = $OperatorSid; source = $SourceDisk;
     recovery_iso = $RecoveryIso; recovery_iso_sha256 = $RecoveryIsoSha256;
-    workspace = $Workspace; helper_sha256 = $HelperSha256; collector_sha256 = $CollectorSha256 }
+    workspace = $Workspace; helper_sha256 = $HelperSha256; collector_sha256 = $CollectorSha256;
+    max_execution_seconds = 900 }
 $policyPath = [IO.Path]::Combine($root, 'policy.json')
 Write-New $policyPath ([Text.Encoding]::UTF8.GetBytes(($policy | ConvertTo-Json -Compress)))
 $acl = Get-Acl -LiteralPath $policyPath

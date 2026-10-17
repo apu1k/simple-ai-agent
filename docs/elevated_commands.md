@@ -47,11 +47,21 @@ PowerShell script through the fixed native x64 system Windows PowerShell, with n
 profile or interactive stdin. The current working directory is frozen into the
 request. Local canonical directories without reparse points are required.
 
-The maximum execution timeout is **60 seconds**, derived in Python as twice the
-ordinary shell tool's 30-second maximum. Approval/UAC waiting is separate, subject
-to the turn deadline. The protected policy independently caps execution at 60
-seconds. A future ordinary-limit change requires a separately reviewed launcher
-policy/code change; it must not silently increase installed authority.
+The general tool accepts an explicitly selected execution timeout of **1–900
+seconds (15 minutes)**, defaulting to 30 seconds. This is independent of the
+ordinary unelevated shell's unchanged 30-second maximum. Approval/UAC waiting is
+separate, subject to the 30-minute turn authorization deadline; that deadline is
+NOT an execution allowance. At worker launch the protected helper uses the smaller
+of the requested timeout and remaining authorization time. Its policy independently
+caps requests at 900 seconds and its native watchdog rejects zero or more than
+900000 milliseconds before creating a process.
+
+A retained, hash-verified general installation with `max_timeout=60` remains usable
+only for requests up to 60 seconds. The client refuses longer requests before
+pending/UAC; applying this source does not widen installed authority. Newly
+reviewed installations use `max_timeout=900`. Existing installation replacement
+requires a separately reviewed, hash-pinned deployment preserving prior evidence;
+do not rerun the new-install-only installer or simply edit its policy.
 
 Scripts are at most 32768 UTF-8 bytes; the whole review is capped at 65536 bytes.
 The script snapshot is installed into the protected receipt directory with a UTF-8
@@ -70,10 +80,26 @@ passing them accidentally; approved Administrator code can still access account
 data and is not sandboxed.
 
 The fixed evidence/inspection tools use the same setting and pending approval
-interface but retain their separately installed policy, operation-specific scope,
-longer workflow deadlines, and one-attempt constraints. This change does not reset
-the consumed inspection claim or redeploy either old helper. A single turn allows
-at most one attempt of each fixed operation, even if rejected or cancelled.
+interface, but are NOT general-script calls. Historically their native workers
+could use the remaining 30-minute turn budget: the general tool's old 60-second
+limit never applied to them. This explains why a multi-minute inspection could
+run without bypassing the general launcher.
+
+The updated fixed helpers instead cap complete worker execution (including
+hashing, media preparation and descendant processes) at **900 seconds**, shortened
+by approval expiry. Their protected policies must explicitly contain the integer
+`max_execution_seconds=900`; clients refuse older/missing policies before pending
+or UAC rather than silently use their longer deadlines. Pending review shows this
+execution cap separately from the authorization deadline. Both the launch site
+and native watchdog enforce the cap. The inspection worker's inner PowerShell
+command limit is also 900 seconds, not the remaining turn budget.
+
+This change does not deploy a helper, extend an approval, reset a consumed claim
+or authorize another inspection. Existing protected installations/receipts must be
+preserved through separately approved deployment/recovery review. In particular,
+a consumed V2 must not be replaced/reinstalled merely to evade its claim. A single
+turn allows at most one attempt of each fixed operation, even if rejected or
+cancelled.
 
 ## Trust and failure boundaries
 
@@ -92,8 +118,16 @@ Protected receipts resist ordinary unelevated writes, not approved malicious
 Administrator code. Do not describe them as universally tamper-proof.
 
 The worker starts suspended, is assigned to a kill-on-close Windows Job, then
-resumes. A timeout kills job-contained processes where possible and returns
-`timeout_outcome_unknown`. Services, Hyper-V VMs, scheduled tasks, external work,
+resumes. A native wait enforces its execution budget independently of the app's
+progress/wait loop. At expiry the watchdog requests termination of the contained
+process tree; it does not merely stop waiting. Termination observation can add up
+to five seconds and general output draining up to another five seconds, plus
+launcher/receipt overhead. These are not extra worker execution allowances.
+The general tool returns `timeout_outcome_unknown`; fixed inspection remains
+blocked/UNKNOWN and refuses partial success facts after timeout. Failed native
+waits must not be misreported as observed timeout termination.
+
+Services, Hyper-V VMs, scheduled tasks, external work,
 and already written changes are not undone or proven stopped. Process loss,
 missing/malformed receipts, or incomplete observation remain UNKNOWN. No automatic
 retry, rollback, claim release, repair or broad cleanup is supplied.

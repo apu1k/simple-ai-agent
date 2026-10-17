@@ -19,9 +19,9 @@ from runtime.privileged_host import (
 )
 from runtime.privileged_turn import PendingPrivilege, PrivilegedClaim, PrivilegedTurn
 from night_shifts.ubuntu_preparation_control import _current_user_sid
-from tools.system.shell import MAX_TIMEOUT as ORDINARY_MAX_TIMEOUT
-
-MAX_TIMEOUT = 2 * ORDINARY_MAX_TIMEOUT
+# Independent Administrator execution ceiling, not derived from the shell tool.
+MAX_TIMEOUT = 15 * 60
+LEGACY_MAX_TIMEOUT = 60
 MAX_SCRIPT_BYTES = 32768
 MAX_OUTPUT_BYTES = 50000
 HELPER_DIRECTORY = 'AiAgentElevatedCommands'
@@ -58,7 +58,8 @@ def load_launcher() -> tuple[Path, Path, dict[str, Any]]:
     if (set(policy) != {'version', 'operator_sid', 'helper_sha256', 'max_timeout'}
             or type(policy['version']) is not int or policy['version'] != 1
             or policy['operator_sid'] != _current_user_sid()
-            or type(policy['max_timeout']) is not int or policy['max_timeout'] != MAX_TIMEOUT
+            or type(policy['max_timeout']) is not int
+            or policy['max_timeout'] not in (LEGACY_MAX_TIMEOUT, MAX_TIMEOUT)
             or not isinstance(policy['helper_sha256'], str)
             or not re.fullmatch('[0-9a-f]{64}', policy['helper_sha256'])):
         raise PrivilegedHostError('Unexpected elevated launcher policy')
@@ -113,6 +114,9 @@ def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: st
     validate_script(script, timeout, reason)
     local_path(cwd, directory=True)
     root, powershell, policy = load_launcher()
+    # Retained 60-second installations stay usable but never inherit wider authority.
+    if timeout > policy['max_timeout']:
+        raise PrivilegedHostError('Requested timeout exceeds installed launcher policy; reviewed deployment required')
     payload = dict(version=1, request_id=claim.request_id, operation=claim.operation,
                    deadline_unix=int(claim.deadline_unix), timeout=timeout, script=script,
                    cwd=cwd, reason=reason, operator_sid=policy['operator_sid'],

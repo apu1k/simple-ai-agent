@@ -29,7 +29,7 @@ def policy():
              'payload/night_shifts/inspection_worker.py': 'b' * 64,
              'payload/night_shifts/backends/hyperv_scripts/maintain_image_copy.ps1': 'b' * 64}
     files.update({f'payload/pycdlib/file{index}.py': 'b' * 64 for index in range(16)})
-    return dict(version=1, operation=INSPECTION_OPERATION, operator_sid=SID,
+    return dict(version=1, operation=INSPECTION_OPERATION, operator_sid=SID, max_execution_seconds=900,
                 source=r'D:\NightShift\source.vhdx', source_sha256='c' * 64,
                 recovery_iso=r'D:\NightShift\live.iso', recovery_iso_sha256='d' * 64,
                 workspace=r'D:\NightShift\inspection', approved_until_unix=int(time.time()) + 3600,
@@ -185,6 +185,7 @@ def test_worker_propagates_only_typed_failure_evidence_without_running_maintenan
     assert worker.main(['--request-id', ID, '--deadline', str(int(time.time()) + 1800)]) == 2
     assert len(calls) == len(saved) == 1
     assert calls[0][0].mode == 'inspect' and calls[0][0].artifacts == {}
+    assert calls[0][0].command_timeout_seconds == 900
     assert calls[0][1]['failure_receipt_path'] == tmp_path / 'receipts' / (ID + '.failure.json')
     facts = saved[0][1]
     assert facts['status'] == 'blocked_or_outcome_unknown' and facts['accepted'] is False

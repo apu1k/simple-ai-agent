@@ -26,7 +26,8 @@ ADMINS = 'S-1-5-32-544'
 TRUSTED_INSTALLER = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
 TRUSTED = frozenset((SYSTEM, ADMINS, TRUSTED_INSTALLER))
 FIELDS = frozenset(('version', 'operator_sid', 'source', 'recovery_iso',
-                    'recovery_iso_sha256', 'workspace', 'helper_sha256', 'collector_sha256'))
+                    'recovery_iso_sha256', 'workspace', 'helper_sha256', 'collector_sha256',
+                    'max_execution_seconds'))
 MAX_RECEIPT_BYTES = 65536
 
 
@@ -98,6 +99,8 @@ def load_policy() -> tuple[Path, Path, dict[str, Any]]:
     policy = _bounded_json(root / 'policy.json')
     if set(policy) != FIELDS or type(policy['version']) is not int or policy['version'] != 1:
         raise PrivilegedHostError('Unexpected installed policy schema')
+    if type(policy['max_execution_seconds']) is not int or policy['max_execution_seconds'] != 900:
+        raise PrivilegedHostError('Reviewed 900-second evidence deployment required')
     if policy['operator_sid'] != _current_user_sid():
         raise PrivilegedHostError('Helper installed for a different operator')
     for field in ('source', 'recovery_iso', 'workspace'):

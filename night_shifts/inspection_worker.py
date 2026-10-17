@@ -87,7 +87,8 @@ def main(argv: list[str] | None = None) -> int:
     policy = json.loads((root / 'policy.json').read_bytes())
     remaining = min(args.deadline, policy['approved_until_unix']) - time.time()
     # Never start a VM with an already exhausted host execution budget.
-    if not 900 <= remaining <= 1800 or policy['operation'] != 'inspect_image_copy':
+    if (not 900 <= remaining <= 1800 or policy['operation'] != 'inspect_image_copy'
+            or type(policy.get('max_execution_seconds')) is not int or policy['max_execution_seconds'] != 900):
         raise ValueError('inspection deadline or operation refused')
     sys.path.insert(0, str(root / 'payload'))  # Protected fixed assets only; -I -S -B at launch.
     from night_shifts.image_finalization import FinalizationConfig, ImageMaintenanceError, run_image_maintenance
@@ -105,7 +106,9 @@ def main(argv: list[str] | None = None) -> int:
     config = FinalizationConfig(Path(policy['source']), policy['source_sha256'],
                                 Path(policy['recovery_iso']), policy['recovery_iso_sha256'],
                                 Path(policy['workspace']), mode='inspect',
-                                command_timeout_seconds=max(900, remaining - 10))
+                                # Independent inner ceiling; the supervisor's native job watchdog
+                                # also caps the complete worker (including hashing/media) at 900s.
+                                command_timeout_seconds=900)
     facts: dict = {'version': 1, 'request_id': args.request_id, 'operation': 'inspect_image_copy',
                    'status': 'blocked_or_outcome_unknown', 'accepted': False, 'gate_a': 'unrun'}
     code = 2

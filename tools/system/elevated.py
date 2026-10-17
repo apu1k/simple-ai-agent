@@ -14,7 +14,7 @@ from tools._base import tool
         'Requires Elevated commands: Enable next turn, per-request acceptance in the '
         'Textual pending screen, a separately installed protected launcher, and UAC. '
         'The app and ordinary shell tool remain unelevated. Head agent only. '
-        f'Execution timeout is 1-{MAX_TIMEOUT} seconds (twice ordinary shell maximum); '
+        f'Execution timeout is 1-{MAX_TIMEOUT} seconds (15-minute maximum, installed policy may be lower); '
         'approval waiting is separate and expires with the turn. Script is shown verbatim, '
         'then hash-bound to protected execution. Arbitrary scripts/dependencies are NOT '
         'sandboxed. Timeout does not undo changes or prove external resources stopped. '

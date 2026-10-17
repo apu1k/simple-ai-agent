@@ -20,13 +20,15 @@ DIRECTORY = 'AiAgentHyperVInspectionV2'
 FIELDS = frozenset(('version', 'operation', 'operator_sid', 'source', 'source_sha256',
                     'recovery_iso', 'recovery_iso_sha256', 'workspace', 'approved_until_unix',
                     'iso_provenance_reviewed', 'evidence_preserved', 'files',
-                    'bundle_sha256', 'python_archive_sha256'))
+                    'bundle_sha256', 'python_archive_sha256', 'max_execution_seconds'))
 DIGEST = re.compile('[0-9a-f]{64}')
 
 
 def validate_policy(policy: dict[str, Any]) -> None:
     if set(policy) != FIELDS or type(policy['version']) is not int or policy['version'] != 1:
         raise PrivilegedHostError('Unexpected inspection policy schema')
+    if type(policy['max_execution_seconds']) is not int or policy['max_execution_seconds'] != 900:
+        raise PrivilegedHostError('Reviewed 900-second inspection deployment required')
     if (policy['operation'] != INSPECTION_OPERATION or policy['iso_provenance_reviewed'] is not True
             or policy['evidence_preserved'] is not True):
         raise PrivilegedHostError('Separate inspection approvals missing')

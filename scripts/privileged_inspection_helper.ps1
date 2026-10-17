@@ -49,7 +49,8 @@ Assert-Protected (Join-Path $root 'policy.json')
 $policyPath = Join-Path $root 'policy.json'
 if ((Get-Item -LiteralPath $policyPath).Length -gt 65536) { throw 'Oversized policy' }
 $policy = [IO.File]::ReadAllText($policyPath) | ConvertFrom-Json
-if ($policy.version -ne 1 -or $policy.operation -cne 'inspect_image_copy' -or
+if ($policy.version -ne 1 -or $policy.max_execution_seconds -isnot [int] -or
+    $policy.max_execution_seconds -ne 900 -or $policy.operation -cne 'inspect_image_copy' -or
     $identity.User.Value -cne $policy.operator_sid -or
     $policy.iso_provenance_reviewed -ne $true -or $policy.evidence_preserved -ne $true) {
     throw 'Installed approval or same-account UAC identity refused'
@@ -89,7 +90,8 @@ function Write-NewJson([string]$Path, [object]$Value) {
 $policyDigest = (Get-FileHash -LiteralPath $policyPath -Algorithm SHA256).Hash.ToLowerInvariant()
 Write-NewJson (Join-Path $receipts ($RequestId+'.start.json')) @{
     version=1; request_id=$RequestId; operation='inspect_image_copy'; policy_sha256=$policyDigest;
-    started_at_utc=[DateTime]::UtcNow.ToString('o'); deadline_unix=$DeadlineUnix; status='started'
+    started_at_utc=[DateTime]::UtcNow.ToString('o'); deadline_unix=$DeadlineUnix;
+    max_execution_seconds=900; status='started'
 }
 # Installation-level permanent claim: exactly one inspection attempt, even on failure.
 # No tool can reset this claim; later recovery/deployment needs separate review.
@@ -133,6 +135,7 @@ public static class InspectionWatchdog {
     [DllImport("kernel32.dll")] static extern bool TerminateJobObject(IntPtr j,uint c);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
     public static int Run(string exe,string args,string cwd,uint ms) {
+        if(ms==0 || ms>900000) throw new ArgumentOutOfRangeException("ms");
         IntPtr job=CreateJobObject(IntPtr.Zero,null); ProcessInfo p=new ProcessInfo();
         if(job==IntPtr.Zero) throw new Exception("Cannot create inspection job");
         try {
@@ -146,11 +149,12 @@ public static class InspectionWatchdog {
             }
             if(ResumeThread(p.Thread)==0xffffffff) throw new Exception("Cannot resume worker");
             uint wait=WaitForSingleObject(p.Process,ms);
-            if(wait!=0) {
-                TerminateJobObject(job,2); WaitForSingleObject(p.Process,5000);
+            if(wait==258) {
+                if(!TerminateJobObject(job,124) || WaitForSingleObject(p.Process,5000)!=0)
+                    throw new Exception("Worker termination unknown");
                 return 124; // This terminates processes, NOT the Hyper-V VM.
             }
-            uint code; if(!GetExitCodeProcess(p.Process,out code)) throw new Exception("Unknown worker result");
+            uint code; if(wait!=0 || !GetExitCodeProcess(p.Process,out code)) throw new Exception("Unknown worker result");
             return (int)code;
         } finally {
             if(p.Thread!=IntPtr.Zero) CloseHandle(p.Thread);
@@ -162,7 +166,11 @@ public static class InspectionWatchdog {
 '@
     $remaining = [Math]::Min($DeadlineUnix, [long]$policy.approved_until_unix) - [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     if ($remaining -lt 900) { throw 'Execution budget expired before launch' }
-    $workerExit = [InspectionWatchdog]::Run($python, $arguments, $receipts, [uint32]($remaining*1000))
+    $workerExit = [InspectionWatchdog]::Run($python, $arguments, $receipts, [uint32]([Math]::Min($remaining,900)*1000))
+    if ($workerExit -eq 124) {
+        # Do not accept partial success facts after a watchdog timeout.
+        throw 'Inspection worker timed out; VM outcome unknown'
+    }
     $factsPath = Join-Path $receipts ($RequestId+'.facts.json')
     Assert-Protected $factsPath
     if ((Get-Item -LiteralPath $factsPath).Length -gt 65536) { throw 'Oversized worker result' }
@@ -174,7 +182,7 @@ public static class InspectionWatchdog {
 } catch { $status='blocked_or_outcome_unknown' }
 Write-NewJson (Join-Path $receipts ($RequestId+'.result.json')) @{
     version=1; request_id=$RequestId; operation='inspect_image_copy'; policy_sha256=$policyDigest;
-    status=$status; result=$facts; accepted=$false; gate_a='unrun';
+    status=$status; result=$facts; accepted=$false; gate_a='unrun'; max_execution_seconds=900;
     finished_at_utc=[DateTime]::UtcNow.ToString('o')
 }
 exit $exitCode

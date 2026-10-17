@@ -27,8 +27,9 @@ Actual execution rechecks inputs, source references OFF, unattached parentless
 copy is attached to one new generation-2 recovery VM: 2 CPUs, fixed 2 GiB RAM,
 no network adapter, GSI disabled, no checkpoints, Linux Secure Boot and ISO-only
 boot. COM1's connected object owner/DACL is checked before the handshake; broader
-principals/unsupported ACEs refuse without ACL repair. This native policy is NOT
-live-validated and may block on the host; review actual evidence instead of relaxing it.
+principals/unsupported ACEs refuse without ACL repair. This native policy has
+failed a live V2 check (`principal_rejected`) and has not passed live validation;
+review actual SID/access-mask evidence instead of relaxing it blindly.
 
 Guest inspection requires the live overlay/NoCloud identity, loopback-only network
 and fixed partition layout, sets block devices read-only, mounts ext4 `ro,noload`,
@@ -124,6 +125,18 @@ installation remains unchanged.
 
 ## Timeout, failure and recovery boundary
 
+The updated protected policy requires integer `max_execution_seconds=900`. The
+client refuses older/missing policies before approval/UAC. The native supervisor
+caps the complete worker at 900 seconds (or earlier approval expiry), independently
+of the 30-minute authorization window. The inspection worker's inner command is
+also capped at 900 seconds. The native watchdog refuses zero or more than 900000
+milliseconds and distinguishes native wait failure from observed timeout. On
+timeout no partial success facts are accepted. Termination observation/receipt
+writing may add bounded response overhead; they do not extend worker execution.
+These source changes are NOT a protected deployment or a new inspection grant.
+Do not overwrite the consumed V2, reset its claim, extend its original expiry or
+increment an installation name merely to retry.
+
 The worker starts suspended inside a kill-on-close Windows Job before resuming;
 its Python and PowerShell descendants are process-bounded. **Hyper-V VMs are not
 Job children.** Window closure, app failure, watchdog expiry or killed PowerShell
@@ -200,6 +213,42 @@ permission or Gate A. No VM lifecycle operation, mount, ACL repair, source mutat
 or claim reset occurred. The V1 deployment's 69 pinned files matched, with no extra
 payload/runtime files; its claim remains consumed and approval expired. Preparing
 V2 in the repository does not install or launch it.
+
+## Retained V2 live attempt — 2026-10-17
+
+Request `b49f709675e24b07a143f4f0f6e6491c` created maintenance identity
+`40ac18e14aec40a59598b00f75b648fe` and VM GUID
+`91eb0537-4519-494d-b80e-6e1aa5f40de6`. Protected receipts under
+`C:\Program Files\AiAgentHyperVInspectionV2\receipts` record start at
+`2026-10-17T07:06:02.7438499Z` and completion at
+`2026-10-17T07:11:18.4327321Z` with `CHANNEL / acl_check / principal_rejected`,
+no numeric Windows error and `stop_observation=off_observed`. The result remains
+`blocked_or_outcome_unknown`, accepted=false, Gate A unrun, retry unauthorized.
+
+The deployed code rejects this label only when an access-allowed COM1 ACE has a
+SID outside SYSTEM, Administrators, the current operator and that exact VM SID.
+Connection/security parsing/VM-SID resolution and owner/nonempty-DACL checks
+precede it; the controller handshake follows it and was not sent. This does not
+identify the rejected SID or its access mask: neither is retained in this failure
+schema. It does not establish a guest-image defect or safe pipe permissions.
+
+The failure handler observed the exact-owned VM Off at read-back. This is not a
+fresh current-state check, copy-detachment verification, VM removal, guest
+inspection/unmount or final source-hash verification. Preserve the V2 installation,
+consumed claim, VM/config/copy/media, manifest and receipts. Its retained workspace
+is `D:\NightShift\image-inspect-v2`. Do not reuse or clean it automatically.
+
+Next diagnostic review must obtain the actual rejected SID and access rights,
+assess whether the pipe is unsafe or the allowlist is incomplete, and preserve
+bounded exact-resource evidence without permission repair. An Off VM may no
+longer expose its COM1 pipe; any diagnostic VM start needs separate authorization.
+Do not substitute guessed SIDs, broaden the allowlist blindly, or redeploy/retry
+inspection merely to discover the same failure.
+
+This multi-minute run used the fixed inspection supervisor, whose then-installed
+watchdog allowed the remaining turn budget. The general-script launcher's old
+60-second cap was not its limit. The proposed 900-second caps in this checkout
+are not deployed by committing/restarting the app.
 
 ## Validation boundary
 

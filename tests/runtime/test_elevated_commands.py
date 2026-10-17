@@ -90,10 +90,12 @@ def test_headless_call_does_not_wait_or_elevate():
         client.await_approval(permit, permit.claim(ELEVATED_OPERATION), {'script': 'fixture'})
 
 
-def test_60_second_limit_derived_from_ordinary_tool_and_worker_denial():
-    assert client.MAX_TIMEOUT == 2 * ORDINARY_MAX_TIMEOUT == 60
-    client.validate_script('exit 0', 60, 'fixture')
-    for timeout in (0, 61, True, '60', 1.5):
+def test_15_minute_limit_independent_of_ordinary_tool_and_worker_denial():
+    assert client.MAX_TIMEOUT == 900
+    assert ORDINARY_MAX_TIMEOUT == 30
+    client.validate_script('exit 0', 1, 'fixture')
+    client.validate_script('exit 0', 900, 'fixture')
+    for timeout in (0, 901, True, '900', 1.5):
         with pytest.raises(ValueError):
             client.validate_script('exit 0', timeout, 'fixture')
     permit = gate()
@@ -109,7 +111,7 @@ def test_script_snapshot_approval_precedes_uac_and_binds_receipt(monkeypatch, tm
     permit = gate()
     (tmp_path / 'requests').mkdir()
     (tmp_path / 'receipts').mkdir()
-    policy = {'operator_sid': 'fixture', 'helper_sha256': 'f' * 64}
+    policy = {'operator_sid': 'fixture', 'helper_sha256': 'f' * 64, 'max_timeout': 900}
     monkeypatch.setattr(client, 'local_path', lambda *args, **kwargs: tmp_path)
     monkeypatch.setattr(client, 'load_launcher', lambda: (tmp_path, tmp_path / 'powershell.exe', copy.deepcopy(policy)))
     elevated = []
@@ -141,8 +143,8 @@ def test_script_snapshot_approval_precedes_uac_and_binds_receipt(monkeypatch, tm
 def test_installed_policy_change_after_acceptance_blocks_launch(monkeypatch, tmp_path):
     permit = gate()
     monkeypatch.setattr(client, 'local_path', lambda *args, **kwargs: tmp_path)
-    policies = iter(({'operator_sid': 'x', 'helper_sha256': 'f' * 64},
-                     {'operator_sid': 'x', 'helper_sha256': 'a' * 64}))
+    policies = iter(({'operator_sid': 'x', 'helper_sha256': 'f' * 64, 'max_timeout': 900},
+                     {'operator_sid': 'x', 'helper_sha256': 'a' * 64, 'max_timeout': 900}))
     monkeypatch.setattr(client, 'load_launcher', lambda: (tmp_path, tmp_path / 'ps.exe', next(policies)))
     monkeypatch.setattr(client, '_elevate', lambda *args, **kwargs: pytest.fail('must not elevate'))
     with permit.turn('head'), approval_ui_context(), tool_progress_listener(approve(permit)):
@@ -154,7 +156,7 @@ def test_tool_disabled_and_bad_timeout_do_not_run(monkeypatch, tmp_path):
     monkeypatch.setattr('tools.system.elevated.run_approved_script', lambda *args: pytest.fail('must not run'))
     state = SimpleNamespace(privileged_turn=PrivilegedTurn(), cwd=tmp_path)
     assert run_elevated_shell_command(state, 'exit 0', 'fixture').startswith('Error: Enable')
-    assert run_elevated_shell_command(state, 'exit 0', 'fixture', 61).startswith('Error: Timeout')
+    assert run_elevated_shell_command(state, 'exit 0', 'fixture', 901).startswith('Error: Timeout')
 
 
 def quote(value):

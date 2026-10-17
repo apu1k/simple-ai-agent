@@ -16,6 +16,8 @@ from tools._base import tool
         'a protected helper installation, and Windows UAC consent. One attempt only, '
         'including cancellation/failure. No inputs, arbitrary commands, VM launch, '
         'mounting, permission repair or lifecycle operations are accepted. '
+        'The protected worker execution cap is 900 seconds (15 minutes). '
+        'Older deployments without this policy refuse before UAC. '
         'Returns bounded evidence and the protected execution receipt path. '
         'run_shell_command is not elevated by this setting.'
     ),
@@ -36,8 +38,9 @@ def collect_privileged_host_evidence(state) -> str:
         request, decision = await_approval(gate, claim, dict(
             operation=claim.operation, request_id=claim.request_id,
             helper=str(root / 'helper.ps1'), executable=str(powershell),
-            deadline_unix=int(claim.deadline_unix), policy=policy,
-            scope='Fixed read-only host evidence; no VM lifecycle or arbitrary commands.',
+            deadline_unix=int(claim.deadline_unix), max_execution_seconds=policy['max_execution_seconds'], policy=policy,
+            scope='Fixed read-only host evidence; no VM lifecycle or arbitrary commands. '
+                  'Protected worker execution cap: 900 seconds; approval expiry may shorten it.',
         ))
         if decision != 'accepted':
             return json.dumps(dict(status=decision, executed=False, request_id=claim.request_id,

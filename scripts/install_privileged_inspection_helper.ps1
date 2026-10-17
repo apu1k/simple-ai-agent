@@ -165,7 +165,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Interpreter check failed; retain partial setup
 $policy=@{ version=1; operation='inspect_image_copy'; operator_sid=$OperatorSid;
     source=$SourceDisk; source_sha256=$SourceSha256; recovery_iso=$RecoveryIso;
     recovery_iso_sha256=$RecoveryIsoSha256; workspace=$Workspace; approved_until_unix=$expiry;
-    iso_provenance_reviewed=$true; evidence_preserved=$true; files=$files;
+    iso_provenance_reviewed=$true; evidence_preserved=$true; files=$files; max_execution_seconds=900;
     bundle_sha256=$BundleSha256; python_archive_sha256=$PythonArchiveSha256 }
 Write-Protected (Join-Path $root 'policy.json') ([Text.Encoding]::UTF8.GetBytes(($policy | ConvertTo-Json -Depth 6 -Compress)))
 @{status='installed';root=$root;operation='inspect_image_copy';launch_performed=$false;

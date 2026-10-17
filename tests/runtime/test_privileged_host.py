@@ -28,7 +28,7 @@ def install(tmp_path, monkeypatch):
     iso.write_bytes(b'fixture iso')
     workspace = tmp_path / 'workspace'
     workspace.mkdir()
-    policy = {'version': 1, 'operator_sid': 'operator', 'source': str(source),
+    policy = {'version': 1, 'operator_sid': 'operator', 'source': str(source), 'max_execution_seconds': 900,
               'recovery_iso': str(iso), 'workspace': str(workspace),
               'recovery_iso_sha256': hashlib.sha256(iso.read_bytes()).hexdigest(),
               'helper_sha256': hashlib.sha256((root / 'helper.ps1').read_bytes()).hexdigest(),

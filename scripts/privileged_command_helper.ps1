@@ -70,7 +70,7 @@ foreach ($path in @($root,$receipts,$PSCommandPath,([IO.Path]::Combine($root,'po
 }
 $policy = [IO.File]::ReadAllText([IO.Path]::Combine($root,'policy.json')) | ConvertFrom-Json
 $helperHash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($policy.version -ne 1 -or $policy.max_timeout -ne 60 -or
+if ($policy.version -ne 1 -or $policy.max_timeout -ne 900 -or
     $policy.helper_sha256 -cne $helperHash -or $policy.operator_sid -cne $identity.User.Value) {
     throw 'Installed policy/code/operator mismatch'
 }
@@ -101,7 +101,7 @@ if (@(Compare-Object $fields @($request.PSObject.Properties.Name)).Count -ne 0 -
     $request.version -ne 1 -or $request.request_id -cne $RequestId -or
     $request.operation -cne 'elevated_commands' -or $request.deadline_unix -ne $DeadlineUnix -or
     $request.operator_sid -cne $identity.User.Value -or $request.helper_sha256 -cne $helperHash -or
-    $request.timeout -isnot [int] -or $request.timeout -lt 1 -or $request.timeout -gt 60 -or
+    $request.timeout -isnot [int] -or $request.timeout -lt 1 -or $request.timeout -gt $policy.max_timeout -or
     $request.script -isnot [string] -or [string]::IsNullOrWhiteSpace($request.script) -or
     $request.script.Contains([string][char]0) -or $utf8.GetByteCount($request.script) -gt 32768 -or
     $request.reason -isnot [string] -or [string]::IsNullOrWhiteSpace($request.reason) -or
@@ -214,6 +214,8 @@ public static class CommandWatchdog {
         });
     }
     public static Answer Run(string exe,string args,string cwd,uint ms) {
+        // Native boundary: callers cannot exceed the reviewed 15-minute cap.
+        if (ms == 0 || ms > 900000) throw new ArgumentOutOfRangeException("ms");
         IntPtr job=IntPtr.Zero,or=IntPtr.Zero,ow=IntPtr.Zero,er=IntPtr.Zero,ew=IntPtr.Zero,input=IntPtr.Zero;
         ProcessInfo p=new ProcessInfo(); Task<Dump> stdout=null,stderr=null;
         try {
@@ -254,7 +256,7 @@ public static class CommandWatchdog {
 '@
     $remaining = $DeadlineUnix - [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     if ($remaining -le 0) { throw 'Approval expired before command launch' }
-    $ms = [uint32]([Math]::Min($remaining,[int]$request.timeout) * 1000)
+    $ms = [uint32]([Math]::Min($remaining,[Math]::Min([int]$request.timeout,900)) * 1000)
     # Mark launch uncertainty before the native call; only a returned answer proves completion.
     $result.executed = $null
     $answer = [CommandWatchdog]::Run($exe,

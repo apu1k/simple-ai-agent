@@ -21,7 +21,8 @@ $policy = [IO.File]::ReadAllText([IO.Path]::Combine($PSScriptRoot, 'policy.json'
 $collector = [IO.Path]::Combine($PSScriptRoot, 'collector.ps1')
 $helperDigest = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
 $collectorDigest = (Get-FileHash -LiteralPath $collector -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($policy.version -ne 1 -or $helperDigest -cne $policy.helper_sha256 -or
+if ($policy.version -ne 1 -or $policy.max_execution_seconds -isnot [int] -or
+    $policy.max_execution_seconds -ne 900 -or $helperDigest -cne $policy.helper_sha256 -or
     $collectorDigest -cne $policy.collector_sha256) { throw 'Installed code digest mismatch' }
 function Write-Receipt([string]$Name, [object]$Value) {
     $text = $Value | ConvertTo-Json -Depth 10 -Compress
@@ -39,7 +40,7 @@ function Write-Receipt([string]$Name, [object]$Value) {
 }
 $started = [DateTime]::UtcNow.ToString('o')
 $audit = @{ version = 1; request_id = $RequestId; operation = 'collect_host_evidence';
-    started_at_utc = $started; deadline_unix = $DeadlineUnix;
+    started_at_utc = $started; deadline_unix = $DeadlineUnix; max_execution_seconds = 900;
     helper_sha256 = $helperDigest; collector_sha256 = $collectorDigest;
     source = $policy.source; recovery_iso = $policy.recovery_iso;
     elevated_identity = $identity.User.Value; status = 'started'; launch_authorized = $false;
@@ -96,6 +97,7 @@ public static class EvidenceWatchdog {
     [DllImport("kernel32.dll")] static extern bool TerminateJobObject(IntPtr j, uint code);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
     public static int Run(string exe, string args, string cwd, uint ms) {
+        if (ms == 0 || ms > 900000) throw new ArgumentOutOfRangeException("ms");
         IntPtr job = CreateJobObject(IntPtr.Zero, null);
         ProcessInfo p = new ProcessInfo();
         if (job == IntPtr.Zero) throw new Exception("Cannot create watchdog job");
@@ -114,8 +116,7 @@ public static class EvidenceWatchdog {
             if (ResumeThread(p.Thread) == 0xffffffff) throw new Exception("Cannot resume evidence worker");
             uint wait = WaitForSingleObject(p.Process, ms);
             if (wait == 258) {
-                TerminateJobObject(job, 2);
-                if (WaitForSingleObject(p.Process, 5000) != 0)
+                if (!TerminateJobObject(job, 124) || WaitForSingleObject(p.Process, 5000) != 0)
                     throw new Exception("Worker termination unknown");
                 return 124;
             }
@@ -171,7 +172,7 @@ function Write-EvidencePhase([string]$Phase) {
     if ($remaining -le 0) { throw 'Expired during audit write' }
     $workerExit = [EvidenceWatchdog]::Run($exe,
         '-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -EncodedCommand ' + $encoded,
-        $PSScriptRoot, [uint32]($remaining * 1000))
+        $PSScriptRoot, [uint32]([Math]::Min($remaining, 900) * 1000))
     if ($workerExit -eq 124) { $status = 'timeout' }
     elseif ($workerExit -eq 0) {
         $info = New-Object IO.FileInfo($factsPath)
