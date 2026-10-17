@@ -187,3 +187,59 @@ def test_bundle_runs_without_app_packages_or_site_imports(tmp_path):
     result = subprocess.run([sys.executable, '-I', '-S', '-B', '-c', code],
                             cwd=tmp_path, capture_output=True, text=True, timeout=10, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_fresh_installer_refuses_false_authorization_before_setup():
+    # Complete parameter binding, but refuse before privilege/path/setup work.
+    # The additional unelevated guard keeps this fixture non-privileged even if
+    # the authorization check regresses. No real installation path is written.
+    installer = str(ROOT / 'scripts/install_privileged_inspection_helper.ps1').replace("'", "''")
+    command = """
+$ErrorActionPreference='Stop'
+$identity=[Security.Principal.WindowsIdentity]::GetCurrent()
+$principal=New-Object Security.Principal.WindowsPrincipal($identity)
+if($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+    throw 'This fixture must remain unelevated'
+}
+$arguments=@{
+    Bundle='Z:\\UNUSED-INSPECTION-FIXTURE\\bundle.zip'; BundleSha256=('a'*64)
+    PythonArchive='Z:\\UNUSED-INSPECTION-FIXTURE\\python.zip'; PythonArchiveSha256=('b'*64)
+    HelperSha256=('c'*64); OperatorSid=$identity.User.Value
+    SourceDisk='Z:\\UNUSED-INSPECTION-FIXTURE\\source.vhdx'; SourceSha256=('d'*64)
+    RecoveryIso='Z:\\UNUSED-INSPECTION-FIXTURE\\recovery.iso'; RecoveryIsoSha256=('e'*64)
+    Workspace='Z:\\UNUSED-INSPECTION-FIXTURE\\workspace'
+    InspectionApprovedUntilUtc=[DateTimeOffset]::UtcNow.AddHours(2)
+    PythonProvenanceReviewed=$true; IsoProvenanceReviewed=$true; EvidencePreserved=$true
+    AuthorizeNewInspectionAttempt=$false
+}
+$refused=$false
+try { & '__INSTALLER__' @arguments }
+catch {
+    if($_.Exception.Message -cne 'A separately reviewed new inspection attempt must be authorized'){throw}
+    $refused=$true
+}
+if(-not $refused){throw 'New attempt authorization was not enforced'}
+Write-Output 'NEW_ATTEMPT_AUTHORIZATION_REFUSED'
+""".replace('__INSTALLER__', installer)
+    assert 'NEW_ATTEMPT_AUTHORIZATION_REFUSED' in powershell(command)
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='read-only native Program Files lookup')
+@pytest.mark.parametrize('location', ['v2', 'legacy', 'checkout'])
+def test_installed_worker_accepts_only_fixed_v2_location(monkeypatch, location):
+    from night_shifts import inspection_worker as worker
+    from runtime.privileged_host import _windows_paths
+    from runtime.privileged_inspection import DIRECTORY
+
+    program_files = _windows_paths()[0].parent
+    root = program_files / DIRECTORY
+    if location == 'checkout':
+        path = ROOT / 'night_shifts/inspection_worker.py'
+    else:
+        path = (root if location == 'v2' else program_files / 'AiAgentHyperVInspection') / 'payload/night_shifts/inspection_worker.py'
+    monkeypatch.setattr(worker, '__file__', str(path))
+    if location == 'v2':
+        assert worker.installed_root() == root
+    else:
+        with pytest.raises(ValueError, match='protected installation required'):
+            worker.installed_root()

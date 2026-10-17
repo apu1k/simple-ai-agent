@@ -69,7 +69,8 @@ def installed_root() -> Path:
     buffer = ctypes.create_unicode_buffer(32768)
     if shell.SHGetFolderPathW(None, 0x26, None, 0, buffer) != 0:
         raise OSError('cannot locate Program Files')
-    root = Path(buffer.value) / 'AiAgentHyperVInspection'
+    # Fixed side-by-side deployment; never discover/adopt the retained V1.
+    root = Path(buffer.value) / 'AiAgentHyperVInspectionV2'
     if Path(__file__).resolve() != root / 'payload/night_shifts/inspection_worker.py':
         raise ValueError('protected installation required')
     return root

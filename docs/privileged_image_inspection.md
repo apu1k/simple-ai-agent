@@ -39,12 +39,35 @@ pipe evidence are required for `inspected_not_accepted`. Copy/media and possibly
 configuration directories remain as evidence; VM removal does not mean directory
 removal. No finalization, publication, Gate A or broad reconciliation is permitted.
 
-## Recommended locations
+## Fixed side-by-side V2 deployment (separate new-attempt authorization)
 
-- Protected code/runtime/policy/authoritative receipts:
-  `C:\Program Files\AiAgentHyperVInspection` (Windows known-folder location).
-- Existing reviewed workspace: `D:\NightShift\image-inspect-preflight`.
-- Outputs: `<workspace>/<fresh-id>` and sibling `<fresh-id>.control`.
+The current client, installer, supervisor and worker select **only** the fixed
+`AiAgentHyperVInspectionV2` installation. This is a deployment identity, not a
+policy-schema change. A missing, expired, drifted or consumed V2 refuses; there
+is no discovery, fallback to V1, claim reset, automatic upgrade or automatic retry.
+A future failed V2 still needs separate recovery review; do not increment a name
+or reinstall simply to evade its claim. Each new deployment is new authority,
+not a continuation of the old approval.
+
+The installer requires `-AuthorizeNewInspectionAttempt` in addition to its
+provenance/preservation switches. That flag records an explicit operator decision,
+not proof that an evidence audit occurred. Installation itself does not inspect
+or start a VM. A distinct pending approval and UAC are still required for inspection.
+
+- Candidate new protected code/runtime/policy/authoritative receipts:
+  `C:\Program Files\AiAgentHyperVInspectionV2` (Windows known-folder location).
+- Proposed fresh workspace, requiring separate creation and private-ACL review:
+  `D:\NightShift\image-inspect-v2`.
+- Retained V1 installation: `C:\Program Files\AiAgentHyperVInspection`.
+- Retained occupied V1 workspace: `D:\NightShift\image-inspect-preflight`.
+- New outputs: `<new-workspace>/<fresh-id>` and sibling `<fresh-id>.control`.
+
+Do not move, overwrite, remove or repair the V1 installation, claim, receipts,
+workspace, VM, disks or media. Its expired policy is historical evidence, not an
+approval window to extend. Reusing the separately reviewed CPython archive or
+recovery ISO requires rechecking their exact bytes; author a fresh bundle with
+the V2 worker and current channel diagnostics. No app restart, code commit or
+new bundle alone authorizes protected deployment or a VM launch.
 
 Retained diagnostic source, original VMs/media/manifests/claims and old operation
 locks are never repaired, reused as outputs or deleted. Existing read-only evidence
@@ -82,7 +105,8 @@ installation remains unchanged.
      -RecoveryIso '<reviewed live ISO>' -RecoveryIsoSha256 '<reviewed ISO digest>' `
      -Workspace '<existing empty private external workspace>' `
      -InspectionApprovedUntilUtc '<explicit UTC time, 30 minutes to 24 hours ahead>' `
-     -PythonProvenanceReviewed -IsoProvenanceReviewed -EvidencePreserved
+     -PythonProvenanceReviewed -IsoProvenanceReviewed -EvidencePreserved `
+     -AuthorizeNewInspectionAttempt
    ```
 
    The installer validates exact bytes before copying, refuses unsafe ZIP entries,
@@ -143,6 +167,39 @@ old protected installation/claim/receipts, VM/config/copy/media and control clai
 These checkout changes do not deploy to that installation. Another deployment or
 attempt needs separate review; no reset, overwrite, permission repair or retry is
 introduced. `DebuggerMode: On` was observed, not established as the cause.
+
+## Fresh read-only recovery evidence — 2026-10-17
+
+The general launcher's corrected read-only inventory request
+`fda848c7cf054d36be4869a590ff85f6` observed retained VM
+`51434da9-9168-428a-8624-72a246ccc18d` Off, with exact name/owner/config matches,
+2 CPUs, fixed 2 GiB RAM, zero network adapters/checkpoints, GSI disabled and the
+recorded Linux Secure Boot template/media. COM1 `DebuggerMode` remained On; no
+cause or change is inferred. Source and failed-inspection copy were unattached,
+parentless dynamic 20 GiB VHDX files. The source's referencing diagnostic VM
+`24651418-5ca1-4e35-8cb9-2a498b44f33f` was also Off.
+
+The fixed evidence request `6a199c922ae04680b10fdee4b3f78358` independently hashed
+source and ISO, matching the existing reviewed bindings:
+
+- Source SHA-256: `a8470ae83c3608065292a298be1030c6501142f9a4665accbf00075745e63ccb`.
+- ISO SHA-256: `97f3d7ffb032c3eb3b23d2c8be9cc76e60c2c1f2c0146ba5ba9fe01cafae0fd8`.
+- Private workspace ACL passed; approximately 253 GiB was free.
+- Overall input status was `blocked` by `workspace_not_empty`, as expected for the
+  preserved V1 attempt. This does not authorize emptying/reusing that workspace.
+
+An initial general inventory request failed before inventory because the launcher
+cleared `COMPUTERNAME`. An unelevated differential fixture reproduced the null-name
+error; setting that process variable from `[Environment]::MachineName` reached
+normal permission checks, and the separately approved corrected inventory passed.
+The V2 supervisor derives the variable from Windows for its own process only.
+This does not change the general launcher or diagnose the old CHANNEL failure.
+
+These receipts are snapshots, not guest inspection, pipe-ACL acceptance, launch
+permission or Gate A. No VM lifecycle operation, mount, ACL repair, source mutation
+or claim reset occurred. The V1 deployment's 69 pinned files matched, with no extra
+payload/runtime files; its claim remains consumed and approval expired. Preparing
+V2 in the repository does not install or launch it.
 
 ## Validation boundary
 

@@ -136,7 +136,7 @@ def _observed_phase(root: Path, request_id: str) -> str:
     """Optional, protected display hints only; never infer completion here."""
     if root.name == 'AiAgentElevatedCommands':
         return 'Running an explicitly approved Administrator command (effects are not verified)'
-    if root.name == 'AiAgentHyperVInspection':
+    if root.name in ('AiAgentHyperVInspection', 'AiAgentHyperVInspectionV2'):
         return 'Inspecting a fresh image copy (VM outcome requires a verified receipt)'
     for phase, label in reversed(PHASES):
         path = root / 'receipts' / f'{request_id}.phase-{phase}.json'

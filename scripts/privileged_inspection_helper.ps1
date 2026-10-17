@@ -4,8 +4,14 @@ param(
 )
 # Installed inspect-only supervisor. Never execute this checkout file elevated.
 $ErrorActionPreference = 'Stop'
-$root = [IO.Path]::Combine([Environment]::GetFolderPath('ProgramFiles'), 'AiAgentHyperVInspection')
-if ($PSScriptRoot -cne $root) { throw 'Protected installation required' }
+# Fixed new deployment; never reuse or alter the legacy installation's claim.
+$root = [IO.Path]::Combine([Environment]::GetFolderPath('ProgramFiles'), 'AiAgentHyperVInspectionV2')
+if ($PSScriptRoot -cne $root -or [IntPtr]::Size -ne 8 -or $PSVersionTable.PSEdition -ne 'Desktop') {
+    throw 'Protected native x64 Windows PowerShell installation required'
+}
+# Hyper-V needs local machine identity even under a sanitized parent environment.
+# Set only this process variable from Windows, not from caller-controlled input.
+$env:COMPUTERNAME = [Environment]::MachineName
 $system = [Environment]::GetFolderPath('System')
 $env:PATH = $system
 $env:PSModulePath = [IO.Path]::Combine($system, 'WindowsPowerShell\v1.0\Modules')

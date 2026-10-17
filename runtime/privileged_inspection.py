@@ -14,7 +14,9 @@ from runtime.privileged_host import (
 from runtime.privileged_turn import INSPECTION_OPERATION, PrivilegedClaim
 from night_shifts.ubuntu_preparation_control import _current_user_sid
 
-DIRECTORY = 'AiAgentHyperVInspection'
+# A separately reviewed fresh deployment, never a fallback to the consumed V1.
+# The legacy installation, claim and receipts stay at their original paths.
+DIRECTORY = 'AiAgentHyperVInspectionV2'
 FIELDS = frozenset(('version', 'operation', 'operator_sid', 'source', 'source_sha256',
                     'recovery_iso', 'recovery_iso_sha256', 'workspace', 'approved_until_unix',
                     'iso_provenance_reviewed', 'evidence_preserved', 'files',

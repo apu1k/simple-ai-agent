@@ -13,16 +13,22 @@ param(
     [Parameter(Mandatory=$true)][DateTimeOffset]$InspectionApprovedUntilUtc,
     [Parameter(Mandatory=$true)][switch]$PythonProvenanceReviewed,
     [Parameter(Mandatory=$true)][switch]$IsoProvenanceReviewed,
-    [Parameter(Mandatory=$true)][switch]$EvidencePreserved
+    [Parameter(Mandatory=$true)][switch]$EvidencePreserved,
+    [Parameter(Mandatory=$true)][switch]$AuthorizeNewInspectionAttempt
 )
-# Operator setup only. No VM operation, source mutation or permission repair.
+# Fresh V2 setup only. V1 installation/claim/receipts remain untouched.
+# No VM operation, source mutation, claim reset or permission repair.
 $ErrorActionPreference='Stop'
+if (-not $AuthorizeNewInspectionAttempt) {
+    throw 'A separately reviewed new inspection attempt must be authorized'
+}
 $system=[Environment]::GetFolderPath('System')
 $env:PSModulePath=[IO.Path]::Combine($system,'WindowsPowerShell\v1.0\Modules')
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 $principal=New-Object Security.Principal.WindowsPrincipal($identity)
-if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -or [IntPtr]::Size -ne 8) {
-    throw 'Dedicated native x64 Administrator setup required'
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) -or
+    [IntPtr]::Size -ne 8 -or $PSVersionTable.PSEdition -ne 'Desktop') {
+    throw 'Dedicated native x64 Windows PowerShell Administrator setup required'
 }
 if ($identity.User.Value -cne $OperatorSid) { throw 'Different-account setup is unsupported' }
 if (-not $PythonProvenanceReviewed -or -not $IsoProvenanceReviewed -or -not $EvidencePreserved) {
@@ -112,7 +118,7 @@ foreach ($line in ([Text.Encoding]::UTF8.GetString($runtime[$pth[0]]) -split '\r
     }
     if ($line -cmatch '^python\d+\.zip$' -and -not $runtime.ContainsKey($line)) { throw 'Missing stdlib' }
 }
-$programFiles=[Environment]::GetFolderPath('ProgramFiles'); $root=Join-Path $programFiles 'AiAgentHyperVInspection'
+$programFiles=[Environment]::GetFolderPath('ProgramFiles'); $root=Join-Path $programFiles 'AiAgentHyperVInspectionV2'
 if (Test-Path -LiteralPath $root) { throw 'Installation exists; no overwrite, reset, upgrade or repair' }
 $trusted=@('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
 $cursor=$programFiles
@@ -162,5 +168,6 @@ $policy=@{ version=1; operation='inspect_image_copy'; operator_sid=$OperatorSid;
     iso_provenance_reviewed=$true; evidence_preserved=$true; files=$files;
     bundle_sha256=$BundleSha256; python_archive_sha256=$PythonArchiveSha256 }
 Write-Protected (Join-Path $root 'policy.json') ([Text.Encoding]::UTF8.GetBytes(($policy | ConvertTo-Json -Depth 6 -Compress)))
-@{status='installed';root=$root;operation='inspect_image_copy';launch_performed=$false} | ConvertTo-Json
+@{status='installed';root=$root;operation='inspect_image_copy';launch_performed=$false;
+    new_attempt_explicitly_authorized=$true;legacy_installation_modified=$false} | ConvertTo-Json
 # Setup does not start inspection. Separate next-turn authorization and UAC remain required.

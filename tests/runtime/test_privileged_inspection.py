@@ -201,3 +201,76 @@ def test_native_inspection_records_guid_before_start_and_checks_connected_pipe()
     assert text.index('$vmRecord =') < text.index('Start-VM -VM $vm')
     assert text.index('MaintenancePipeSecurity]::Read') < text.index('$pipe.WriteAsync')
     assert 'inspection.claim.json' in (script.parents[3] / 'scripts/privileged_inspection_helper.ps1').read_text()
+
+
+def test_side_by_side_deployment_has_one_fixed_identity_across_components():
+    root = Path(__file__).resolve().parents[2]
+    assert client.DIRECTORY == 'AiAgentHyperVInspectionV2'
+    for name in ('scripts/install_privileged_inspection_helper.ps1',
+                 'scripts/privileged_inspection_helper.ps1', 'night_shifts/inspection_worker.py'):
+        text = (root / name).read_text()
+        assert "'AiAgentHyperVInspectionV2'" in text
+        assert "'AiAgentHyperVInspection'" not in text
+    installer = (root / 'scripts/install_privileged_inspection_helper.ps1').read_text()
+    guard = installer.index('if (-not $AuthorizeNewInspectionAttempt)')
+    assert guard < installer.index("$system=[Environment]::GetFolderPath('System')")
+    assert '[Parameter(Mandatory=$true)][switch]$AuthorizeNewInspectionAttempt' in installer
+    helper = (root / 'scripts/privileged_inspection_helper.ps1').read_text()
+    assert '$env:COMPUTERNAME = [Environment]::MachineName' in helper
+
+
+def test_missing_v2_never_falls_back_to_retained_legacy_installation(monkeypatch, tmp_path):
+    legacy = tmp_path / 'AiAgentHyperVInspection'
+    legacy.mkdir()
+    retained = legacy / 'inspection.claim.json'
+    raw = b'{"operation":"inspect_image_copy","request_id":"retained"}'
+    retained.write_bytes(raw)
+    monkeypatch.setattr(client, '_windows_paths', lambda: (tmp_path / 'AiAgentHyperVEvidence', tmp_path / 'powershell.exe'))
+    checked = []
+
+    def check(path, **kwargs):
+        checked.append(path)
+        if not path.exists():
+            raise PrivilegedHostError('Missing protected V2 deployment')
+
+    monkeypatch.setattr(client, '_assert_protected', check)
+    monkeypatch.setattr(client, '_bounded_json', lambda path: pytest.fail('must refuse before reading any policy'))
+    with pytest.raises(PrivilegedHostError, match='Missing protected V2'):
+        client.load_inspection_policy()
+    assert checked == [tmp_path / client.DIRECTORY]
+    assert retained.read_bytes() == raw
+    assert not (tmp_path / client.DIRECTORY).exists()
+
+
+def test_consumed_v2_claim_refuses_without_changing_either_installation(monkeypatch, tmp_path):
+    legacy = tmp_path / 'AiAgentHyperVInspection'
+    legacy.mkdir()
+    retained = legacy / 'inspection.claim.json'
+    retained.write_bytes(b'LEGACY_CLAIM_CANARY')
+    root = tmp_path / client.DIRECTORY
+    root.mkdir()
+    current = root / 'inspection.claim.json'
+    current.write_bytes(b'V2_CLAIM_CANARY')
+    data = policy()
+    monkeypatch.setattr(client, '_windows_paths', lambda: (tmp_path / 'AiAgentHyperVEvidence', tmp_path / 'powershell.exe'))
+    monkeypatch.setattr(client, '_assert_protected', lambda *args, **kwargs: None)
+    monkeypatch.setattr(client, '_current_user_sid', lambda: SID)
+    paths = []
+
+    def read(path):
+        paths.append(path)
+        return copy.deepcopy(data)
+
+    monkeypatch.setattr(client, '_bounded_json', read)
+    with pytest.raises(PrivilegedHostError, match='Inspection already attempted'):
+        client.load_inspection_policy()
+    assert paths == [root / 'policy.json']
+    assert retained.read_bytes() == b'LEGACY_CLAIM_CANARY'
+    assert current.read_bytes() == b'V2_CLAIM_CANARY'
+
+
+def test_v2_progress_label_does_not_probe_or_adopt_legacy_receipts(monkeypatch, tmp_path):
+    from runtime import privileged_host
+    monkeypatch.setattr(privileged_host, '_bounded_json', lambda path: pytest.fail('no receipt discovery'))
+    label = privileged_host._observed_phase(tmp_path / client.DIRECTORY, ID)
+    assert label == 'Inspecting a fresh image copy (VM outcome requires a verified receipt)'

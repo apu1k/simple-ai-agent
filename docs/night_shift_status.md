@@ -1,6 +1,37 @@
 # Night-shift implementation status and validation gates
 
-## Current image-preparation handoff — 2026-10-09 (Gate A unrun)
+## Current Gate A preparation — 2026-10-17 (Gate A unrun)
+
+The general Administrator launcher and multiline pending-review UI are live-tested.
+This removes the elevation workflow blocker, not the guest-image or Gate A gates.
+The [protected inspection record](privileged_image_inspection.md) now consolidates
+the retained October 13 CHANNEL failure and fresh October 17 read-only evidence.
+
+Fresh approved inventory observed the exact retained inspection VM
+`51434da9-9168-428a-8624-72a246ccc18d` Off with matching identity/configuration,
+fixed 2 GiB RAM, 2 CPUs, no network adapters/checkpoints and GSI disabled. The
+source's referencing VM was also Off. Source and failed-inspection copy were
+unattached, parentless dynamic 20 GiB VHDX files. Fixed evidence collection
+rehashed source and ISO: both match their reviewed bindings. The occupied private
+V1 workspace correctly reports `workspace_not_empty`; about 253 GiB was free.
+These snapshots do not attest guest contents, pipe ACLs or launch permissions.
+
+The first inspection installation still has its consumed claim and expired
+approval. Its 69 pinned files match and no extra payload/runtime files were found;
+it has not received the later channel diagnostics. Repository preparation now
+selects only a fixed side-by-side V2 installation and requires explicit new-attempt
+authorization at setup. It does not install V2, extend V1, reset claims or approve
+a VM launch. Preserve V1 and all failed resources at their original paths.
+
+Next: review/test/commit the V2 preparation; separately authorize its fresh private
+workspace and protected deployment; obtain inspection-only evidence with current
+diagnostics. Then separately review copy-only finalization, filesystem/security
+audit, accepted publication and the actual serial/pipe policy before Gate A.
+No clean accepted base exists, no successful automated inspection is claimed,
+and Gates A/B and live model work remain **BLOCKED**. No VM lifecycle action,
+mount, permission repair, source change or claim reset occurred in this inventory.
+
+## Historical image-preparation handoff — 2026-10-09 (Gate A unrun)
 
 The detailed [image diagnostic record](night_shift_image_diagnostic_record.md)
 separates saved host receipts, operator-console observations and pending work.
