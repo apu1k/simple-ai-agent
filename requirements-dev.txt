@@ -1,3 +1,4 @@
 -r requirements.txt
 pytest
 pycdlib==1.21.0  # offline NoCloud seed ISO authoring and read-only content inspection
+cryptography==49.0.0  # fresh synthetic certificates for offline TLS tests only; not a runtime dependency

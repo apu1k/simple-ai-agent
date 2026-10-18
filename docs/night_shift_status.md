@@ -36,6 +36,20 @@ reviewed creation-time-private/VM-bound transport if its prerequisites cannot be
 established. This design work does not authorize another VM start, inspection,
 protected deployment, claim reset, finalization, publication or Gate A run.
 
+### Standalone offline TLS prototype (not wired to inspection)
+
+The [memory-only prototype boundary](night_shift_maintenance_tls_prototype.md)
+describes a standard-library TLS 1.3/mutual-certificate/peer-pin endpoint and
+synthetic certificate fixtures. This is a standalone source/test batch, not a
+protected deployment or an enabled serial transport. It does not relax the
+plaintext ACL check or modify the existing runner, guest payload, bundle list,
+claims or tools. Its cooperative deadline checks are not the native watchdog.
+The new module/tests require their own post-application validation; the earlier
+12-check feasibility experiment is not validation of the new implementation.
+Credential/media ACLs, host/guest adapters, real cancellation and live inspection
+remain unvalidated. Do not restart, enable elevation or run an installer for this
+prototype. Gates A/B remain blocked.
+
 ## Historical V2 preparation — 2026-10-17 (Gate A unrun)
 
 The general Administrator launcher and multiline pending-review UI are live-tested.
