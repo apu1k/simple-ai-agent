@@ -1,6 +1,42 @@
 # Night-shift implementation status and validation gates
 
-## Current Gate A preparation — 2026-10-17 (Gate A unrun)
+## Current Gate A channel review — 2026-10-18 (Gate A unrun)
+
+The [COM1 security review and proposed channel boundary](night_shift_pipe_security_review.md)
+records the retained V2 diagnostic requests, native identity review and remaining
+trust requirements. The general Administrator launcher has its deployed/tested
+900-second maximum; the fixed inspection/evidence helpers have not received the
+new timeout deployment. V2's inspection claim remains consumed. No accepted base
+image, successful automated guest inspection or Gate A/B completion is claimed.
+
+Separately approved diagnostic `7223f9c08a7d4295bf28f78cfdf438e1` preserved ten
+backups and captured the actual pipe ACL without guest data transfer or handshake.
+It completed in 507 seconds under a requested 900-second worker ceiling. The
+observed broad grants include Everyone pipe-data read, Hyper-V Administrators
+full control and a capability SID now exactly identified by the Windows native
+API as `VmWorkerProcess`. That name binding is not a VM-specific identity or
+permission to trust the capability. The local Hyper-V Administrators group had
+zero direct members at review; this is not a permanent membership guarantee.
+
+Fresh read-only post-run inventory `251a7132d6ea4fd7ba89ade6772d5cb1` observed the
+exact retained VM and source-referencing VM Off, both VHDXs unattached/parentless,
+zero checkpoints and no network adapters. `AutomaticCheckpointsEnabled` was true
+alongside `CheckpointType=Disabled`; future fresh-VM setup needs explicit
+read-back of both controls. No retained configuration was repaired. Protected
+final hashing reported source/copy matching the reviewed source digest; all ten
+backups were independently rehashed and protected-path checked.
+
+The plaintext ACL check remains correctly fail-closed. Disposable unelevated
+pipe experiments reproduced that late DACL tightening does not revoke an already
+granted read handle, even with maximum/current instance counts both one. Do not
+blindly widen the allowlist or add an automatic pipe-permission repair. Next is
+a reviewed offline authenticated/encrypted-channel prototype, including credential
+provisioning/effective-ACL review and bounded failure tests, or a separately
+reviewed creation-time-private/VM-bound transport if its prerequisites cannot be
+established. This design work does not authorize another VM start, inspection,
+protected deployment, claim reset, finalization, publication or Gate A run.
+
+## Historical V2 preparation — 2026-10-17 (Gate A unrun)
 
 The general Administrator launcher and multiline pending-review UI are live-tested.
 This removes the elevation workflow blocker, not the guest-image or Gate A gates.

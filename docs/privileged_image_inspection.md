@@ -250,6 +250,40 @@ watchdog allowed the remaining turn budget. The general-script launcher's old
 60-second cap was not its limit. The proposed 900-second caps in this checkout
 are not deployed by committing/restarting the app.
 
+## Captured V2 pipe permissions and policy review — 2026-10-18
+
+The [COM1 pipe security review](night_shift_pipe_security_review.md) records the
+separately approved preservation failure and successful diagnostic, exact receipt
+bindings, final state and native follow-up experiments. It supersedes the earlier
+missing-SID diagnostic gap, not the consumed inspection claim or its failed result.
+
+Diagnostic `7223f9c08a7d4295bf28f78cfdf438e1` preserved ten verified backups,
+started only the exact retained recovery VM, captured COM1 security without any
+guest read/write/handshake, and observed it Off. Its 507-second run completed
+within the requested 900-second worker ceiling. Protected evidence remains at
+`C:\Program Files\AiAgentElevatedCommands\receipts\pipe-acl-v2-stable-config-20261018`.
+Post-run read-only request `251a7132d6ea4fd7ba89ade6772d5cb1` confirmed Off,
+unattached source/copy, zero checkpoints and the pipe absent. The automatic-
+checkpoint flag was nevertheless true; future new VMs need it explicitly disabled.
+No VM/config/copy/media was removed, no existing permissions were repaired, and
+V2's consumed claim/policy/original result/manifest remain preserved.
+
+The captured pipe grants Everyone read including data (`0x00120089`), Hyper-V
+Administrators full control and the `VmWorkerProcess` capability full control.
+The capability name was confirmed by an exact native Windows SID derivation,
+not assumed from a guessed label. It is not the exact VM SID and does not prove
+caller identity. These grants still fail the current plaintext policy. Merely
+recognizing their names, observing an empty group or tightening an ACL after open
+must not enable inspection: disposable native tests show already granted read
+handles can survive even an explicitly empty replacement DACL.
+
+Keep plaintext blocked while reviewing an authenticated encrypted maintenance
+channel and protected per-attempt credential provisioning, or another supported
+private/VM-bound endpoint. No production channel change or new inspection attempt
+is authorized by this review. The general launcher update does not upgrade the
+fixed helpers; their deployment/900-second policy and fresh attempt authorization
+remain separate prerequisites. Gate A is still unrun.
+
 ## Validation boundary
 
 Synthetic tests cover grants, policy/receipt binding, wrong operations/profiles,
