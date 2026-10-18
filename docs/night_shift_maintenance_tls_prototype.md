@@ -73,6 +73,11 @@ sessions. Fresh per-attempt credentials, permanent claims, exact deployment/code
 bindings and explicit authorization must prevent cross-attempt/session reuse.
 No permanent claim or protected policy is touched by this module.
 
+The [offline credential/bootstrap candidate](night_shift_maintenance_credentials_design.md)
+proposes private-key-free media and VM-bound public KVP metadata. Its codec and
+ACL model are not native provenance, private-file creation or authorization, and
+the Linux publisher/trusted host acquisition are not implemented.
+
 Credential provisioning and effective ACLs are not solved here. Before a live
 prototype can be considered, review who can read/replace the private key, recovery
 media and trust pins, including `VmWorkerProcess` capability access and the host
@@ -114,6 +119,17 @@ results are not results for this new module: the applied module/test file must
 be run and checked separately. No Linux guest, Windows pipe adapter, Schannel
 interoperability, credential provisioning, protected deployment or real VM
 lifecycle evidence is claimed by either experiment.
+
+### Applied prototype validation checkpoint
+
+The applied prototype at commit `54ca6a9` passed its own **78 tests**, plus separate
+related runtime/native **82 passed** and maintenance/guest/bundle **78 passed,
+1 skipped**. Repository-wide Ruff and Mypy across 74 night-shift files passed.
+Isolation checks found no existing production caller, and the actual generated
+inspection bundle excluded both prototype and test-only crypto. The bundle was
+constructed in memory, not installed or published. These are targeted offline
+checks, not a full-repository run or any of the live guarantees listed below.
+New credential/bootstrap source changes require their own validation.
 
 ## Remaining live boundary
 

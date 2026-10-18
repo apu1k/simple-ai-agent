@@ -44,11 +44,30 @@ synthetic certificate fixtures. This is a standalone source/test batch, not a
 protected deployment or an enabled serial transport. It does not relax the
 plaintext ACL check or modify the existing runner, guest payload, bundle list,
 claims or tools. Its cooperative deadline checks are not the native watchdog.
-The new module/tests require their own post-application validation; the earlier
-12-check feasibility experiment is not validation of the new implementation.
-Credential/media ACLs, host/guest adapters, real cancellation and live inspection
-remain unvalidated. Do not restart, enable elevation or run an installer for this
-prototype. Gates A/B remain blocked.
+Commit `54ca6a9` records the applied prototype. Its own suite passed **78 tests**;
+separate related runtime/native checks passed **82 tests**, and maintenance/guest/
+bundle checks passed **78 with 1 existing skip**. Repository Ruff, Mypy across
+74 night-shift source files and isolation checks passed. These are targeted
+offline results, not live channel validation. The real inspection bundle excludes
+the prototype and test-only crypto dependency. Credential/media ACLs, host/guest
+adapters, real cancellation and live inspection remain unvalidated. Do not restart,
+enable elevation or run an installer for this prototype. Gates A/B remain blocked.
+
+### Offline credential boundary and public bootstrap candidate
+
+The [credential/bootstrap design](night_shift_maintenance_credentials_design.md)
+records a read-only ACL review: retained VM media/workspace have `VmWorkerProcess`
+read/full-control grants, so key secrecy there is not established. The proposed
+separation keeps controller private keys in a new protected host-only store and
+guest private keys in guest RAM; no private key goes on media or through KVP.
+A VM-bound guest-originated KVP public-certificate record is a candidate only.
+Its actual Linux publisher, trusted exact-VM WMI acquisition, native key-store
+creation/effective-token checks and host/guest adapters are not implemented.
+The accompanying ACL model/public-record codec/latch have no native acquisition,
+credential generation or authorization power and need post-application tests.
+No live credential, protected directory, media, service, registry setting, claim
+or retained ACL was created/repaired by the review. Synthetic feasibility keys
+were used only in test-process memory. Gates A/B remain blocked.
 
 ## Historical V2 preparation — 2026-10-17 (Gate A unrun)
 
