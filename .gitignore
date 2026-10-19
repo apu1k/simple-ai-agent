@@ -49,6 +49,8 @@ Caddyfile
 !/scripts/install_privileged_inspection_helper.ps1
 !/scripts/privileged_command_helper.ps1
 !/scripts/install_privileged_command_helper.ps1
+!/scripts/validate_native_store_privileged_fixture.ps1
+!/scripts/validate_retained_store_ordinary_access.ps1
 logs
 
 # temporary logs

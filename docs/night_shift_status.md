@@ -107,6 +107,83 @@ crypto is not a deployed dependency. Synchronous native calls do not supply
 watchdog/cancellation enforcement. No restart, elevation, protected installation,
 VM operation or claim reset occurred. Gates A/B remain blocked.
 
+### Non-secret privileged profile fixture — 2026-10-19, failed/retained
+
+The [fixture execution record](night_shift_native_store_privileged_fixture.md)
+records approved request `2fb426b96a7b4cc99b3df8db3e9bf4a3`, which exited **1**
+under its requested **120-second** native ceiling. Start-receipt to finish was
+about **0.889 seconds**, not a timeout. Independent read-back verified the
+approved bytes, complete embedded-source digest, payload and protected receipt.
+Creation was not retried. A separate existing-object diagnostic is recorded below.
+
+The protected worker reported actual Administrators owner/group, exact private
+DACL creation, marker write/read-back, data-sharing/metadata behavior and enabled
+Administrator reading. It then failed at the UAC-linked filtered-token check with
+`unexpected_access_error`. Its checker discarded the actual native error and
+requested access mask, leaving generic zero error fields. These do NOT mean the
+native call returned error zero. The failing open was invalid, not a reported
+access grant; full linked-token access validation remains unresolved. Later
+collision/rename/reparse/hard-link/final-preservation tests were not reached.
+
+Separate ordinary-process no-mutation probes confirmed the new directory exists
+and all six requested marker access modes fail with native error **5**. These
+are not substitutes for the failed in-worker linked-token check or independent
+current marker ACL/byte evidence. The new directory/marker and request artifacts
+remain retained; no permissions, claim or VM was repaired/reset/operated. SYSTEM
+and actual VM/capability tokens were not tested. The Python runtime and ancestor
+policy blockers remain. No real credentials or deployment were produced.
+
+Pre-execution applied review passed **6 tests**; combined native/runtime checks
+passed **167 with 3 symlink skips**; Ruff, Mypy across **77 files**, whitespace
+and bundle isolation passed. Review tests with an absent-fixture precondition now
+refuse this retained host state. Gate A remains unrun.
+
+Separately approved existing-object diagnostic `75de7de500ff4979b85aed4c60538f4b`
+exited **0** under a **120-second** ceiling (about **0.774 seconds** start-receipt
+to finish). Its verified saved stdout is truncated at **4,000 characters**, before
+the linked-token probe results/thread/reversion/final snapshot fields. Do not
+claim the missing observations or treat exit 0 as a passed creation fixture.
+The complete retained prefix includes before-probe exact protected DACLs and
+file identities, twelve granted Administrator handle probes without data I/O,
+and a restricted/limited linked token at native **SecurityIdentification level
+1**, not SecurityImpersonation level 2. This identifies a test-context flaw;
+permission broadening is not the remedy.
+
+A separate unelevated same-user reproduction duplicated only its own ordinary
+filtered token at levels 1 and 2. All six masks through both API declarations
+were refused: **12 error-1346 results at level 1**, versus **12 error-5 results at
+level 2**, with identity checks and reversion. This demonstrates the mechanism,
+not the unretained original worker error values. Both original attempts and
+objects remain preserved; no fixture retry, ACL/ownership repair, privilege
+enabling, VM operation or credential generation occurred. Next is corrected
+validation context plus compact complete error/evidence reporting, not another
+unreviewed creation attempt. SYSTEM/real-VM tests and all live gates stay open.
+
+The separate UNELEVATED ordinary-access validator and regressions are now applied
+and verified. The validator binds both pinned receipts/operator SID, queries the
+actual limited primary process token with no thread impersonation, and preserves
+all twelve native mask/API/error rows. Both the retained-host test and a standalone
+run passed: **all 12 opens denied with exact error 5**. The actual context remained
+primary type 1, limited elevation type 3, elevation zero, Administrator deny-only
+attributes 16 and no thread token (1008). The complete JSON is **939 characters /
+939 UTF-8 bytes**, well below its 3,000-character/byte cap and the launcher limit.
+
+The two validator/review suites passed **41 with 3 intentional retained-V1 skips**.
+Combined prototype/runtime checks passed **351 with 6 skips**, including those
+41 tests; the other three skips concern unavailable symlink cases. Repository
+Ruff, Mypy across **78 files**, whitespace/links and actual bundle isolation
+passed. These are targeted results, not a full-repository test run.
+
+No linked-token retrieval/upgrade, marker-data I/O, object creation, permission
+change, privileged request, deployment or Gate A run occurred in this corrected
+check. It explicitly does NOT attest current target identity or production
+readiness. Both old result receipt hashes and original V1 source bytes remain
+unchanged. V1 execution tests skip against retained state while descriptor/ABI
+checks run without invoking V1. The ordinary-operator access/reporting check is
+now established for this retained marker, not the still-unrun privileged-fixture
+cases or the production runtime/key-store/inspection channel. Gate A remains
+unrun.
+
 ## Historical V2 preparation — 2026-10-17 (Gate A unrun)
 
 The general Administrator launcher and multiline pending-review UI are live-tested.
