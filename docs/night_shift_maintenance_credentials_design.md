@@ -71,7 +71,16 @@ reviewed owner/DACL, protected/non-reparse ancestors, regular/single-link file
 identity, collision refusal, sharing/handle discipline and post-creation security
 read-back all need independent validation. Never create a permissive key then
 repair it. Never use an old workspace/control/claim or derive secret paths from a
-guest/task record. No native key-store authoring is implemented in this batch.
+guest/task record. The original model/codec batch implements no native authoring.
+A later isolated [native marker prototype](night_shift_maintenance_store_native_prototype.md)
+implements new-object, handle/security and non-secret marker tests only. It
+accepts no real credential payload, does not provision a protected anchor and
+has not established production-owner/effective-token protection. Its corrected
+applied suite passed **88 tests with 1 skip**; the native reparse case skipped
+because unelevated symlink creation was unavailable. The combined TLS/credential/
+marker rerun passed **237 with 1 skip** (including those 88 tests). Native positive
+fixtures explicitly substitute current-user ownership, not the production
+profile. This does not satisfy the live key-store gate.
 
 A real host credential factory also needs a reviewed pinned implementation and
 runtime dependencies. The development `cryptography` package is not thereby

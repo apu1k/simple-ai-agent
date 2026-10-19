@@ -61,13 +61,51 @@ read/full-control grants, so key secrecy there is not established. The proposed
 separation keeps controller private keys in a new protected host-only store and
 guest private keys in guest RAM; no private key goes on media or through KVP.
 A VM-bound guest-originated KVP public-certificate record is a candidate only.
-Its actual Linux publisher, trusted exact-VM WMI acquisition, native key-store
-creation/effective-token checks and host/guest adapters are not implemented.
-The accompanying ACL model/public-record codec/latch have no native acquisition,
-credential generation or authorization power and need post-application tests.
+Its actual Linux publisher, trusted exact-VM WMI acquisition, production host
+key-store provisioning/effective-token validation and host/guest adapters remain
+unimplemented. Commit `fbc4669` records the offline ACL model/public-record
+codec/latch; they have no native acquisition, credential generation or
+authorization power.
 No live credential, protected directory, media, service, registry setting, claim
 or retained ACL was created/repaired by the review. Synthetic feasibility keys
 were used only in test-process memory. Gates A/B remain blocked.
+
+### Isolated native host-store marker prototype (not credential provisioning)
+
+The [native marker prototype boundary](night_shift_maintenance_store_native_prototype.md)
+proposes Windows relative-handle create-new with an initial protected owner/DACL,
+strict ancestor/anchor checks, no delete sharing, exclusive leaf sharing and
+repeated native identity/security/shape read-back. It writes only a fixed
+NON-SECRET marker, accepts no private-key bytes and has no production caller,
+CLI, protected deployment or inspection-bundle integration. It never repairs
+permissions, reopens an old store, retries or deletes retained evidence.
+
+The corrected applied policy/mocked/native suite passed **88 with 1 skip**.
+The combined TLS/credential/marker rerun passed **237 with 1 skip**, including
+those 88 tests. The initial run's **84 passed, 1 failed, 1 skipped** exposed a
+sharing-fixture mistake: it requested metadata rather than file data. The applied
+regression now separately verifies data read/write/read-write refusal with native
+error 32 and allowed metadata-only access; unexpected handles are closed. Four
+earlier independent disposable checks confirmed these semantics. No runtime
+access policy was relaxed. Sharing is not DACL/effective-token protection.
+
+Separate related runs passed: maintenance/guest/control/bundle tests **122 with
+1 skip**; runtime/pipe-security tests **81 with 2 skips**. Repository Ruff and
+Mypy across **76 source files** passed after correction, along with whitespace,
+local links, marker-only API, source-import isolation and actual in-memory
+bundle exclusions. This validates the isolated source/test batch within the
+stated fixture limits, not credential provisioning/deployment or a full-repository
+suite. No inspection bundle was written.
+
+Native positive fixtures explicitly substitute current-user ownership and acquire
+only disposable test-owned parents; they do not validate production ancestor
+acquisition, Administrators-owner creation or VM/capability restricted-token
+access. The reparse fixture skipped because unelevated symlink creation was
+unavailable. No positive production probe, protected anchor or real credential
+was created. A pinned credential factory/runtime is still unselected; development
+crypto is not a deployed dependency. Synchronous native calls do not supply
+watchdog/cancellation enforcement. No restart, elevation, protected installation,
+VM operation or claim reset occurred. Gates A/B remain blocked.
 
 ## Historical V2 preparation — 2026-10-17 (Gate A unrun)
 
