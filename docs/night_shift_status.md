@@ -184,6 +184,76 @@ now established for this retained marker, not the still-unrun privileged-fixture
 cases or the production runtime/key-store/inspection channel. Gate A remains
 unrun.
 
+### Separate fresh native guard-check fixture — four cases passed; final guard failed
+
+The [new guard-check scope](night_shift_native_store_guard_checks.md) isolates the
+four unreached cases: exact create-new collision preservation, held-directory
+rename refusal, a verified self-contained symlink/reparse refusal and two-link
+rejection. It selects only the NEW fixed namespace
+`native-store-guards-97aa76c6db034b4ea87c747a38ce60a0` under protected receipts.
+V1 source/objects are not selected, resumed, reset or retried. Old result receipts
+are read/hash-checked only; no old marker data is used. All new non-secret objects,
+including the symlink and both hard-link names, remain retained.
+
+Approved request `b87e24c68c914dbeb46a2c72d946f953` ran under a **120-second**
+ceiling and exited **1** after about **0.838 seconds** start-receipt to finish,
+not a timeout. Its **810-character** stdout is complete, untruncated JSON. Native
+case rows all passed: collision `0xC0000035`/183 with identity/ACL/bytes preserved;
+rename refusal 32 with destination absence; verified own-target symlink acquired
+as the LINK and refused by shape; and matching two-link identities refused by
+the single-link guard. These are worker observations, not an overall fixture pass.
+
+The final `preservation` guard failed with `identity_security_drift`. It compared
+directory size exactly but did not emit the differing object/field snapshots.
+An independent ordinary native reproduction observed directory size **0 -> 4096**
+from adding entries, with identity, ACL, protection, attributes and link count
+stable. The retained root now reports the same recorded index, attributes 16,
+one link and size 4096. This demonstrates a directory-size comparison bug and
+strongly explains the failure, but the missing protected fieldwise comparison
+cannot be backfilled as a pass. Overall `ok=false` remains unchanged.
+
+Independent read-back verified the approved bytes, payload/script hash and receipt.
+Both old result receipts and V1 source bytes remain unchanged. All new objects
+are retained; no retry, cleanup, existing ACL/ownership repair, manual privilege
+enabling, real credentials, helper update, VM operation or production integration
+occurred. SYSTEM/real-VM tests and production readiness remain false.
+
+Before execution, corrected applied review passed **27 without warnings**; Ruff,
+Mypy across **77 files**, whitespace/links, exact source/policy and bundle isolation
+passed. These are targeted review/model checks, not another native pass or a
+full-repository suite. Next is type-aware directory-versus-file preservation and
+bounded fieldwise failure evidence, while preserving the failed run and keeping
+regular-file size/bytes and all security/identity checks strict. No revised reader
+or future creation attempt is authorized by this outcome record. Gate A remains
+unrun.
+
+The OFFLINE-only comparator correction is now applied in the isolated native
+marker prototype, with schema/report and disposable native regressions. Directory
+storage-length changes are recorded rather than treated as regular-file content;
+file lengths stay strict, as do identity, kind/reparse, links, attributes,
+owner/ordered ACL and protection. Only the fixed empty regular-file marker-write
+context may expect a new length/ARCHIVE transition. Bounded 3,000-character/byte
+comparison-only reports name each object and exact changed fields, with scalar
+before/after values and ACL fingerprints rather than raw SDDL.
+
+Applied comparison/native-store suites passed **158 with 1 symlink skip**. Combined
+prototype/runtime checks passed **448 with 6 skips**, including those 158 tests:
+three retained-V1 skips and three unavailable symlink cases. The actual ordinary
+native directory-growth test passed. A separate native observation recorded
+storage **0 -> 4096** without metadata drift and refused regular-file **27 -> 28**
+with exact `temp_file`/`file_size` diagnostics; both complete reports explicitly
+retain `acceptance=false`. This does not validate directory contents or acquire
+production key-store authority.
+
+Repository Ruff, Mypy across **76 night-shift source files**, whitespace/links and
+actual bundle/caller isolation passed. Independent read-back confirmed all three
+result receipt hashes and both executed PowerShell source hashes unchanged. The
+launcher was verified, not modified. Only ordinary disposable test data was
+created/changed; no protected fixture data, ACL, claim, deployment or VM was
+modified and no new privileged request was made. Neither failed execution is
+rewritten or reclassified as passed. These are targeted isolated checks, not a
+full repository suite, accepted image, live inspection or Gate A result.
+
 ## Historical V2 preparation — 2026-10-17 (Gate A unrun)
 
 The general Administrator launcher and multiline pending-review UI are live-tested.

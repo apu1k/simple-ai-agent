@@ -8,6 +8,8 @@ Failures retain new objects for review. No permission repair or fallback.
 from __future__ import annotations
 
 import ctypes as c
+import hashlib
+import json
 import os
 import re
 from contextlib import ExitStack
@@ -37,9 +39,12 @@ _PTR = c.c_void_p
 class NativeStoreRefused(RuntimeError):
     """Fixed reason plus optional numeric Windows error; no raw OS/path text."""
 
-    def __init__(self, code: str, winerror: int | None = None) -> None:
+    def __init__(self, code: str, winerror: int | None = None, *,
+                 comparison: MetadataComparison | None = None) -> None:
         self.code = code
         self.winerror = winerror
+        self.comparison = comparison
+        # Structured non-secret differences are opt-in, not raw exception text.
         super().__init__(code if winerror is None else f'{code}: win32={winerror}')
 
 
@@ -57,6 +62,44 @@ class Observation:
     size: int
     acl: AclSnapshot
     protected: bool
+
+
+@dataclass(frozen=True)
+class MetadataComparison:
+    """Bounded differences of supplied facts; NOT native attestation/authority."""
+
+    object_label: str
+    differences: tuple[tuple[str, object, object], ...]
+    refusals: tuple[str, ...]
+    directory_storage_bytes: tuple[int, int] | None
+    expected_file_size: int | None
+    archive_change: tuple[int, int] | None
+
+    @property
+    def matches(self) -> bool:
+        return not self.differences and not self.refusals
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            'v': 1, 'scope': 'supplied_metadata_only', 'object': self.object_label,
+            'match': self.matches, 'acceptance': False,
+            'cols': ['field', 'before', 'after'],
+            'differences': [list(row) for row in self.differences],
+            'refused': list(self.refusals),
+            'directory_storage_bytes': self.directory_storage_bytes,
+            'expected_file_size': self.expected_file_size,
+            'archive_change': self.archive_change,
+        }
+
+    def to_json(self) -> str:
+        try:
+            raw = json.dumps(self.as_dict(), ensure_ascii=True, sort_keys=True,
+                             separators=(',', ':'), allow_nan=False)
+        except (TypeError, ValueError, RecursionError):
+            raise NativeStoreRefused('metadata_report_schema') from None
+        if len(raw) > 3000 or len(raw.encode('utf-8')) > 3000:
+            raise NativeStoreRefused('metadata_report_size')
+        return raw
 
 
 @dataclass(frozen=True)
@@ -382,14 +425,118 @@ def _sddl(*, directory: bool) -> str:
     return f'O:BAG:BAD:P(A;{flags};FA;;;SY)(A;{flags};FA;;;BA)'
 
 
-def _same(before: Observation, after: Observation, *, marker_written: bool = False) -> None:
-    # ARCHIVE may be set during a write; it does not weaken this protection.
-    # Conservative: even a directory-length change refuses this prototype.
-    if (before.identity != after.identity or before.links != after.links or
-            before.acl != after.acl or before.protected != after.protected or
-            (before.attributes & ~0x20) != (after.attributes & ~0x20) or
-            after.size != (len(MARKER) if marker_written else before.size)):
-        raise NativeStoreRefused('object_drift')
+def _uint(value: object, bits: int) -> bool:
+    return type(value) is int and 0 <= value < 1 << bits
+
+
+def _sid(value: object) -> bool:
+    return (type(value) is str and len(value) <= 184 and
+            re.fullmatch(r'S-[0-9]+(?:-[0-9]+)+', value) is not None)
+
+
+def _validate_metadata(value: Observation) -> None:
+    if (type(value) is not Observation or type(value.identity) is not FileIdentity or
+            not _uint(value.identity.volume, 32) or not _uint(value.identity.index, 64) or
+            not _uint(value.attributes, 32) or not _uint(value.links, 32) or
+            not _uint(value.size, 64) or type(value.protected) is not bool or
+            type(value.acl) is not AclSnapshot or not _sid(value.acl.owner) or
+            type(value.acl.rules) is not tuple or len(value.acl.rules) > 128):
+        raise NativeStoreRefused('metadata_schema')
+    for rule in value.acl.rules:
+        if (type(rule) is not AclRule or not _sid(rule.sid) or not _uint(rule.mask, 32) or
+                not _uint(rule.flags, 8) or not _uint(rule.kind, 8)):
+            raise NativeStoreRefused('metadata_schema')
+
+
+def _acl_digest(value: AclSnapshot) -> str:
+    # Exact ordered ACE facts, not keys/content or unbounded raw SDDL in reports.
+    raw = json.dumps([[r.sid, r.mask, r.flags, r.kind] for r in value.rules],
+                     ensure_ascii=True, separators=(',', ':')).encode('ascii')
+    return f'{len(value.rules)}:{hashlib.sha256(raw).hexdigest()}'
+
+
+def compare_metadata(
+    before: Observation, after: Observation, *, object_label: str = 'object',
+    expected_file_size: int | None = None, allow_archive_change: bool = False,
+) -> MetadataComparison:
+    """Compare supplied metadata only; never acquire, repair or authorize use.
+
+    A directory's storage length is not a content length. Its changes are
+    RECORDED, not silently discarded, while file length stays strict. Native
+    type/shape, security policy, provenance, byte checks and claims remain caller
+    obligations. No existing failed receipt/fixture is reclassified by this API.
+    """
+    if (type(object_label) is not str or
+            re.fullmatch(r'[a-z][a-z0-9_]{0,31}', object_label) is None or
+            (expected_file_size is not None and not _uint(expected_file_size, 64)) or
+            type(allow_archive_change) is not bool or
+            (allow_archive_change and expected_file_size is None)):
+        raise NativeStoreRefused('metadata_policy')
+    _validate_metadata(before)
+    _validate_metadata(after)
+    differences: list[tuple[str, object, object]] = []
+    refusals = []
+    for label, value in (('before', before), ('after', after)):
+        if value.identity.index == 0:
+            refusals.append(label + '_zero_identity')
+        if value.links != 1:
+            refusals.append(label + '_multiple_links')
+        if value.attributes & _REPARSE:
+            refusals.append(label + '_reparse')
+        if value.attributes & (_BAD_ATTRIBUTES & ~_REPARSE):
+            refusals.append(label + '_unsupported_attributes')
+    before_dir, after_dir = bool(before.attributes & _DIRECTORY), bool(after.attributes & _DIRECTORY)
+    both_dirs = before_dir and after_dir
+    if expected_file_size is not None:
+        if before_dir or after_dir:
+            refusals.append('controlled_write_not_regular')
+        if before.size != 0:
+            refusals.append('controlled_write_not_empty')
+    if before.identity != after.identity:
+        differences.append(('identity',
+                            f'{before.identity.volume:08x}:{before.identity.index:016x}',
+                            f'{after.identity.volume:08x}:{after.identity.index:016x}'))
+    if before_dir != after_dir:
+        differences.append(('kind', 'directory' if before_dir else 'file',
+                            'directory' if after_dir else 'file'))
+    archive_change = None
+    attribute_delta = before.attributes ^ after.attributes
+    if attribute_delta and allow_archive_change and not before_dir and not after_dir and not attribute_delta & ~0x20:
+        archive_change = (before.attributes, after.attributes)
+    elif attribute_delta:
+        differences.append(('attributes', f'0x{before.attributes:08x}', f'0x{after.attributes:08x}'))
+    if before.links != after.links:
+        differences.append(('links', before.links, after.links))
+    if before.acl.owner != after.acl.owner:
+        differences.append(('owner', before.acl.owner, after.acl.owner))
+    if before.acl.rules != after.acl.rules:
+        differences.append(('acl', _acl_digest(before.acl), _acl_digest(after.acl)))
+    if before.protected != after.protected:
+        differences.append(('protected', before.protected, after.protected))
+    if not both_dirs:
+        expected = before.size if expected_file_size is None else expected_file_size
+        if after.size != expected:
+            differences.append(('file_size', before.size, after.size))
+    report = MetadataComparison(
+        object_label, tuple(differences), tuple(refusals),
+        (before.size, after.size) if both_dirs and before.size != after.size else None,
+        expected_file_size, archive_change,
+    )
+    report.to_json()  # Enforce complete-report bounds before returning diagnostics.
+    return report
+
+
+def _same(before: Observation, after: Observation, *, marker_written: bool = False,
+          object_label: str = 'object') -> None:
+    if type(marker_written) is not bool:
+        raise NativeStoreRefused('metadata_policy')
+    report = compare_metadata(
+        before, after, object_label=object_label,
+        expected_file_size=len(MARKER) if marker_written else None,
+        allow_archive_change=marker_written,
+    )
+    if not report.matches:
+        raise NativeStoreRefused('object_drift', comparison=report)
 
 
 def probe_new_store(anchor_path: str, attempt_id: str) -> MarkerResult:
@@ -429,8 +576,8 @@ def _probe_on_anchor(api: _Windows, stack: ExitStack,
                      chain: list[tuple[_Handle, Observation]], attempt_id: str) -> MarkerResult:
     # Internal fixture seam, NOT an independently trusted anchor-acquisition API.
     anchor = chain[-1][0]
-    for handle, before in chain:
-        _same(before, api.observe(handle))
+    for index, (handle, before) in enumerate(chain):
+        _same(before, api.observe(handle), object_label=f'ancestor_{index}')
     store = stack.enter_context(api.relative(anchor, 'native-probe-' + attempt_id,
                                              directory=True, create=True,
                                              sddl=_sddl(directory=True), writable=True))
@@ -443,12 +590,14 @@ def _probe_on_anchor(api: _Windows, stack: ExitStack,
     if leaf_before.size != 0:
         raise NativeStoreRefused('new_file_not_empty')
     # Reattest every held handle before even the non-secret marker is written.
-    for handle, before in [*chain, (store, store_before), (leaf, leaf_before)]:
-        _same(before, api.observe(handle))
+    labeled = [(f'ancestor_{index}', handle, value)
+               for index, (handle, value) in enumerate(chain)]
+    for label, handle, before in [*labeled, ('store', store, store_before), ('marker', leaf, leaf_before)]:
+        _same(before, api.observe(handle), object_label=label)
     api.write_marker(leaf)
-    _same(leaf_before, api.observe(leaf), marker_written=True)
+    _same(leaf_before, api.observe(leaf), marker_written=True, object_label='marker')
     store_after = api.observe(store)
-    _same(store_before, store_after)
-    for handle, before in chain:
-        _same(before, api.observe(handle))
+    _same(store_before, store_after, object_label='store')
+    for label, handle, before in labeled:
+        _same(before, api.observe(handle), object_label=label)
     return MarkerResult(store_after.identity, leaf_before.identity, len(MARKER))

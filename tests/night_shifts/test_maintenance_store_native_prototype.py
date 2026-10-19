@@ -113,13 +113,22 @@ def test_ancestor_read_sibling_creation_or_inherit_only(rule):
 
 @pytest.mark.parametrize('change', [
     {'identity': m.FileIdentity(43, 1)}, {'identity': m.FileIdentity(42, 2)},
-    {'links': 2}, {'size': 1}, {'protected': False}, {'attributes': 0x410},
+    {'links': 2}, {'protected': False}, {'attributes': 0x410},
     {'acl': AclSnapshot(USER, ())},
 ])
-def test_identity_security_size_drift_refuses(change):
+def test_identity_security_drift_refuses(change):
     before = observation()
     with pytest.raises(m.NativeStoreRefused, match='object_drift'):
         m._same(before, replace(before, **change))
+
+
+@pytest.mark.parametrize('size', [1, 4096, 2**64 - 1])
+def test_regular_file_size_drift_still_refuses(size):
+    before = observation(directory=False)
+    with pytest.raises(m.NativeStoreRefused, match='object_drift') as failure:
+        m._same(before, replace(before, size=size), object_label='marker')
+    assert failure.value.comparison.object_label == 'marker'
+    assert ('file_size', 0, size) in failure.value.comparison.differences
 
 
 def test_only_archive_and_expected_marker_size_change_are_accepted():
@@ -200,6 +209,17 @@ def test_mocked_faults_never_retry_or_write_after_prewrite_refusal(fault):
         m._probe_on_anchor(api, stack, [(api.anchor, api.values['anchor'])], ATTEMPT)
     assert api.writes == (1 if fault == 'write_failure' else 0)
     assert len(api.created) <= 2 and all(item.closed for item in api.created)
+
+
+def test_mocked_drift_reports_exact_store_and_field():
+    api = FakeApi('store_drift')
+    with pytest.raises(m.NativeStoreRefused, match='object_drift') as failure, ExitStack() as stack:
+        m._probe_on_anchor(api, stack, [(api.anchor, api.values['anchor'])], ATTEMPT)
+    report = failure.value.comparison
+    assert report.object_label == 'store'
+    assert report.differences == (('protected', True, False),)
+    assert not report.matches and api.writes == 0
+    assert all(item.closed for item in api.created)
 
 
 @pytest.fixture

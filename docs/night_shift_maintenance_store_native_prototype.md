@@ -55,13 +55,88 @@ The directory profile is the existing strict ACL model applied to native
 observations. The new creation descriptor requests Administrators ownership;
 read-back accepts only the model's SYSTEM/Administrators ownership boundary.
 Unsupported ACE types or unusual filesystem behavior refuse rather than guess.
-Even directory-size drift is conservatively refused. The only ignored metadata
-change is the non-security ARCHIVE bit. This prototype does not promise to work
-on every existing Windows installation or choose a usable protected anchor.
+The original comparator conservatively refused even directory-size drift. A later
+OFFLINE-only correction is drafted below: record directory storage length changes
+separately from regular-file content length, and keep all identity/security checks.
+The non-security ARCHIVE exception is narrowed to an explicitly controlled empty
+regular-file marker write, not arbitrary stable metadata. This prototype does not
+promise to work on every Windows installation or choose a usable protected anchor.
 In particular, an ancestor owned by an ordinary operator or TrustedInstaller
 is not silently accepted, and no ACL/ownership repair is offered.
 
-## Validation boundary
+## Offline metadata-comparison correction — verified in isolation
+
+The [separate guard execution](night_shift_native_store_guard_checks.md) recorded
+four passing native case rows followed by a failed directory preservation guard.
+An ordinary native reproduction proved directory storage length can grow from
+0 to 4096 while identity, owner/DACL, protection, attributes and link count remain
+stable. That is not evidence regular-file length can be ignored, nor is it a way
+to reconstruct missing before/after fields from the failed privileged run.
+
+The applied `compare_metadata` companion is a pure function over supplied
+`Observation` values, NOT a Windows reader or authority certificate. It:
+
+- Validates bounded unsigned metadata, syntactic SID/ACE shapes and fixed ASCII
+  object labels; no arbitrary paths, marker contents or secret payload are logged.
+- Compares volume/file identity, object kind, all attributes, link count, owner,
+  ordered ACL facts and DACL-protected state. Invalid zero identity, multiple-link,
+  reparse or unsupported attribute shapes cannot pass merely by staying unchanged.
+- Records directory storage-length changes explicitly without treating them as
+  content drift. This does NOT compare directory entry sets or authorize unknown
+  contents. Every other mismatch/refusal remains visible, including when a
+  directory also grows. Regular-file sizes remain exact.
+- Allows only the existing fixed-marker write context to expect its new file
+  length; the baseline must be empty and regular. Only that explicit write may
+  toggle ARCHIVE. A size/attribute exception cannot apply to a directory, hide
+  changed security or silently permit preexisting file content.
+- Produces a complete JSON report capped at 3,000 characters/UTF-8 bytes. It names
+  the exact object and mismatching fields, records public scalar before/after
+  facts, and uses an ordered-ACE count/SHA-256 for ACL changes rather than raw,
+  potentially huge SDDL. Owner changes are separate fields. The existing reader
+  supplies owner/DACL/protection facts, not an SACL or group attestation.
+- Labels every report `supplied_metadata_only` with `acceptance=false`, even if
+  the comparison matches. Unreadable native observations still refuse; missing
+  data is not replaced with invented values. Existing access/provenance, byte
+  checks, private-ACL policy and permanent claims remain separate obligations.
+
+`_same` retains fixed `object_drift` exception text with an optional structured
+comparison property. Internal calls use stable labels (`ancestor_0`, `store`,
+`marker`), not caller/guest-selected filenames. Complete report bounds are checked
+before returning a comparison; over-limit reports refuse, never truncate a pass.
+No filesystem writer or CLI is added. No private-key bytes are accepted.
+
+New regressions cover directory growth/shrinkage reporting, strict file size,
+all metadata drift fields, invalid/stable unsupported shapes, controlled writes,
+bounded schemas/reports, object/field error propagation and an ordinary disposable
+native directory-growth reproduction. The two executed PowerShell sources are
+frozen by normalized embedded-source hashes and are NOT edited, invoked or reused
+by this batch. No old receipt is changed or reclassified, and the original final
+preservation failure stays failed. Applied comparison/native-store suites passed
+**158 with 1 existing symlink skip**. A combined prototype/runtime rerun passed
+**448 with 6 skips**, including those 158 tests; three skips preserve V1 against
+reinvocation and three concern unavailable symlink cases. The ordinary native
+directory-growth test PASSED, not skipped. These are targeted runs, not a full
+repository suite or a new privileged fixture pass.
+
+A separate ordinary native observation confirmed two complete bounded reports:
+
+- `temp_directory`: native size **0 -> 4096**, no metadata differences/refusals,
+  explicit `directory_storage_bytes=[0,4096]`, `match=true`, `acceptance=false`.
+- `temp_file`: native size **27 -> 28**, exact difference
+  `["file_size",27,28]`, `object_drift` refusal, `match=false`, `acceptance=false`.
+
+Only disposable current-user files were created/changed. No protected fixture
+was used in this reproduction. Native-file ownership substitution and metadata
+models remain distinct from production-owner/key-store attestation.
+
+Repository Ruff, Mypy across **76 night-shift source files**, whitespace/links,
+no-production-caller and actual in-memory bundle exclusions passed. Independent
+read-back confirmed all **three** prior result-file hashes and both executed
+PowerShell source-byte hashes unchanged. The launcher was verified without
+modification. No bundle was written, no dependency installed and no new privileged
+request, retained-object mutation, permission repair or VM operation occurred.
+
+## Earlier validation boundary (before this comparison correction)
 
 The corrected applied native-store suite passed **88 tests with 1 skip**.
 A combined rerun with the TLS/credential suites passed **237 with 1 skip**;
