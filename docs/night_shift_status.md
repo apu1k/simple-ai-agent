@@ -1,6 +1,42 @@
 # Night-shift implementation status and validation gates
 
-## Current Gate A channel review — 2026-10-18 (Gate A unrun)
+## Public-only KVP adapter source candidate (Gate A unrun)
+
+The [public bootstrap adapter boundary](night_shift_public_bootstrap_kvp.md)
+proposes a fixed Linux pool-1 publisher and local exact-VM WMI reader, rather than
+another native marker fixture. It reuses the bounded public record, preserves
+unrelated pool records, uses whole-file POSIX record locks, rejects collisions,
+checks exact fresh feasibility-VM name/Notes/state and custom guest Source=1,
+and freezes the first observed public identity. Malformed/stale/changed records,
+uncertain publication, cancellation and output bounds fail closed. Name/state
+stability is not boot attestation or a fresh permanent claim.
+
+After the applied bounded test-ID correction, the standard new suite passed
+**88 with 1 Linux skip** and the normal combined targeted selection passed
+**495 with 3 skips**, INCLUDING those 88. No transient ID hook or runtime
+substitution was used in these reruns. The initial invocation's Windows
+environment-variable length failure and earlier hooked results remain historical;
+the correction changes only test IDs, not inputs, assertions or runtime policy.
+A related earlier command with a nonexistent file collected no tests; the
+corrected selection passed. Repository Ruff/Mypy across **79 files**, Python/
+PowerShell parsing, synthetic provider selection, actual in-memory bundle
+exclusion, local links and whitespace checks passed again. The source/test batch
+is ready to commit, not ready for live execution or deployment. See the linked
+record for exact subsets and limits.
+
+The tests remove/mock the native provider and use only synthetic/disposable data;
+the Linux native fixture explicitly substitutes ordinary ownership and skips on
+Windows. Frozen fixture/runtime sources match HEAD after canonical LF comparison;
+all three prior result receipts retain their pinned hashes. No prior failed run
+is reclassified. No real WMI/KVP access, guest service change, live credential,
+protected deployment, VM operation, claim reset or retained-object mutation
+occurred. Existing production inspection/bundles remain unchanged. Next is to
+scope the separately reviewed non-secret fresh-VM feasibility probe; not another
+retained fixture run or an authorized VM start. TLS integration, accepted image
+and the separate Gate A runtime transport/lifecycle boundary remain open.
+No restart is needed.
+
+## Historical Gate A channel review — 2026-10-18 (Gate A unrun)
 
 The [COM1 security review and proposed channel boundary](night_shift_pipe_security_review.md)
 records the retained V2 diagnostic requests, native identity review and remaining
