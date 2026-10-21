@@ -1,6 +1,12 @@
 # Public-only Linux KVP publisher and exact-VM host reader — source candidate
 
-**Verified offline after the applied test-ID correction; live feasibility unrun.**
+**Committed as `77c9b4f`; verified offline; live feasibility unrun and media-blocked.**
+The [actual recovery-media review and next scope](night_shift_bootstrap_feasibility.md)
+found no declared daemon package in six ISO manifests and no KVP daemon binary/unit
+names in an exploratory directory-metadata walk of five SquashFS layers. This is
+not a full initramfs/live audit, but daemon/runtime support is unestablished: do
+not launch the as-is probe or silently install/start a daemon. A separately
+reviewed RAM-only runtime addition or different reviewed recovery ISO is needed.
 This is the next integrated-bootstrap building block, not another marker-store
 fixture. It implements native adapter code but does not deploy it, invoke WMI, publish KVP,
 generate a credential, operate a VM, retry inspection or enable Gate A. See the

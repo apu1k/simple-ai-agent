@@ -1,5 +1,74 @@
 # Night-shift implementation status and validation gates
 
+## Authenticated KVP runtime staged for review; no deployment or VM run
+
+Following operator consent, [review-only daemon staging](night_shift_kvp_runtime_review.md)
+created one new external staging directory, authenticated current Ubuntu metadata
+against the archive key recovered from the rehashed pinned ISO, and obtained all
+three exact `6.8.0-139.139` cloud-tools packages. The real KVP ELF is present and
+its static loader/dependency inventory is compatible in version terms with the
+ISO manifest, not yet a live ABI result. The common package's hooks also enable
+file-copy/VSS: do not install it, run its hooks or use its wrapper as a shortcut.
+
+Exact-version source was separately authenticated through archive-signed historical
+Ubuntu metadata, without substituting a newer source or relaxing the current
+binary metadata freshness policy. Static source review corroborates the existing
+512/2048-byte pool arrays, POSIX record locks and enumeration reload; it also
+confirms blocking operations, host mutation/IP operations and helper-execution
+paths requiring future confinement/supervision. No reproducible build, complete
+security audit, live Linux compatibility or production authentication is claimed.
+48 retained staging artifacts total 244031259 bytes; the linked record pins their
+ordinary mutable catalog and explains all discovery failures/truncation limits.
+
+The fixed single-ELF in-memory extractor and regressions passed applied checks:
+**126 with 1 skip** for extractor/bootstrap, including 38 new extractor tests;
+**405 with 2 skips** for the combined six-file credential/TLS/failure/native-store
+selection, INCLUDING those 126. The skips are Linux disposable-fd behavior and
+unavailable unelevated symlink creation, not live successes. Repository Ruff and
+Mypy across **80 files**, strict compilation, 23 local links and whitespace
+checks passed. These are targeted, not full-repository test-suite results.
+
+The actual staged package passed the applied public extractor with unchanged
+pins, returning only the expected 44712-byte ELF in memory, never executing it.
+All 48 staging artifacts still match the pinned catalog. The actual 31-entry
+inspection ZIP excludes the candidate and acquired artifacts; 16 existing
+bundle/bootstrap/frozen-fixture sources match HEAD after canonical LF comparison.
+The extractor pins the whole reviewed package before parsing, returns only the
+exact ELF and exposes no execution/installation/media/VM interface. Python 3.14
+stdlib zstd is a guarded explicit-extraction requirement, not a new app-wide
+minimum/dependency or fallback install. This batch is verified for an offline
+commit, not media creation/deployment. Next: public-only RAM support seed/guest
+probe source, followed by a separately reviewed diskless VM runner. The pinned
+ISO remains unusable for the as-is daemon-free probe. No media build, elevation,
+service change, WMI/KVP access, VM operation, permission repair, credential
+generation, claim reset or restart occurred. Gate A remains unrun.
+
+## Historical live-bootstrap prerequisite review: pinned recovery ISO not ready
+
+The public-only adapter batch is committed as `77c9b4f`; the tree was clean at
+review. The standard adapter rerun passed **88 with 1 Linux-only skip**. The
+[actual-media investigation and proposed next scope](night_shift_bootstrap_feasibility.md)
+rehashed the existing Ubuntu recovery ISO to its reviewed digest and inspected
+all six package manifests. None declared a cloud-tools/Hyper-V/KVP daemon
+package. An exploratory bounded in-memory directory-metadata walk of all five
+SquashFS layers found no KVP daemon binary/unit names; kernel support, cloud-init's
+Azure KVP reader and sos plugins are not that daemon. This is read-only
+corroboration, not a complete initramfs audit, live guest test or protected receipt.
+The **as-is fresh-VM KVP probe is blocked by unestablished daemon/runtime support**;
+no VM attempt was made. Do not silently install/start a daemon or enable Data
+Exchange. Two external package file-list reference fetches failed HTTP 500 and
+supply no provenance evidence.
+
+The proposed lowest-change next step is separately consented acquisition/review
+of authenticated distro daemon/runtime support for a **new diskless RAM-only
+public probe**, or a separately reviewed KVP-capable recovery ISO. No package has
+been fetched, installed or executed, no source/media/runner implementing that
+expanded scope exists, and no new deployment/VM approval is implied. First establish
+the trusted archive key/verifier and compatibility; stop if unavailable. V1/V2 and
+all retained claims/objects remain untouched. Live bootstrap, credential/TLS serial
+integration, accepted image and Gate A transport/cleanup remain open. Gate A is
+unrun; no elevation or restart occurred.
+
 ## Public-only KVP adapter source candidate (Gate A unrun)
 
 The [public bootstrap adapter boundary](night_shift_public_bootstrap_kvp.md)
