@@ -1,5 +1,43 @@
 # Night-shift implementation status and validation gates
 
+## Public support seed / guest probe applied — portability correction pending
+
+Daemon-asset commit `1ec0d90` is present; the working tree was clean before this
+batch. The [new source boundary](night_shift_public_probe_seed.md) drafts a
+fixed-inventory deterministic in-memory support ZIP, pinned single KVP ELF and
+license/source notices, fixed deliberately non-authenticating public parser
+fixture and opt-in Linux guest preflight/foreground supervisor. It reuses the
+existing locked publisher once. It refuses missing RAM-only/readonly views,
+zero-capability/NNP/namespaces, enforced reviewed AppArmor confinement, disk/swap/
+network isolation, expected DMI VM identity or fresh pool prerequisites; it
+cannot establish/repair those controls or operate a VM.
+
+Initial applied probe tests: **47 passed, 2 failed**, both from Windows `Path`
+rendering in Linux model constants; one intentional duplicate-ZIP warning also
+needs explicit assertion. Repository Ruff and strict three-file compilation
+passed. Mypy found **8 Linux-only ABI typing errors across 82 checked files**.
+Pending correction keeps fixed lexical POSIX paths, guards/types Linux native
+helpers without fallback, distinguishes no child from confirmed exit and reports
+UNKNOWN for attempted spawn without a returned handle. The correction and new
+regressions still require their applied standard rerun; do not commit yet.
+
+The unchanged six-file related suite passed **405 with 2 skips**, EXCLUDING the
+new suite. Actual package/license inputs built/validated an identical 154681-byte,
+18-entry data ZIP twice **in memory only**; the corrected snapshot must be rebuilt
+and rechecked. No media or executable file was written, daemon or policy ran, or
+live success was claimed. All 48 staging artifacts retain their catalog hashes;
+112 tracked night-shift/script sources match HEAD, the actual 31-entry inspection
+ZIP excludes the candidates, 20 local links resolve and whitespace checks passed.
+The data ZIP is not a bootable ISO or NoCloud activation. Next after applied checks:
+fixed trusted recovery boot handoff/confinement and native policy validation,
+then separately reviewed media/host runner/protected watchdog, before any fresh
+VM attempt. Internal manifests and profile names are not provenance. The guest
+report is local, not independent host receipt or VM cleanup evidence. Production
+credential/channel, accepted image and Gate A transport/cleanup remain open.
+No elevation, WMI query, KVP publication, service change, credential generation,
+permission repair, retained-object mutation, VM operation or restart occurred.
+Gate A remains unrun. The prior validated extractor checkpoint follows below.
+
 ## Authenticated KVP runtime staged for review; no deployment or VM run
 
 Following operator consent, [review-only daemon staging](night_shift_kvp_runtime_review.md)

@@ -1,0 +1,45 @@
+# SOURCE CANDIDATE ONLY: not loaded, parser/native behavior unverified.
+# A later reviewed guest launcher must load THESE PINNED BYTES before importing
+# or executing support code, with complete PID visibility, separate mount/net
+# namespaces, zero capabilities, NNP, readonly root and fixed tmpfs mounts.
+# This file alone establishes none of those controls. Never install persistently.
+# Do not add abstractions that silently allow shell/network/helper execution.
+profile night-shift-kvp-public-probe flags=(mediate_deleted) {
+  /usr/bin/python3.12 rix,
+  /usr/lib/** mr,
+  /lib/** mr,
+  /lib64/** mr,
+  /usr/local/lib/python*/** r,
+  /etc/ld.so.cache r,
+  /etc/os-release r,
+  /usr/lib/os-release r,
+  /etc/hosts r,
+  /etc/host.conf r,
+  /etc/nsswitch.conf r,
+  /etc/resolv.conf r,
+  /etc/gai.conf r,
+  /etc/localtime r,
+  /etc/passwd r,
+  /etc/group r,
+  /proc/ r,
+  /proc/** r,
+  /sys/ r,
+  /sys/** r,
+  /dev/null rw,
+  /dev/urandom r,
+  /dev/random r,
+  /dev/vmbus/hv_kvp rw,
+  /run/night-shift-bootstrap/ r,
+  /run/night-shift-bootstrap/support.zip r,
+  /run/night-shift-bootstrap/hv_kvp_daemon mrwix,
+  /var/ r,
+  /var/lib/ r,
+  /var/lib/hyperv/ r,
+  /var/lib/hyperv/.kvp_pool_[0-4] rwk,
+  signal (send, receive) peer=night-shift-kvp-public-probe,
+  signal (receive) peer=unconfined,
+  deny network,
+  deny capability,
+  # /bin/sh, package hooks, /usr/libexec/hypervkvpd/*, arbitrary commands,
+  # mount/ptrace and all other filesystem writes have no allow rule.
+}

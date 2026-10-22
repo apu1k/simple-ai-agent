@@ -1,5 +1,23 @@
 # Authenticated KVP-daemon staging and static review — NOT deployed
 
+**Next applied batch — corrections pending:** commit `1ec0d90` preserves the
+verified extractor checkpoint. The [support seed/guest probe](night_shift_public_probe_seed.md)
+passed 47 initial tests and failed 2 Windows path-model tests; Ruff passed but
+Mypy found 8 Linux-only ABI typing errors across 82 files. Proposed POSIX-path/
+guarded-ABI and conservative spawn/exit-reporting corrections require an applied
+standard rerun before commit. The unchanged six-file related selection passed
+405 with 2 skips, excluding the new suite.
+
+Actual package/license inputs built/validated a deterministic 18-entry data ZIP
+twice **in memory only**; the corrected source snapshot must be rechecked. No
+seed/ELF file was written or executed. All 48 staged artifacts still match the
+pinned catalog, 112 tracked runtime/script files match HEAD and the actual
+inspection ZIP excludes the candidate. No media authoring/deployment, AppArmor
+load, installation, live KVP test or VM operation occurred. Trusted boot/
+confinement, native policy validation, support media and protected host runner
+remain separate next work. The validated extractor checkpoint below is not
+superseded or promoted to live success.
+
 The operator authorized review-only package staging after the
 [recovery-media prerequisite investigation](night_shift_bootstrap_feasibility.md).
 This records actual ordinary-process acquisition/static review, plus a draft
