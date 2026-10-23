@@ -1,22 +1,38 @@
 # Authenticated KVP-daemon staging and static review — NOT deployed
 
-**Next applied batch — corrections pending:** commit `1ec0d90` preserves the
-verified extractor checkpoint. The [support seed/guest probe](night_shift_public_probe_seed.md)
-passed 47 initial tests and failed 2 Windows path-model tests; Ruff passed but
-Mypy found 8 Linux-only ABI typing errors across 82 files. Proposed POSIX-path/
-guarded-ABI and conservative spawn/exit-reporting corrections require an applied
-standard rerun before commit. The unchanged six-file related selection passed
-405 with 2 skips, excluding the new suite.
+**Current integration boundary:** the support seed is committed as `50b61ee`.
+The uncommitted [recovery handoff/launcher](night_shift_recovery_handoff.md) now
+passes its standard applied targeted rerun: **509 with 2 skips**, INCLUDING all
+50 new handoff regressions and 459 related tests. Repository Ruff and Mypy across
+84 source files pass. Real pinned inputs reproduce seed/handoff bytes twice in
+memory; all 48 staging artifacts still match the catalog and inspection-bundle
+exclusion passes. Earlier partial-application failures are historical, not live
+Linux results. Native policy/boot/ABI compatibility remains unverified. Remote
+source/test work requires neither elevation nor an immediate commit.
 
-Actual package/license inputs built/validated a deterministic 18-entry data ZIP
-twice **in memory only**; the corrected source snapshot must be rechecked. No
-seed/ELF file was written or executed. All 48 staged artifacts still match the
-pinned catalog, 112 tracked runtime/script files match HEAD and the actual
-inspection ZIP excludes the candidate. No media authoring/deployment, AppArmor
-load, installation, live KVP test or VM operation occurred. Trusted boot/
-confinement, native policy validation, support media and protected host runner
-remain separate next work. The validated extractor checkpoint below is not
-superseded or promoted to live success.
+**Historical support-seed verification:** commit `1ec0d90` preserves the extractor
+checkpoint. The [support seed/guest probe](night_shift_public_probe_seed.md) now
+passes the standard seven-file rerun: **459 with 2 skips**, INCLUDING 54 new tests
+and the earlier 405 related tests, with warnings as errors and no temporary hook
+or source substitution. Initial Windows path-model failures and Linux-only ABI
+typing errors are historical; applied POSIX-path/guarded-ABI and conservative
+spawn/exit-reporting corrections passed. Repository Ruff and Mypy across **82
+source files** passed. Strict source/package compilation and Python 3.12 syntax
+parsing passed; no Linux runtime/native success is inferred from those checks.
+
+Actual package/license inputs built/validated the corrected **155769-byte,
+18-entry data ZIP twice identically in memory only**. The linked record pins
+its ordinary checked snapshot hash, not deployment authority. No seed/ELF file
+was written or executed. Independent read-back again confirmed all 48 staged
+artifacts match the catalog, 112 tracked runtime/script files match HEAD, and
+the actual 31-entry inspection ZIP excludes the candidate. Links/whitespace
+checks passed. That support-seed checkpoint subsequently became `50b61ee`, not
+media authoring or execution approval. It does not validate the new handoff.
+
+No AppArmor load, installation, live KVP test or VM operation occurred. Trusted
+boot/confinement, native policy validation, support media and the protected host
+runner remain next integration work. The validated extractor checkpoint below
+is not superseded or promoted to live success.
 
 The operator authorized review-only package staging after the
 [recovery-media prerequisite investigation](night_shift_bootstrap_feasibility.md).

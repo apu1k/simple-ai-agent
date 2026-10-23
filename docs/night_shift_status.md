@@ -1,9 +1,72 @@
 # Night-shift implementation status and validation gates
 
-## Public support seed / guest probe applied — portability correction pending
+## Native-confinement review scope and offline harness — verified offline
 
-Daemon-asset commit `1ec0d90` is present; the working tree was clean before this
-batch. The [new source boundary](night_shift_public_probe_seed.md) drafts a
+The Flex retry side task is complete; Gate A prerequisite work has resumed within
+the unchanged remote-session limits. The new [native-confinement review scope](night_shift_native_confinement_review.md)
+sets out actual Linux/runtime, NNP/AppArmor transition, mount/device isolation,
+harmless denial-control and independent lifecycle/evidence requirements. A new
+test-only `test_bootstrap_confinement_contract.py` harness compares the launcher's
+recorded mount argv with the real probe checker and injects terminal phase
+failures. Neither the scope nor the synthetic harness is native evidence or an
+execution grant. No new production validator or deployment entry point is added.
+
+The applied harness passes **39 tests**. The standard combined ten-file
+selection passes **548 with 2 skips in 4.00 seconds**, INCLUDING those 39 and
+the earlier 509 related checks, warnings as errors and without temporary hooks.
+The same two skips remain Linux-only fds and unavailable unelevated symlink
+creation, not native successes. Repository Ruff and Mypy across **84 night-shift
+source files** pass. Strict in-memory compilation/Python 3.12 grammar pass for
+five handoff/test files and 11 packaged Python snapshots; actual in-memory bundle
+exclusion, unchanged launcher/policy snapshots, existing tracked source
+preservation, 26 local document links and whitespace checks pass. No runtime
+source repair or reload is needed. These are targeted offline checks, not a
+full-suite or Linux/runtime result. Historical actual-input handoff building and
+full staging rehash were not repeated for this test/document-only checkpoint.
+
+No elevation, native guest command, policy/daemon execution, media authoring,
+VM operation, service/network change, restart or commit occurred in this batch.
+Next: design the separately reviewed fixed guest-only native validator/harmless
+controls and immutable media/host watchdog boundaries. Gate A remains unrun;
+local access and fresh approval are required for live work.
+
+## Recovery handoff verified offline — uncommitted, not deployed
+
+The public support seed is committed as `50b61ee`. Focused repairs to the
+uncommitted [handoff/launcher candidate](night_shift_recovery_handoff.md) are
+applied: bounded short-read completion, unused-loop/backing distinction, fresh
+sysfs in the private network namespace and unused-import cleanup. The earlier
+37 passes / 8 failures are historical synthetic results, not a live attempt.
+
+The normal nine-file targeted rerun passes **509 with 2 skips in 4.02 seconds**,
+INCLUDING all **50 new handoff regressions** and the earlier 459 related tests.
+Warnings are errors; no transient hook or source substitution is used. Repository
+Ruff and Mypy across **84 source files** pass. The same two skips remain Linux
+fds and unavailable unelevated symlink creation, not native successes.
+
+Actual pinned package/license inputs produce identical support ZIPs and four-file
+handoffs twice, in memory only. The 18-entry ZIP remains 155769 bytes with its
+committed snapshot digest. Handoff user-data is 23793 bytes; its fixed command
+is 23569 bytes. Four new Python sources, 11 packaged Python entries, embedded
+command and decoded launcher pass strict compilation/Python 3.12 grammar checks,
+not executed Linux/import/ABI validation. All 48 staged artifacts retain their
+catalog hashes; the actual 31-entry inspection bundle excludes the candidates.
+Existing tracked night-shift/script/test sources have no HEAD diff; untracked
+files are checked separately. Links and whitespace checks pass. No seed/media
+or executable asset was written, and no native guest code or policy was run.
+This uncommitted checkpoint is verified for offline development, not live use.
+
+The operator is remote through Tailscale: no elevation, service/network/remote
+access changes, policy loading, installation, media authoring or VM operations.
+Continue ordinary-user source/tests, retain the uncommitted files, and defer
+commits until local access is available. Next: native confinement review, then
+deterministic support media and the exact-owned diskless runner/
+protected watchdog, each with separate execution approval. Gate A remains unrun.
+
+## Historical support-seed checkpoint — verified offline and committed
+
+Daemon-asset commit `1ec0d90` was present and the working tree was clean before
+that support-seed batch. The [new source boundary](night_shift_public_probe_seed.md) drafts a
 fixed-inventory deterministic in-memory support ZIP, pinned single KVP ELF and
 license/source notices, fixed deliberately non-authenticating public parser
 fixture and opt-in Linux guest preflight/foreground supervisor. It reuses the
@@ -12,23 +75,31 @@ zero-capability/NNP/namespaces, enforced reviewed AppArmor confinement, disk/swa
 network isolation, expected DMI VM identity or fresh pool prerequisites; it
 cannot establish/repair those controls or operate a VM.
 
-Initial applied probe tests: **47 passed, 2 failed**, both from Windows `Path`
-rendering in Linux model constants; one intentional duplicate-ZIP warning also
-needs explicit assertion. Repository Ruff and strict three-file compilation
-passed. Mypy found **8 Linux-only ABI typing errors across 82 checked files**.
-Pending correction keeps fixed lexical POSIX paths, guards/types Linux native
-helpers without fallback, distinguishes no child from confirmed exit and reports
-UNKNOWN for attempted spawn without a returned handle. The correction and new
-regressions still require their applied standard rerun; do not commit yet.
+The first probe run's **47 passes / 2 Windows path-model failures** and Mypy's
+**8 Linux-ABI typing errors** are historical, not live failures. Applied fixed
+POSIX lexical paths, guarded typed Linux helpers, explicit duplicate-warning
+assertion and conservative spawn/exit reporting now pass the standard rerun.
+Attempted spawn without a returned handle remains UNKNOWN, not proof of absence.
 
-The unchanged six-file related suite passed **405 with 2 skips**, EXCLUDING the
-new suite. Actual package/license inputs built/validated an identical 154681-byte,
-18-entry data ZIP twice **in memory only**; the corrected snapshot must be rebuilt
-and rechecked. No media or executable file was written, daemon or policy ran, or
-live success was claimed. All 48 staging artifacts retain their catalog hashes;
-112 tracked night-shift/script sources match HEAD, the actual 31-entry inspection
-ZIP excludes the candidates, 20 local links resolve and whitespace checks passed.
-The data ZIP is not a bootable ISO or NoCloud activation. Next after applied checks:
+The normal seven-file targeted command passed **459 with 2 skips in 3.72 seconds**,
+with warnings as errors and no transient hook/source substitution. This INCLUDES
+all **54 new probe tests** and the earlier 405 related tests. Skips remain Linux
+fds and unavailable unelevated symlink creation, not native successes. Repository
+Ruff and Mypy across **82 source files** passed. Strict compilation passed for
+three new Python files and 11 packaged Python entries; those 11 also passed
+Python 3.12 syntax parsing, not executed Linux/runtime validation.
+
+Actual package/license inputs built/validated the corrected **155769-byte,
+18-entry data ZIP twice identically in memory only**, containing the same pinned
+44712-byte ELF and 632-byte public record. The linked record pins the checked
+snapshot digest without promoting it to protected deployment authority. No media
+or executable file was written and no daemon or AppArmor policy ran. All 48
+staging artifacts retain their catalog hashes; 112 tracked runtime/script files
+match HEAD, the actual 31-entry inspection ZIP excludes the candidates, 20 local
+links resolve and whitespace checks passed. That seven-file batch subsequently became `50b61ee`; these are
+historical checks, not validation of the new handoff. It was not approved for
+live use. The data ZIP is not a bootable ISO or NoCloud activation. Integration
+work identified at that checkpoint:
 fixed trusted recovery boot handoff/confinement and native policy validation,
 then separately reviewed media/host runner/protected watchdog, before any fresh
 VM attempt. Internal manifests and profile names are not provenance. The guest

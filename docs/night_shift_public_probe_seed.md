@@ -1,7 +1,16 @@
-# Deterministic public support seed and fixed guest probe — applied correction pending
+# Deterministic public support seed and fixed guest probe — verified offline
 
-**Applied; offline checks found portability/reporting corrections still pending.
-NOT deployed, bootable media or execution approval.** This advances the [reviewed daemon asset](night_shift_kvp_runtime_review.md)
+**Support-seed checkpoint committed as `50b61ee`; verified offline only, NOT
+deployment, bootable media or execution approval.** The subsequent uncommitted
+[recovery handoff/launcher](night_shift_recovery_handoff.md) now passes its applied
+offline rerun: **509 with 2 skips**, including all 50 handoff regressions and the
+459 related tests. Repository Ruff and Mypy across 84 source files pass. Actual
+inputs reproduce this unchanged seed and the new handoff twice in memory; no
+media is written or guest code/policy run. The handoff remains uncommitted for
+remote-session offline development, NOT native or deployment approval. Its
+linked validation record is separate from the historical seed checks below.
+This advances the
+[reviewed daemon asset](night_shift_kvp_runtime_review.md)
 toward the [fresh diskless feasibility test](night_shift_bootstrap_feasibility.md).
 It does not start that test or enable Gate A. The original recovery ISO, V1/V2,
 consumed claims, frozen scripts and prior receipts are not inputs or edit targets.
@@ -63,7 +72,7 @@ by a private PID namespace. Guest-root adversaries and a malicious host are not
 made safe by directory checks. Missing/mismatched prerequisites refuse, with no
 weaker-mode, package-manager, shell, networking or service-enable fallback.
 
-## Initial applied verification — corrections required
+## Historical initial verification — corrected by the standard rerun below
 
 The new synthetic tests cover deterministic inventory/metadata, external digest,
 wrong binding, manifest rehash attempts against pinned assets, ZIP links/extra/
@@ -82,20 +91,23 @@ Linux execution. Repository Ruff passed. Mypy checked **82 files** and found
 **8 errors** for unguarded Linux-only OS flags/process-group/signal attributes.
 Strict warning-as-error compilation of all three new Python files passed.
 
-Pending source correction uses lexical POSIX constants on every host and a
+The applied correction uses lexical POSIX constants on every host and a
 Linux-guarded typed stdlib ABI for native helpers; there is no Windows execution
-fallback or weakened path/mount policy. A related reporting correction separates
-no-child-started from confirmed direct-child exit and reports **UNKNOWN** if a
-spawn was attempted but no process handle returned. New regressions cover those
-cases, unready-daemon timeout, post-publication exit and exhausted stop waits;
-the known duplicate-member warning is explicitly asserted rather than leaked.
-**These corrections and new regressions have not yet passed an applied rerun.**
+fallback or weakened path/mount policy. Reporting separates no-spawn-attempt
+from confirmed direct-child exit and reports **UNKNOWN** if a spawn was attempted
+but no process handle returned. `direct_child_started` reflects acquisition of
+that child handle, not proof of process absence when false: `spawn_attempted=true`
+with no handle remains UNKNOWN, with `direct_child_stopped=null`. New regressions
+cover those cases, unready-daemon timeout, post-publication exit and exhausted
+stop waits. The intentional duplicate-member warning is explicitly asserted.
+These corrections passed the standard applied rerun recorded below.
 
 The unchanged six-file extractor/bootstrap/credential/TLS/failure/native-store
 selection passed **405 with 2 skips** in 4.55 seconds. It EXCLUDES the new probe
 suite. Skips remain Linux disposable fds and unavailable unelevated symlink
 creation, not successful native deployment. These are targeted, not full-repository
-results; the new probe suite and Mypy are not green yet.
+results. At this historical checkpoint the new probe suite and Mypy were not
+green; the successful corrected rerun follows below.
 
 The actual staged package and pinned license texts built and validated a
 **154681-byte, 18-entry ZIP twice identically, entirely in memory**, with a
@@ -111,13 +123,44 @@ LF comparison; no old runtime, adapter, fixture or bundle policy changed. All 20
 checked local links resolve and `git diff --check` passed. No protected marker
 or VM operation participated in these tests.
 
-After applying the correction: rerun the normal new-plus-related suite without
-a transient test hook, repository Ruff/Mypy, strict compilation and the real-input
-in-memory determinism/inventory checks against the corrected source snapshot.
-Recheck preservation/links/whitespace before any commit recommendation.
-Do not commit, build media or run the probe manually yet. No new dependency or
-elevation is needed for verification; Linux policy/parser/native behavior remains
-unverified and must not be replaced with a model-only claim.
+## Corrected applied verification — standard rerun passed
+
+The standard seven-file targeted command ran with **warnings treated as errors**:
+
+```text
+python -W error -m pytest -q tests/night_shifts/test_bootstrap_public_probe.py tests/night_shifts/test_bootstrap_daemon_asset.py tests/night_shifts/test_public_bootstrap_kvp.py tests/night_shifts/test_maintenance_credentials_prototype.py tests/night_shifts/test_maintenance_tls_prototype.py tests/night_shifts/test_maintenance_failure_diagnostics.py tests/night_shifts/test_maintenance_store_native_prototype.py -rs
+```
+
+Result: **459 passed, 2 skipped in 3.72 seconds**, INCLUDING all **54 new probe
+tests** and the 405 related tests above, not additional coverage on top of them.
+There was no transient hook or runtime source substitution. The same two skips
+remain Linux disposable fds and unavailable unelevated symlink creation. This is
+a targeted offline result, not the full repository or native/Linux feasibility.
+Repository Ruff passed and Mypy passed across **82 night-shift source files**.
+Strict compilation passed for the three new Python files and all 11 packaged
+Python entries. Those 11 entries also parsed under Python 3.12's syntax grammar;
+this is NOT an executed Python 3.12/Linux import or ABI compatibility test.
+
+The corrected snapshot built/validated twice identically using the actual pinned
+package/license inputs, in memory only: **155769 bytes, 18 entries**, with the
+same 44712-byte ELF and 632-byte public record. Corrected snapshot SHA-256:
+`d357624a8a4709da838ce229b5223f27126dbd37ffb547c31e12fb3eaf30df12`.
+This ordinary source-snapshot check is not protected deployment authority; any
+future author/launcher must independently pin/recheck its reviewed complete code
+and media inventory before import/use. No seed or standalone ELF was written.
+
+Independent read-back again verified all **48 staged artifacts / 244031259 bytes**
+against the pinned catalog. All **112 tracked night-shift/script files** still
+match HEAD after canonical LF comparison. The actual 31-entry inspection ZIP
+excludes the candidates; all 20 checked local document links resolve and
+`git diff --check` passed. No existing runtime, adapter, frozen fixture, receipt
+or bundle policy was modified, and no prior failed run was reclassified.
+
+The seven-file source/test/documentation checkpoint was subsequently committed
+as `50b61ee`. Keep its historical validation separate from the uncommitted
+handoff/launcher work. Do not build media or run the probe manually. No dependency installation, elevation or restart is
+needed. AppArmor parsing/native enforcement, Linux runtime behavior, boot handoff,
+host receipt and VM cleanup remain unverified, not model-only successes.
 
 ## Next integration boundary, not covered here
 
