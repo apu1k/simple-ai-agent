@@ -23,7 +23,8 @@ from config import MAX_AGENT_STEPS, MAX_BATCH_TOOL_CALLS
 from core import protocol
 from core.tool_registry import registry
 from core.tool_progress import tool_progress_listener
-from llm.base import LLMResponse, NativeToolOutput
+from llm.base import LLMResponse, NativeToolOutput, request_retry_diagnostic
+from llm.request_progress import request_progress_listener
 from night_shifts.models import ToolCallRecord, ToolCallStatus
 
 if TYPE_CHECKING:
@@ -591,17 +592,22 @@ class Agent:
                             out = r.observation or "Skipped due to earlier failure in fail-fast batch."
                         tool_outputs.append(NativeToolOutput(call_id=tc.id, output=out))
 
-                    reply = self.llm.submit_tool_outputs(tool_outputs)
+                    with request_progress_listener(self._tool):
+                        reply = self.llm.submit_tool_outputs(tool_outputs)
                     pending_native_tool_calls = None
                     self._pending_native_tool_calls = None
                 else:
-                    reply = self.llm.chat(
-                        self._messages_with_context(),
-                        tools=tools,
-                        tool_choice=tool_choice
-                    )
+                    with request_progress_listener(self._tool):
+                        reply = self.llm.chat(
+                            self._messages_with_context(),
+                            tools=tools,
+                            tool_choice=tool_choice
+                        )
             except Exception as e:
                 err = f"Error: Model request failed: {e}"
+                diagnostic = request_retry_diagnostic(e)
+                if diagnostic is not None:
+                    err += "\n" + diagnostic
                 self._error(err)
                 return err
             

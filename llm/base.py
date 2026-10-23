@@ -14,6 +14,24 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 
+# Additive exception notes survive propagation without replacing provider errors.
+# Only this bounded, single-line diagnostic is surfaced by the agent; arbitrary
+# exception notes (which may contain request data) are not copied to chat.
+REQUEST_RETRY_NOTE_PREFIX = "Request retry diagnostic: "
+
+
+def request_retry_diagnostic(error: BaseException) -> str | None:
+    """Return the latest bounded runtime retry note, not provider payload text."""
+    notes = getattr(error, "__notes__", None)
+    if type(notes) is not list:
+        return None
+    for note in reversed(notes[-8:]):
+        if (type(note) is str and note.startswith(REQUEST_RETRY_NOTE_PREFIX)
+                and len(note) <= 512 and "\n" not in note and "\r" not in note):
+            return note
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Native tool calling types
 # ---------------------------------------------------------------------------

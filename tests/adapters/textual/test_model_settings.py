@@ -85,6 +85,52 @@ def test_privileged_progress_updates_while_worker_waits_and_input_remains_respon
     asyncio.run(run_test())
 
 
+def test_flex_wait_notice_is_visible_from_worker_before_retry_and_input_stays_responsive(
+    tmp_path, monkeypatch,
+):
+    from threading import Event
+    from llm.request_progress import notify_request_retry, request_progress_listener
+
+    started, release = Event(), Event()
+    monkeypatch.setattr('adapters.textual.app.record_final_turn', lambda *args: None)
+
+    async def run_test():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(160, 40)) as pilot:
+            def step(text):
+                with request_progress_listener(app._on_tool):
+                    notify_request_retry(300.0, 1, 5)
+                    started.set()
+                    assert release.wait(10), 'Test worker was not released'
+                return 'recovered fixture answer'
+
+            app.agent = SimpleNamespace(step=step)
+            app._start_agent_step('offline Flex notice fixture')
+            try:
+                assert await asyncio.to_thread(started.wait, 5)
+                notices = [text for role, text in app._messages if role == 'System']
+                assert len(notices) == 1
+                assert 'waiting 5 minutes (300 seconds) before retry 1/5' in notices[0]
+                assert '[request-retry]' not in notices[0]
+                assert not any(role == 'AI' for role, _ in app._messages)
+                assert app._processing
+                assert app._privileged_evidence_progress == ''
+                await pilot.press('a', 'b', 'c')
+                assert app.query_one('#input', Input).value == 'abc'
+            finally:
+                release.set()
+            for _ in range(30):
+                await pilot.pause()
+                if not app._processing:
+                    break
+                await asyncio.sleep(0.05)
+            assert not app._processing
+            assert ('AI', 'recovered fixture answer') in app._messages
+            assert sum(role == 'System' for role, _ in app._messages) == 1
+
+    asyncio.run(run_test())
+
+
 def test_unified_setting_arms_both_fixed_helpers_and_revokes_authority():
     messages = []
     gate = PrivilegedTurn()

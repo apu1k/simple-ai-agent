@@ -35,6 +35,7 @@ from core.tool_progress import (
 )
 from runtime.privileged_turn import ELEVATED_OPERATION, PendingPrivilege
 from llm.providers import PROVIDERS, list_provider_models
+from llm.request_progress import REQUEST_PROGRESS_PREFIX
 from runtime.bootstrap import build_model_config_and_client, create_agent
 from runtime.chat_store import record_final_turn, start_new_chat
 from runtime.prompt import build_system_prompt
@@ -1771,6 +1772,11 @@ class AgentTextualApp(App):
 
     def _on_tool(self, message: str) -> None:
         self._append_log("tool", message)
+        if message.startswith(REQUEST_PROGRESS_PREFIX):
+            self._from_any_thread(
+                self._append_chat, "System", message[len(REQUEST_PROGRESS_PREFIX):],
+            )
+            return
         if message.startswith(PRIVILEGED_APPROVAL_PREFIX):
             self._from_any_thread(self._show_privileged_approval, message[len(PRIVILEGED_APPROVAL_PREFIX):])
             return
