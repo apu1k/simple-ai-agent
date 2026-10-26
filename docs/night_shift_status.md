@@ -1,5 +1,46 @@
 # Night-shift implementation status and validation gates
 
+## Local desktop resumed — audit-correlation checkpoint verified offline
+
+The operator is now local and has committed Flex as `a7c717c` and recovery
+handoff/confinement as `fad3832`; the working tree was clean at resumption.
+Elevation availability is not a grant to load policy, deploy media or start a VM.
+Earlier remote-session/uncommitted wording below is historical.
+
+The applied audit-correlation component passes **93 new format tests in
+0.35 seconds**. The normal combined eleven-file selection passes **641 with
+2 skips in 4.58 seconds**, INCLUDING those 93 and the earlier 548 checks,
+warnings as errors and without temporary hooks/source substitution. Repository
+Ruff and Mypy across **85 night-shift source files** pass. The skips remain Linux
+fds and unavailable unelevated symlink creation, not native successes. These are
+targeted offline checks, not the full suite or Linux/runtime evidence.
+
+Strict in-memory compilation/Python 3.12 grammar pass for two new Python files
+and 11 packaged snapshots. Actual in-memory inspection ZIP/public support
+inventory exclusions, unchanged launcher/policy snapshot pins, existing tracked
+runtime/script/test source preservation, 24 local links, six-file formatting
+and tracked whitespace checks pass. No source repair or reload is needed.
+Actual-input seed building and external staging-catalog rehash were not repeated.
+
+The [fixed native-validator design](night_shift_native_validator_design.md)
+specifies separate validation-only RAM fixtures/positive controls, exact-child
+identity, bounded kernel audit capture and fail-closed attribution. The applied
+`bootstrap_native_denials.py` is a pure local audit correlator, with synthetic
+format tests; it has no native I/O, CLI, boot/deployment entry point or runtime
+evidence acceptance API and is absent from public/inspection payload inventories.
+No runnable validator or native result is claimed. Network/capability denial
+auditing remains an explicit design gap; socket errno/no route cannot prove LSM
+enforcement. Synthetic correlation is not a native denial, authentic boot,
+independent host receipt or VM cleanup result.
+
+Next: fixed inert fixture and guest supervisor/worker, resolve audit visibility,
+then complete immutable media and protected exact-owned host watchdog/receipt.
+Actual policy/runtime validation and public KVP feasibility still precede the
+accepted image/real credentials/authenticated transport work needed for Gate A.
+No elevation, policy load, daemon, media write, VM/service/network operation,
+restart or new commit occurred in this source-preparation checkpoint.
+**Gate A remains unrun.**
+
 ## Native-confinement review scope and offline harness — verified offline
 
 The Flex retry side task is complete; Gate A prerequisite work has resumed within

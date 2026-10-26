@@ -1,14 +1,30 @@
 # Native confinement review scope — offline preparation, NOT execution approval
 
-## Status and remote-session limits
+## Current local checkpoint and historical remote scope
 
 This continues the [recovery handoff candidate](night_shift_recovery_handoff.md),
-not the real-host Gate A suite. The operator remains remote through Tailscale:
-ordinary-user source review and synthetic tests only, no elevation, dependency
-installation, policy loading, daemon execution, media authoring, VM operations,
-service/network/remote-access changes or automatic restarts. Commits can wait.
-No protected helper, deployed bundle, retained VM/image, permanent claim, frozen
-script or prior receipt is changed by this scope.
+not the real-host Gate A suite. The operator has returned to the local desktop
+and committed the Flex work as `a7c717c` and recovery/confinement work as
+`fad3832`. Local elevation is available for separately approved later work, not
+an execution grant for this scope. Source review and synthetic tests continue;
+no policy loading, daemon, media authoring, VM operation, service/network change
+or automatic restart is requested by this checkpoint. No protected helper,
+deployed bundle, retained VM/image, permanent claim, frozen script or prior
+receipt is changed.
+
+The [fixed native-validator design](night_shift_native_validator_design.md)
+now specifies validation-only RAM controls, exact-worker audit attribution and
+failure semantics. Its first applied component is a pure bounded local audit
+correlator with **93 passing synthetic format tests**. The combined eleven-file
+selection passes **641 with 2 skips in 4.58 seconds**, INCLUDING those 93,
+warnings as errors; repository Ruff and Mypy across **85 source files** pass.
+Strict in-memory compilation/3.12 grammar, actual bundle exclusion, unchanged
+launcher/policy pins, existing tracked source preservation, links and whitespace
+checks also pass; see the linked design for limits. No source repair is needed.
+This remains neither a runnable validator nor a native result.
+The explicit network/capability denies may suppress audit and require a separate
+observability decision; an errno alone must not be accepted as LSM evidence.
+Earlier remote-session and uncommitted statements below are historical reports.
 
 Before this batch, the normal nine-file targeted selection was rerun with
 warnings as errors: **509 passed, 2 skipped in 3.99 seconds**, including all 50
@@ -115,8 +131,10 @@ just to demonstrate that the unconfined control would work.
 | Capability boundary | Observe zero sets/NNP and attempt one fixed harmless privileged operation whose effects cannot alter host/guest resources | Zero capabilities can deny independently of AppArmor. Do not claim this proves the policy's capability rule or perform real mount/ACL/service changes as a control. |
 | Signals/process isolation | Confirm exact-child signaling works, and that unauthorized interactions cannot be inferred from self-peer signaling alone | The policy explicitly permits receiving signals from unconfined supervisors. Do not claim all cross-profile signaling or ptrace is already tested. No broad process-name cleanup. |
 
-No denial validator implementation or native result is supplied here. The
-candidate policy's `deny` text and Python exception mocks are not substitutes.
+No runnable denial validator or native result is supplied here. The separate
+[validator design and audit-correlation source checkpoint](night_shift_native_validator_design.md)
+is still offline, unwired and not host evidence. The candidate policy's `deny`
+text and Python exception mocks are not substitutes.
 Any required change to source/policy/layout must be reviewed offline and repinned
 before a new separately authorized attempt, not repaired inside a privileged run.
 

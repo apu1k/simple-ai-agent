@@ -1,19 +1,25 @@
 # Recovery handoff and confinement launcher — verified offline, not deployed
 
-## Current remote-session boundary
+## Current local checkpoint; no deployment or native-run approval
 
-The operator is connected remotely through Tailscale. Continue ordinary-user
-source review and synthetic tests only. Do not request elevation, load policy,
-change services/networking/remote access, install dependencies, author deployment
-media or launch a VM. Commits can wait until local access is available; retain
-the existing uncommitted work and use exact, non-overlapping pending edits.
+The operator is back at the local desktop. Flex is committed as `a7c717c` and
+the recovery handoff/confinement checkpoint as `fad3832`, following support seed
+`50b61ee`. The working tree was clean when resumed. Elevation is available for
+separately approved work; neither this document nor the source checkpoint grants
+policy loading, dependency installation, media authoring, VM execution or a
+service/network/remote-access change. No app restart is required for offline work.
 
-Committed baseline: `50b61ee` (public-only RAM support seed). The applied working
-tree adds the handoff/launcher and two regression modules. Rejected superseded
-pendings initially left newer tests paired with older launcher behavior. The
-focused repairs are now applied and pass the standard offline rerun below.
-The source remains uncommitted by operator choice, not blocked on a commit.
-Historical support-seed validation is separate from this batch's new checks.
+The [fixed native-validator design](night_shift_native_validator_design.md)
+continues with validation-only harmless controls and a pure bounded local audit
+correlation component. It is not a runnable validator, deployment API or native
+receipt. Complete media, fixed guest supervisor/worker, protected host watchdog
+and independent receipt/lifecycle still need review before a live attempt.
+
+The remote-session/uncommitted statements and rerun details below describe the
+historical preparation that became `fad3832`. Rejected superseded pendings once
+paired newer tests with older launcher behavior; those focused repairs are
+committed and pass. Historical support-seed checks remain separate from native
+validation, which is still unrun.
 
 ## Applied candidate, not execution authority
 
