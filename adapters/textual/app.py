@@ -37,7 +37,7 @@ from runtime.privileged_turn import ELEVATED_OPERATION, PendingPrivilege
 from llm.providers import PROVIDERS, list_provider_models
 from llm.request_progress import REQUEST_PROGRESS_PREFIX
 from runtime.bootstrap import build_model_config_and_client, create_agent
-from runtime.chat_store import record_final_turn, start_new_chat
+from runtime.chat_store import DEFAULT_CHAT_TURN_LIMIT, record_final_turn, start_new_chat
 from runtime.prompt import build_system_prompt
 from runtime.state import ModelSettingValue, OPENAI_REASONING_EFFORTS, ReasoningEffort
 
@@ -1008,7 +1008,9 @@ class AgentTextualApp(App):
             self.query_one("#chat_detail", Static).update(Text("No chat selected.", style="dim"))
             return
 
-        turns = self.state.chat_store.load_original_turns(session.session_id, limit=20)
+        turns = self.state.chat_store.load_original_turns(
+            session.session_id, limit=DEFAULT_CHAT_TURN_LIMIT
+        )
 
         detail = Text(
             f"Session details\n"
@@ -1022,7 +1024,9 @@ class AgentTextualApp(App):
         self.query_one("#chat_detail", Static).update(detail)
         self.query_one("#chat_detail_scroll", VerticalScroll).scroll_home(animate=False)
 
-        history_parts: list[Any] = [Text("History preview (last 20 turns)\n", style="bold")]
+        history_parts: list[Any] = [
+            Text(f"History preview (last {DEFAULT_CHAT_TURN_LIMIT} turns)\n", style="bold")
+        ]
         if not turns:
             history_parts.append(Text("No turns recorded yet.", style="dim"))
         else:
@@ -1076,7 +1080,9 @@ class AgentTextualApp(App):
             self._set_chat_header("No chat selected.")
             return
 
-        turns = self.state.chat_store.load_original_turns(session.session_id, limit=20)
+        turns = self.state.chat_store.load_original_turns(
+            session.session_id, limit=DEFAULT_CHAT_TURN_LIMIT
+        )
 
         self.state.chat_session_id = session.session_id
 

@@ -33,6 +33,7 @@ CHAT_HISTORY_DIR = PROJECT_ROOT / ".agent_chat_history"
 SESSIONS_FILE = "sessions.jsonl"
 ORIGINAL_TURNS_FILE = "turns_original.jsonl"
 WORKING_TURNS_FILE = "turns_working.jsonl"
+DEFAULT_CHAT_TURN_LIMIT = 32
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -196,8 +197,10 @@ class ChatStore:
             return summaries[:limit]
         return summaries
 
-    def load_original_turns(self, session_id: str, limit: int = 20) -> list[dict[str, Any]]:
-        """Load original turns for one session."""
+    def load_original_turns(
+        self, session_id: str, limit: int = DEFAULT_CHAT_TURN_LIMIT
+    ) -> list[dict[str, Any]]:
+        """Load the latest original turns for one session (32 by default)."""
         turns = [
             record
             for record in self._read_jsonl(self.original_turns_path)

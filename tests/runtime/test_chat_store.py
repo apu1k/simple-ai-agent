@@ -178,6 +178,21 @@ def test_load_original_turns_returns_last_turns_in_order(tmp_path: Path):
     assert [turn["user"] for turn in turns] == ["u2", "u3"]
 
 
+@pytest.mark.parametrize("turn_count", [0, 5, 32, 40])
+def test_load_original_turns_defaults_to_latest_32_turns(tmp_path: Path, turn_count: int):
+    state = make_state(tmp_path)
+    session_id = start_new_chat(state)
+    for index in range(1, turn_count + 1):
+        record_final_turn(state, f"u{index}", f"a{index}")
+
+    turns = state.chat_store.load_original_turns(session_id)
+
+    first_index = max(1, turn_count - 31)
+    assert [turn["turn_index"] for turn in turns] == list(range(first_index, turn_count + 1))
+    # Loading context must not truncate persisted history.
+    assert len(state.chat_store.load_original_turns(session_id, limit=0)) == turn_count
+
+
 def test_format_session_list_handles_empty_and_non_empty_history(tmp_path: Path):
     state = make_state(tmp_path)
 
