@@ -1,10 +1,11 @@
 # Night-shift implementation status and validation gates
 
-## Inert fixture and fixed guest worker — applied; typing repair pending
+## Inert fixture and fixed guest worker — verified offline
 
 Audit correlation is committed as `8a83d8a`; the tree was clean when resumed.
 The current [fixture/worker source review](night_shift_native_worker_review.md)
-describes the applied fixed in-memory 188-byte x86-64 ELF that only exits 37, an unwired
+describes the applied fixed in-memory 188-byte x86-64 ELF that only exits 37, an
+unwired
 guest-only worker for the three fixed file/exec cases, synthetic tests and a
 concrete readiness/gate/paired-control supervisor design. The worker has no CLI,
 mount/policy-load/transition, daemon, arbitrary command/path API or VM operation.
@@ -16,20 +17,20 @@ The inert ELF was constructed/hashed only in memory, not written or executed.
 No new candidate is added to the public seed, recovery handoff, inspection bundle
 or protected helper. No native supervisor/boot activation is provided; allowed-
 pool positive controls, real kernel capture, network/capability audit visibility,
-immutable media and protected host watchdog/receipt remain open. Source proposal
+immutable media and protected host watchdog/receipt remain open. Source application
 and worker errno messages cannot be counted as native denials or overall success.
 
-The initial applied worker suite passes **89 tests in 0.21 seconds**; the normal
-combined twelve-file selection passes **730 with 2 skips in 4.15 seconds**,
-INCLUDING those 89 and the earlier 641 checks, warnings as errors. Repository
-Ruff passes, but standard Mypy across **87 source files** reports **seven
-Windows-stub/Linux-ABI attribute errors** in the worker. This checkpoint is
-**not yet fully verified**. A narrow Linux-guarded Protocol/cast repair and new
-regressions are proposed; no flags/checks are relaxed or fallback introduced.
-A preliminary in-memory corrected-source Mypy/Ruff/compilation/grammar check
-passes, not a post-application/full-project repair result. Repeat normal checks
-after approval. The skips remain Linux descriptors and unavailable unelevated
-symlink creation, not native successes.
+The narrow Linux-ABI typing repair and direct guard/read regressions are now
+applied. The normal new fixture/worker suite passes **97 tests in 0.23 seconds**;
+the combined twelve-file related selection passes **738 with 2 skips in
+4.20 seconds**, INCLUDING those 97 and the earlier 641 checks, warnings as errors
+and without temporary source hooks. Repository Ruff and standard Mypy across
+**87 night-shift source files** pass; Linux-targeted Mypy for the **two candidate
+sources** also passes. No native flags/checks were relaxed, no fallback was added,
+and no further repair or reload is needed. The earlier seven Windows-stub typing
+errors are historical/corrected, not native failures. The skips remain Linux
+descriptors and unavailable unelevated symlink creation, not native successes.
+This is a targeted offline checkpoint, not the full suite or Linux execution.
 
 Current strict compilation/3.12 grammar (three new files plus 11 packaged
 snapshots), in-memory fixture pin, actual inspection/public inventory exclusions,

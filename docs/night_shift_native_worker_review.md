@@ -6,7 +6,7 @@ The audit-correlation checkpoint is committed as `8a83d8a`. The tree was clean
 at resumption. Its normal eleven-file targeted suite was rerun with warnings as
 errors: **641 passed, 2 skipped in 4.04 seconds**. Repository Ruff and Mypy across
 **85 night-shift files**, plus tracked whitespace checks, pass. These are checks
-of the committed baseline, excluding the new pending fixture/worker/tests.
+of the committed baseline; the applied fixture/worker results follow below.
 The skips remain Linux-only descriptors and unavailable unelevated symlink
 creation, not native successes. Gate A remains unrun.
 
@@ -24,24 +24,34 @@ entry is implemented. Source application is NOT execution approval. No elevation
 policy loading, daemon/worker execution, media writing, VM operation, service or
 network change, restart or new commit occurred in preparing this source batch.
 
-## Initial applied verification — narrow typing repair pending
+## Applied offline verification — typing repair verified
 
-The normal new suite passes **89 tests in 0.21 seconds**, warnings as errors.
-The combined twelve-file selection passes **730 with 2 skips in 4.15 seconds**,
-INCLUDING those 89 and the earlier 641 checks, with no temporary source hooks.
-Repository Ruff passes. Standard Mypy across **87 source files** reports **seven
-Linux-ABI attribute errors** in the worker under Windows stubs: major/minor,
-stat device ID, access-mode mask and three native open flags. This checkpoint is
-therefore **not yet fully verified**; those errors are not native test failures.
+The initial applied checks passed 89 new tests and 730 combined checks with two
+skips, but Mypy reported seven Linux-ABI attribute errors under Windows stubs.
+Those historical results were not a native run or a fully verified checkpoint.
+The narrow repair is now applied: explicitly Linux-guarded stdlib Protocol/cast
+views retain the same native flags, device checks and fixed operations, without
+backend injection, Windows emulation, fallback or ignored type errors.
 
-A narrow proposed repair adds explicitly Linux-guarded stdlib Protocol/cast views
-for those attributes, keeping the same flags, device checks and exact operations.
-It adds no backend injection, Windows emulation, fallback or ignored type errors.
-The proposed source passes preliminary **in-memory-only** Mypy (one source), Ruff,
-strict compilation and Python 3.12 grammar checks; the applied file is unchanged
-until approval. Added direct non-Linux guard/read-bound regressions are pending,
-and the normal full post-application checks must be repeated after the repair.
-Do not promote that preliminary source check to an applied Mypy/test result.
+Normal post-application runs, without temporary hooks/source substitution:
+
+- New fixture/worker suite: **97 passed in 0.23 seconds**, warnings as errors,
+  including direct non-Linux guard and bounded-read/descriptor-close regressions.
+- Combined twelve-file related selection: **738 passed, 2 skipped in 4.20 seconds**,
+  INCLUDING those 97 and the earlier 641 checks, warnings as errors.
+- Repository Ruff and standard Mypy across **87 night-shift source files** pass.
+- Linux-targeted Mypy for the **two fixture/worker sources** also passes. This is
+  static type checking under Linux stubs, not Linux execution or ABI validation.
+
+The two skips remain Linux-only descriptors and unavailable unelevated symlink
+creation; neither is a native success. These are targeted suites, not the full
+repository suite. No further source repair or application reload is needed.
+
+Reproducible combined command:
+
+```text
+python -W error -m pytest -q tests/night_shifts/test_bootstrap_native_worker.py tests/night_shifts/test_bootstrap_native_denials.py tests/night_shifts/test_bootstrap_confinement_contract.py tests/night_shifts/test_bootstrap_recovery_handoff.py tests/night_shifts/test_bootstrap_recovery_native_policy.py tests/night_shifts/test_bootstrap_public_probe.py tests/night_shifts/test_bootstrap_daemon_asset.py tests/night_shifts/test_public_bootstrap_kvp.py tests/night_shifts/test_maintenance_credentials_prototype.py tests/night_shifts/test_maintenance_tls_prototype.py tests/night_shifts/test_maintenance_failure_diagnostics.py tests/night_shifts/test_maintenance_store_native_prototype.py -rs
+```
 
 The current three new Python files and 11 packaged Python snapshots pass strict
 in-memory compilation/Python 3.12 grammar. The 188-byte fixture digest is

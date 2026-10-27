@@ -9,10 +9,13 @@ remote/no-commit restrictions describe that historical session, not a current
 requirement to remain remote. Local access/elevation availability does **not**
 authorize policy loading, protected deployment, media authoring or a VM start.
 Gate A remains unrun. The applied audit-correlation checkpoint below is now
-committed as `8a83d8a`. The next [fixed fixture/worker source review](night_shift_native_worker_review.md)
-proposes an inert in-memory ELF, an unwired guest-only worker and a concrete
-supervisor/pipe protocol. Those new proposals require post-application checks;
-they do not activate a guest or supply a runnable native supervisor.
+committed as `8a83d8a`. The [fixed fixture/worker source review](night_shift_native_worker_review.md)
+now records applied in-memory ELF/guest-worker candidates and a concrete
+supervisor/pipe protocol. After a narrow Linux-ABI typing repair, **97 new tests**
+and **738 combined checks with 2 skips** pass, warnings as errors; repository
+Ruff, Mypy across **87 files** and Linux-targeted candidate typing pass. Compilation,
+3.12 grammar, bundle exclusions, unchanged production pins, links and whitespace
+also pass. These are offline checks, not guest activation or a native supervisor.
 
 Before application, the committed ten-file targeted baseline passed **548 with
 2 skips in 5.00 seconds**. The new component is now applied and verified offline:
@@ -27,7 +30,7 @@ This checkpoint adds `night_shifts/bootstrap_native_denials.py` and synthetic
 format tests. The module has no native I/O, CLI, boot function, command executor,
 policy loader, media writer or runtime evidence acceptance API. It is not added
 to the public support ZIP or production inspection bundle. It does not make a
-runnable native validator. The separately proposed fixture/worker candidates
+runnable native validator. The separately applied fixture/worker candidates
 are reviewed in the linked next checkpoint; complete supervisor, activating
 media, protected host watchdog and independent evidence channel remain open.
 
@@ -83,9 +86,9 @@ exact-VM final absence is independently confirmed.
    direct-child exit and audit correlation do not prove VM/tree absence.
 
 The committed audit source supplies only the pure correlation step within
-item 6. The separately proposed [fixed fixture/worker candidates](night_shift_native_worker_review.md)
+item 6. The separately applied [fixed fixture/worker candidates](night_shift_native_worker_review.md)
 add no supervisor, policy transition, fixture setup, boot activation or execution
-authority. Their synthetic tests are still pending post-application verification.
+authority. Their 97 synthetic tests are verified offline, not native observations.
 
 ## Fixed harmless cases and controls
 
@@ -93,7 +96,7 @@ authority. Their synthetic tests are still pending post-application verification
 | --- | --- | --- |
 | `runtime_write` | `/run/night-shift-bootstrap/denied-write`, root-owned mode 0600, fixed sentinel bytes; unconfined zero-cap/NNP control opens O_WRONLY without O_TRUNC and writes one fixed byte | Same fixed open must return EACCES and audit `open`, exact path, requested/denied `w`, root fsuid/ouid. Unexpected allowed open must be closed immediately; any test write can affect only this disposable RAM sentinel. |
 | `pool_sibling_write` | `/var/lib/hyperv/.kvp_pool_denied`, same sentinel/control, on the existing pool tmpfs | Same EACCES/audit requirements. The pool's noexec flag does not invalidate a write control. Also require legitimate read/write/record-lock controls for all five exact allowed pool files; a broken positive path is not a successful policy. |
-| `outside_exec` | `/run/night-shift-bootstrap/denied-exec`, root-owned mode 0700, on the executable runtime tmpfs; a separately reviewed/pinned inert x86-64 fixture that only exits with a fixed status | Unconfined zero-cap/NNP exec must actually exit with that status; confined exec must return EACCES and audit `exec`, exact path, requested/denied `x`. No shell, script interpreter, daemon copy, dynamic helper or arbitrary ELF is a substitute. The separately proposed 188-byte inert fixture is reviewed in the next source checkpoint; it has not been executed or validated natively. |
+| `outside_exec` | `/run/night-shift-bootstrap/denied-exec`, root-owned mode 0700, on the executable runtime tmpfs; a separately reviewed/pinned inert x86-64 fixture that only exits with a fixed status | Unconfined zero-cap/NNP exec must actually exit with that status; confined exec must return EACCES and audit `exec`, exact path, requested/denied `x`. No shell, script interpreter, daemon copy, dynamic helper or arbitrary ELF is a substitute. The applied 188-byte inert fixture is reviewed in the linked source checkpoint; it has not been executed or validated natively. |
 
 The two write controls do not create arbitrary paths or truncate real files.
 The executable control must not have a shell/interpreter, network, mount, signal
@@ -184,8 +187,8 @@ VM/service/network operation, protected deployment, restart or new commit took
 place. Synthetic correlations remain local consistency observations, never host
 receipts, boot provenance, successful native denials or VM cleanup evidence.
 
-The next fixture/worker source checkpoint and detailed supervisor protocol are
-linked above. After verifying those proposals, implement/review the bounded
+The applied fixture/worker checkpoint and detailed supervisor protocol are
+linked above and verified offline. Next implement/review the bounded
 supervisor frame parser, paired positive controls, fixture setup, exact-child
 lifetime and audit-capture handling. Resolve the network audit question before
 claiming complete denial coverage. Then review
