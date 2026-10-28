@@ -125,10 +125,21 @@ controller adapter and fixed test peer on this host. It does not establish Linux
 `/dev/ttyS0` behavior, deployed TLS availability, trusted credential bootstrap,
 image acceptance, Hyper-V pipe security, guest confinement or VM cleanup.
 
-The next implementation boundary is guest-side bounded serial I/O and channel
-integration, without bypassing per-attempt credential/bootstrap prerequisites.
-The protected exact-owned runner and independent watchdog remain necessary for
-an autonomous Gate A operation. Gate A itself remains unrun.
+The follow-on [guest bounded serial/TLS candidate](night_shift_guest_serial_candidate.md)
+is now applied and verified as a separate unwired source/model checkpoint. It
+supplies fixed Linux ttyS0 byte I/O and the inspection-only TLS-server adapter,
+not a service, live bootstrap or deployed guest dispatcher. Its **52 new
+model/MemoryBIO tests pass**; the combined eight-file transport selection passes
+**254 tests**, including the existing **20 native Windows cases**, with no
+skips/exclusions and warnings treated as errors. Repository Ruff, Mypy across
+**91 source files**, and Linux-targeted typing of the two guest modules pass.
+No source repair was needed. Native Linux device/configuration and authenticated
+real host/guest interoperability remain unverified; none of the new model tests
+is a native Linux pass.
+
+Per-attempt credential/bootstrap prerequisites are not bypassed. The protected
+exact-owned runner and independent watchdog remain necessary for an autonomous
+Gate A operation. Gate A itself remains unrun.
 
 No elevation, Hyper-V/VM, service/network change, media authoring, production
 credential access, deployment, application reload or commit is part of this
