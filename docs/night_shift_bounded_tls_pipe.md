@@ -8,13 +8,19 @@ inspection-only mutual-TLS/framing prototype to the bounded Windows pipe client.
 The existing production serial connector, plaintext maintenance refusal,
 protected installations, deployment allowlist and guest payload are unchanged.
 
-The initial applied verification passes **193 tests with no skips or exclusions**,
-including the adapter, TLS receive-loop change and **11 native Windows cases**.
-Mypy across **89 night-shift source files** and the three-component Linux-targeted
-typing check pass. Repository Ruff found two test-only E731 style errors; a
-narrow named-callback correction passes Ruff and compilation in memory. Repeat
-applied-file lint/tests after that correction before committing; no runtime
-source repair was identified by these checks.
+The adapter was committed as `0907c0d` after applied-file re-verification:
+**193 tests passed with no skips or exclusions**, including the TLS receive-loop
+change and **11 native Windows cases**. Repository Ruff, Mypy across **89
+night-shift source files**, and the three-component Linux-targeted typing check
+passed. The two initial test-only E731 callback-style errors were corrected and
+rechecked against the applied files; no runtime source repair was needed.
+
+The follow-on [native authenticated round-trip suite](night_shift_native_tls_validation.md)
+is now applied and verified: **9 native Windows cases passed**, and the combined
+six-file selection passed **202 tests with no skips or exclusions**, including
+**20 native Windows cases**. Repository Ruff and Mypy across **89 source files**
+pass. No test or runtime source repair was needed. These results add local
+native round-trip evidence, not guest/Hyper-V execution or Gate A success.
 
 The earlier committed four-file serial/TLS baseline passed 161 tests, including
 seven native Windows pipe cases, with repository Ruff and Mypy across 88 files.
@@ -98,8 +104,8 @@ Non-Windows skips are not native passes. An in-memory ZIP check verifies that
 the adapter, pipe component and TLS prototype remain absent from the actual
 inspection deployment bundle; no ZIP or media is published.
 
-The complete runtime selection was run with warnings treated as errors; repeat
-the checks after applying the test-only lint correction:
+The complete runtime selection was run with warnings treated as errors after
+the applied test-only lint correction. Repeat these checks after source changes:
 
 ```text
 python -W error -m pytest -q tests/night_shifts/test_bounded_tls_pipe.py tests/night_shifts/test_serial_pipe_io.py tests/night_shifts/test_serial_pipe_io_windows.py tests/night_shifts/test_hyperv_serial_transport.py tests/night_shifts/test_maintenance_tls_prototype.py
@@ -124,14 +130,21 @@ git diff --check
   `git diff --check` pass. The bundle-exclusion test in the runtime selection
   builds the actual inspection ZIP in memory only and passes.
 - Repository Ruff initially found two E731 assigned-lambda errors in test
-  callbacks. Replacing just those assignments with named functions passes
-  in-memory Ruff, compilation and grammar checks, without changing inputs,
-  assertions or runtime source. The applied correction must pass the complete
-  runtime/lint selection before this checkpoint is called ready to commit.
+  callbacks. Replacing just those assignments with named functions preserved
+  inputs, assertions and runtime source. Post-application verification passed:
+  **193 tests in 2.44 seconds**, repository Ruff, Mypy across **89 files**,
+  three-component Linux-targeted typing, strict compilation/Python 3.12 grammar,
+  eight documentation links and whitespace. Commit `0907c0d` records this
+  completed controller-adapter checkpoint.
 
-No complete native authenticated round trip or successful VM/TLS exchange is
-claimed. Native observations cover local failure-path I/O and resource release,
-not production Hyper-V pipe trust, credential protection or VM cleanup.
+The original committed adapter checkpoint supplied native failure-path evidence,
+not a complete authenticated native exchange. The separately applied native
+round-trip suite now adds successful real Windows pipe/TLS exchanges with the
+fixed test peer, fragmented/multi-record traffic, security refusals,
+post-authentication failures and exact test-process/resource release. Neither
+checkpoint establishes successful VM/TLS exchange, production Hyper-V pipe
+trust, credential protection or VM cleanup. See the native validation record for
+case-level evidence and limits.
 
 ## Remaining route to autonomous Gate A
 

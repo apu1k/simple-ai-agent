@@ -148,10 +148,19 @@ is applied as a separate source checkpoint. It uses this pipe component beneath
 the existing inspection-only TLS prototype; it does not switch the production
 connector or any protected payload. The combined applied selection passes
 **193 tests**, including all **11 native Windows cases**, and Mypy across
-**89 source files** passes. Two test-only Ruff callback-style errors require a
-narrow named-function correction and applied-file re-verification before commit;
-no runtime repair was identified. See the adapter record for scope and limits.
-The 161-test historical baseline is not evidence for the new adapter itself.
+**89 source files** passes. The two test-only Ruff callback-style errors were
+corrected and the applied files passed the complete runtime/lint selection
+before commit `0907c0d`; no runtime repair was needed. See the adapter record for
+scope and limits. The 161-test historical baseline is not evidence for the
+adapter itself.
+
+The separate [native authenticated round-trip checkpoint](night_shift_native_tls_validation.md)
+is now applied and verified: **9 native Windows tests passed**, and the combined
+six-file selection passed **202 tests**, including **20 native Windows cases**,
+with no skips/exclusions and warnings treated as errors. Repository Ruff and
+Mypy across **89 source files** pass. Exact test-peer exits and pipe resources
+were checked; no source repair was needed. This adds real local TLS round-trip
+evidence, not Linux/Hyper-V operation, production credential trust or VM cleanup.
 
 Actual trusted credential/bootstrap provisioning (including the remaining
 confinement validation on the selected KVP route), guest-side serial I/O, native
