@@ -138,12 +138,26 @@ service/network change, media authoring, deployment, reload or commit occurred.
 
 ## Next boundary
 
-Only after successful verification/review should a framing/TLS adapter be
-implemented. Actual trusted credential/bootstrap provisioning (including the
-remaining confinement validation on the selected KVP route), guest-side serial
-I/O, image acceptance, protected deployment and an exact-owned Gate A runner with
-an independent watchdog are still outstanding. There is no plaintext downgrade,
-ACL widening, live VM approval or route switch in this source batch.
+The committed component has now been rechecked after its declaration-only typing
+adjustment: the complete selection passes **161 tests**, including all seven
+native Windows cases, with repository Ruff and Mypy across **88 night-shift
+source files** passing. This is not Linux execution or live channel evidence.
+
+The follow-on [bounded controller TLS adapter](night_shift_bounded_tls_pipe.md)
+is applied as a separate source checkpoint. It uses this pipe component beneath
+the existing inspection-only TLS prototype; it does not switch the production
+connector or any protected payload. The combined applied selection passes
+**193 tests**, including all **11 native Windows cases**, and Mypy across
+**89 source files** passes. Two test-only Ruff callback-style errors require a
+narrow named-function correction and applied-file re-verification before commit;
+no runtime repair was identified. See the adapter record for scope and limits.
+The 161-test historical baseline is not evidence for the new adapter itself.
+
+Actual trusted credential/bootstrap provisioning (including the remaining
+confinement validation on the selected KVP route), guest-side serial I/O, native
+end-to-end channel evidence, image acceptance, protected deployment and an
+exact-owned Gate A runner with an independent watchdog are still outstanding.
+There is no plaintext downgrade, ACL widening, live VM approval or route switch.
 
 Related: [pipe security review](night_shift_pipe_security_review.md),
 [TLS prototype](night_shift_maintenance_tls_prototype.md),

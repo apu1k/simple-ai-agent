@@ -353,23 +353,31 @@ class OfflineTlsEndpoint:
         return value['payload']
 
     def receive_message(self) -> dict[str, Any] | None:
+        """Drain buffered records; None means TLS needs transport progress.
+
+        A partial application frame may span several already-buffered records.
+        Returning after just one successful read would make a transport adapter
+        wait for more ciphertext even when the complete frame is already here.
+        Plaintext/frame bounds and the original budget apply on every iteration.
+        """
         self._guard()
         self._configuration()
         if not self.authenticated:
             self._fail('not_authenticated')
-        value = self._pop()
-        if value is not None:
-            return value
-        try:
-            data = self._tls.read(min(16384, MAX_FRAME_BYTES + 4 - len(self._plain)))
-        except (ssl.SSLWantReadError, ssl.SSLWantWriteError):
+        while True:
             self._guard()
-            return None
-        except ssl.SSLError:
-            self._fail('tls_failure')
-        self._guard()
-        if not data:
-            self._fail('truncated_frame' if self._plain else 'channel_closed')
-        self._plain.extend(data)
-        self._buffers()
-        return self._pop()
+            value = self._pop()
+            if value is not None:
+                return value
+            try:
+                data = self._tls.read(min(16384, MAX_FRAME_BYTES + 4 - len(self._plain)))
+            except (ssl.SSLWantReadError, ssl.SSLWantWriteError):
+                self._guard()
+                return None
+            except ssl.SSLError:
+                self._fail('tls_failure')
+            self._guard()
+            if not data:
+                self._fail('truncated_frame' if self._plain else 'channel_closed')
+            self._plain.extend(data)
+            self._buffers()
