@@ -178,7 +178,22 @@ kernel syscall is not forcibly bounded by this Python check: the independent
 protected host watchdog remains required. The supervisor must bound aggregate
 bytes, frames, process creation and whole-guest lifetime separately.
 
-## Supervisor design still to implement and review
+## Supervisor native runtime still to implement and review
+
+The follow-on [supervision protocol core](night_shift_native_supervision_core.md)
+is now applied and verified offline. Its **107 new tests** are included in the
+**297-pass** worker/audit/core selection and the **845-pass, two-skip** wider
+related selection, warnings treated as errors with no exclusions. Repository
+Ruff, Mypy across **92 source files**, Linux-targeted core typing, compilation,
+inventory exclusions, unchanged launcher/policy pins, links and whitespace pass.
+No test/runtime source repair was needed after application.
+
+The core supplies bounded incremental report parsing, gate/EOF/normal-exit
+evaluation and ordered paired-control correlation as pure local consistency
+code. It does not create/reap a child, acquire a kernel-log cursor, write a gate,
+pin a fixture or run a validator. The skips remain Linux-only descriptors and
+unavailable unelevated symlink creation, not native successes. There is no native
+result, runnable supervisor or deployment authorization.
 
 For each fixed case, use **control-before, one negative worker, control-after**:
 nine exact workers for these three cases, never overlapping or retried. Keep the
@@ -195,13 +210,14 @@ state is UNKNOWN. A negative open/exec success is a failed denial test even if
 nothing persistent was changed. Stop/reap only exact owned children; never
 signal by process name, reload policy or reset state for a second attempt.
 
-The supervisor still needs a fixed bounded frame parser/evaluator, create-new
-RAM fixture setup/read-back, reviewed child bootstrap/descriptor mapping,
-positive controls for all five allowed pool read/write/record-lock operations,
-actual log capture, exact-child stop/reap and bounded fixed-label summary.
-None of those is implemented by this worker. No full validator pass can be
-reported without them. The current network/capability deny-audit observability
-question remains open; this batch does not alter the policy or add socket probes.
+The supervisor still needs native integration of the separately verified
+protocol/evaluation core, create-new RAM fixture setup/read-back, reviewed child
+bootstrap/descriptor mapping, positive controls for all five allowed pool
+read/write/record-lock operations, actual log capture, exact-child stop/reap and
+a bounded fixed-label summary. None of those native actions is implemented by
+this worker or the pure core. No full validator pass can be reported without
+them. The current network/capability deny-audit observability question remains
+open; neither source batch alters the policy or adds socket probes.
 
 After that source checkpoint, complete immutable validation media and the
 protected exact-owned diskless host runner/watchdog/evidence channel need their
