@@ -172,12 +172,25 @@ compatibility, protected deployment or authenticated real-VM evidence.
 
 ## Next boundary
 
-After source verification, independently validate Linux device identity, tty
-ownership/configuration, bounded native I/O and authenticated guest/host exchange
-in a separately approved Linux environment. Do not add candidates to a protected
-bundle or activate them as a shortcut. Native validation still needs reviewed
-media/runner/watchdog scope, trusted credential bootstrap and evidence handling.
-Image acceptance and the exact-owned autonomous Gate A runner remain separate.
+The committed source/model checkpoint is `524322b`. A follow-on
+[process-isolated native Linux PTY validation candidate](night_shift_linux_serial_validation.md)
+adds test-only real termios/poll/backpressure/cleanup cases with an exact-child
+supervisor. That follow-on is now applied and verified on Windows: **24 portable
+regressions pass and nine Linux cases skip**. The combined nine-file transport
+selection passes **278 with nine skips**, including the prior **20 native
+Windows cases**, with warnings treated as errors and no exclusions. Repository
+Ruff, Mypy across **91 source files**, and Linux-targeted guest typing pass.
+No source repair was needed; see the linked validation record for scope.
+Portable supervisor passes and Linux skips are not native Linux results. PTY
+validation does not establish ttyS0/Hyper-V behavior or guest TLS integration.
+The production fixed-device opening interface is not relaxed for testing.
+
+Independently validate Linux device identity, tty ownership/configuration, bounded
+native I/O and authenticated guest/host exchange in a separately approved Linux
+environment. Do not add candidates to a protected bundle or activate them as a
+shortcut. Native VM validation still needs reviewed media/runner/watchdog scope,
+trusted credential bootstrap and evidence handling. Image acceptance and the
+exact-owned autonomous Gate A runner remain separate.
 
 No elevation, VM operation, policy loading, service/network change, media
 writing, deployment, production credential access, reload or commit is part of
