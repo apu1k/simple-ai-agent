@@ -139,6 +139,20 @@ documentation-only; native Linux PTY results remain absent.
 
 ### What this closes, and what comes next
 
+This serial-only harness is committed as `1e42270`. Its nine Linux-native cases
+remain unexecuted on the current Windows host. A follow-on
+[native guest TLS/serial validation candidate](night_shift_linux_guest_tls_validation.md)
+is now applied and verified as a Windows-hosted portable checkpoint. It supplies
+tests of the actual guest adapter over a fresh PTY against one exact spawned
+guest process, with synthetic credentials and bounded native report I/O, but
+those Linux-native scenarios have not run here. Its **37 portable tests pass
+with seven Linux-only skips**; the combined ten-file selection passes **315
+with 16 Linux-only skips**, including the existing **20 native Windows cases**,
+warnings treated as errors and with no exclusions. Repository Ruff, Mypy across
+**91 source files**, Linux-targeted guest typing, compilation, bundle exclusion,
+links and whitespace pass. No test/runtime source repair was needed. These are
+portable/source results, not Linux-native evidence or production activation.
+
 A successful Linux run would establish the disposable-PTY native serial
 checkpoint only. The next transport evidence is the real guest TLS adapter over
 native Linux tty I/O, followed by actual ttyS0 and authenticated Windows/guest
