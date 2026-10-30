@@ -151,8 +151,10 @@ supervisor still needs:
    then integrate its held before/after pins with each worker. That candidate
    creates the fixed RAM sentinels but does not run the confined allowed-pool
    read/write/record-lock controls; those still need their trusted child entry.
-2. Reviewed standalone child bootstrap, exact fd mapping and capabilities/NNP/
-   profile transition before worker source evaluation; no privileged fd leakage.
+2. Apply, verify and integrate the [fixed child bootstrap and launch-plan candidate](night_shift_native_child_bootstrap.md):
+   exact fd mapping and capabilities/NNP/profile ordering before worker evaluation.
+   Native spawn enforcement, exact child ownership and actual transition behavior
+   remain unverified; no privileged fd may reach the worker.
 3. Bounded native pipe I/O and exact-child pidfd/WNOWAIT lifetime handling,
    retaining the unreaped negative PID through capture before exact reaping.
 4. Fresh authentic lossless `/dev/kmsg` capture after ready and before release,

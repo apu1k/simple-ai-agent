@@ -78,7 +78,9 @@ supervisor/host obligations. A worker result is never authority for these pins.
 All acquired fds are non-inheritable, but **CLOEXEC is not sufficient for a
 fork-and-evaluate child**. The future trusted child entry must close every pin,
 kernel log fd and other privileged descriptor and prove the fixed 0–4 inventory
-before evaluating the standalone worker. The candidate supplies no such entry.
+before evaluating the standalone worker. The fixture candidate supplies no such
+entry itself; the separate [fixed child bootstrap candidate](night_shift_native_child_bootstrap.md)
+now supplies source for that step, but remains unwired and not natively validated.
 
 Construction failure closes all retained descriptors once and leaves even
 partial fixtures in guest RAM. A failed `verify()` makes the object terminal;
@@ -123,8 +125,9 @@ VM operation, deployment, credential access or a Gate A attempt.
 
 ## Remaining work toward the runnable milestone
 
-1. Reviewed child bootstrap: descriptor mapping, capability/NNP/profile ordering
-   before standalone source evaluation, plus actual confined allowed-pool controls.
+1. Apply, verify and integrate the [fixed child bootstrap candidate](night_shift_native_child_bootstrap.md):
+   descriptor mapping and capability/NNP/profile ordering before worker evaluation.
+   Actual confined allowed-pool controls remain a separate missing operation.
 2. Native bounded report/gate I/O and exact-child pidfd/WNOWAIT ownership through
    audit collection, followed by exact stop/reap with uncertain exits explicit.
 3. Fresh authentic lossless kernel-log acquisition and ordered nine-worker
