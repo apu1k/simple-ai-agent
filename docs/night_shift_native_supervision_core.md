@@ -147,8 +147,10 @@ typing and grammar checks cannot be recorded as native enforcement.
 This verifies only the offline protocol/evaluation component. The real guest
 supervisor still needs:
 
-1. Create-new/read-back/pinned RAM fixtures and allowed-pool read/write/record-
-   lock controls, preserving otherwise-identical conditions before/after probes.
+1. Apply and verify the [native RAM fixture acquisition candidate](night_shift_native_ram_fixtures.md),
+   then integrate its held before/after pins with each worker. That candidate
+   creates the fixed RAM sentinels but does not run the confined allowed-pool
+   read/write/record-lock controls; those still need their trusted child entry.
 2. Reviewed standalone child bootstrap, exact fd mapping and capabilities/NNP/
    profile transition before worker source evaluation; no privileged fd leakage.
 3. Bounded native pipe I/O and exact-child pidfd/WNOWAIT lifetime handling,
