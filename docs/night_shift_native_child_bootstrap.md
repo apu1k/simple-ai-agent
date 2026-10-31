@@ -6,7 +6,15 @@ This supplies the child-entry component of the diskless native-validation VM
 milestone, following [held RAM fixture acquisition](night_shift_native_ram_fixtures.md).
 It is not a spawned child, runnable supervisor, boot payload or protected runner.
 There is no CLI, policy loading, capability repair, VM operation or new tool.
-Source application is not native execution approval.
+Source application is not native execution approval. The following
+[exact-child owner candidate](night_shift_native_child_owner.md) supplies fixed
+spawn, bounded pipe I/O and held pidfd/WNOWAIT lifetime as separate unwired
+source. Its **118 offline model tests** and **1,196 combined related tests with
+two skips** pass, with repository Ruff, Mypy across **96 source files** and
+Linux-targeted owner typing passing. No source/test repair was needed. These
+checks are not native spawning, waiting, signaling, cleanup or confinement
+observations. Neither component is a complete native validator or execution
+authorization.
 
 Two candidates are deliberately absent from production/public media inventories:
 
@@ -135,8 +143,11 @@ forced stop remain exact-child/host-watchdog responsibilities.
 
 ## What remains before the diskless operation can run
 
-- Native owner/spawn enforcing the plan, report/gate I/O, pidfd/WNOWAIT lifetime
-  through audit capture, exact stop/reap and explicit uncertain-cleanup outcomes.
+- Integrate the offline-verified [exact-child owner candidate](night_shift_native_child_owner.md)
+  with authentic audit capture and held fixtures: fixed spawn, bounded
+  report/gate I/O, pidfd/WNOWAIT lifetime, exact stop/reap and uncertain-cleanup
+  handling. Modeled tests cannot establish native ownership, ABI behavior or
+  process absence; actual native behavior remains unverified.
 - Fresh authentic lossless kernel-log capture and full paired nine-worker order,
   plus confined allowed-pool controls and unresolved network audit visibility.
 - Reviewed complete immutable media, protected one-operation diskless runner,
