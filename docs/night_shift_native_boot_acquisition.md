@@ -231,8 +231,16 @@ follow-up is documentation-only. Passing these models/static checks does not
 establish native parser/mount/namespace/exec/transition behavior, authentic
 lossless capture, protected execution, boot provenance or VM/tree absence.
 
-Actual reviewed input/media authoring, protected runner installation/execution,
-independent watchdog/evidence and exact-VM final absence are still needed before
+The [validation CIDATA media candidate](night_shift_native_validation_media.md)
+now supplies a fixed data-only ISO builder/inspector in memory, with whole-image
+canonical equality, exact ISO9660/Rock Ridge/Joliet files and a bounded local
+review descriptor. All **39 media tests** executed with the real pinned codec
+and **1,505 combined related tests with two skips** pass. Ruff, Mypy across
+**101 source files**, Linux-targeted typing, pins and inventory exclusions pass;
+no source/test repair was needed. This is offline format verification: no ISO
+file or recovery boot image is written or authenticated. Actual reviewed
+complete-media materialization/read-locking, protected runner installation/
+execution, independent watchdog/evidence and exact-VM final absence are still needed before
 a separately approved native attempt. Accepted image/real credential bootstrap/
 authenticated Hyper-V UART and autonomous Gate A integration are later
 prerequisites, not results here. No elevation, native execution, media write,
