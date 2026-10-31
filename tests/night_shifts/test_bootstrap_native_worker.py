@@ -342,7 +342,8 @@ def test_prerequisite_refusals_emit_no_ready_and_perform_no_operation(model, cha
 
 
 @pytest.mark.parametrize('changes', [
-    {'case_id': '/arbitrary'}, {'case_id': 'allowed_pools'}, {'mode': 'anything'},
+    {'case_id': '/arbitrary'}, {'case_id': 'allowed_pools_extra'},
+    {'case_id': 'allowed_pools', 'mode': 'control'}, {'mode': 'anything'},
     {'mode': True}, {'attempt_id': 'UPPER'}, {'vm_id': 'bad'}, {'seed_sha256': 'bad'},
     {'deadline': 'nan'}, {'deadline': 'inf'}, {'deadline': '100'}, {'deadline': '106'},
     {'extra': 'field'},

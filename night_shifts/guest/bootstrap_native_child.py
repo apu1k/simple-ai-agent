@@ -19,12 +19,12 @@ import time
 from typing import NoReturn, Protocol, cast
 from uuid import UUID
 
-WORKER_SHA256 = '16d58f03cb7c006b3e647c2475d6dcf217819598480f59592c5027ee58593291'
+WORKER_SHA256 = '2b6fc9a513525eb2d39a6a4c50ef050620228fc4ff596925c9a279fd86a9d3d2'
 MAX_SOURCE_BYTES = 64 * 1024
 MAX_CONTEXT_BYTES = 4096
 PROFILE = 'night-shift-kvp-public-probe'
 _FIELDS = {'attempt_id', 'vm_id', 'seed_sha256', 'case_id', 'mode', 'deadline'}
-_CASES = ('runtime_write', 'pool_sibling_write', 'outside_exec')
+_CASES = ('runtime_write', 'pool_sibling_write', 'outside_exec', 'allowed_pools')
 _CAPS = ('CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb')
 _MAX_FD = (1 << 20) - 1
 
@@ -124,7 +124,8 @@ def _context(raw: bytes) -> tuple[dict[str, str], int, int]:
             raise ValueError
         if (re.fullmatch('[0-9a-f]{32}', value['attempt_id']) is None
                 or re.fullmatch('[0-9a-f]{64}', value['seed_sha256']) is None
-                or value['case_id'] not in _CASES or value['mode'] not in ('control', 'confined')):
+                or value['case_id'] not in _CASES or value['mode'] not in ('control', 'confined')
+                or (value['case_id'] == 'allowed_pools' and value['mode'] != 'confined')):
             raise ValueError
         vm = UUID(value['vm_id'])
         if not vm.int or str(vm) != value['vm_id']:

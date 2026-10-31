@@ -87,8 +87,9 @@ def render_native_child_plan(
     Preparing a plan does not create pipes, spawn, reap, stop or release a gate.
     """
     if (type(binding) is not AttemptBinding or type(case_id) is not str
-            or case_id not in ('runtime_write', 'pool_sibling_write', 'outside_exec')
+            or case_id not in ('runtime_write', 'pool_sibling_write', 'outside_exec', 'allowed_pools')
             or type(mode) is not str or mode not in ('control', 'confined')
+            or (case_id == 'allowed_pools' and mode != 'confined')
             or type(seed_sha256) is not str or re.fullmatch('[0-9a-f]{64}', seed_sha256) is None
             or type(deadline) not in (int, float) or not 0 <= deadline <= 1e15 or not math.isfinite(deadline)
             or any(type(fd) is not int or not 3 <= fd < 1 << 20 for fd in (report_fd, gate_fd))

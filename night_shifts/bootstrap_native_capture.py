@@ -24,7 +24,7 @@ from night_shifts.bootstrap_native_denials import (
 )
 from night_shifts.bootstrap_native_owner import NativeWorkerOwner, _pause, _system
 from night_shifts.bootstrap_native_ram import NativeRamFixtures
-from night_shifts.bootstrap_native_supervision import CASES, LocalWorkerObservation
+from night_shifts.bootstrap_native_supervision import CASES, POOL_CASE, WORKER_CASES, LocalWorkerObservation
 
 MAX_BASELINE_RECORDS = 4096
 MAX_BASELINE_BYTES = 4 * 1024 * 1024
@@ -301,8 +301,9 @@ def observe_fixed_worker(
     fixture pins, not caller-supplied alternative identity. No retry or receipt.
     """
     _context(deadline, cancelled)
-    if (type(fixtures) is not NativeRamFixtures or type(case_id) is not str or case_id not in CASES
-            or type(mode) is not str or mode not in ('control', 'confined')):
+    if (type(fixtures) is not NativeRamFixtures or type(case_id) is not str or case_id not in WORKER_CASES
+            or type(mode) is not str or mode not in ('control', 'confined')
+            or (case_id == POOL_CASE and mode != 'confined')):
         raise NativeCaptureRefused('context')
     child: NativeWorkerOwner | None = None
     capture: NativeKernelCapture | None = None
@@ -321,7 +322,7 @@ def observe_fixed_worker(
         interval = capture.finish()
         fixtures.verify(deadline=deadline, cancelled=cancelled)
         denial = None
-        if mode == 'confined':
+        if mode == 'confined' and case_id in CASES:
             denial = correlate_local_denial(
                 case_id, worker_pid=worker.worker_pid, syscall_errno=worker.syscall_errno,
                 baseline_sequence=interval.baseline_sequence, start_us=interval.start_us,

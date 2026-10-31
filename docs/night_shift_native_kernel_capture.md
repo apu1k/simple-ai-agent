@@ -109,16 +109,19 @@ held fixture context -> verify fixtures -> fixed child spawn -> await ready
   -> verify fixtures -> acquire fresh kernel cursor -> release gate once
   -> observe normal exit WNOWAIT (do not reap)
   -> finish bounded collection/quiet tail -> verify fixtures
-  -> confined case: existing exact local EACCES/audit correlation
+  -> confined denial case: existing exact local EACCES/audit correlation
+  -> allowed_pools positive case: exact positive report, no manufactured denial
   -> close log successfully -> explicit exact reap
 ```
 
 The exact exited child stays unreaped through collection, fixture verification
 and correlation. All calls receive the same deadline/cancellation callback.
 Controls use the same collector but do not manufacture a denial; an empty
-control interval is allowed. Confined observations require the actual strict
-correlator. This function does not replace the before/confined/after evaluator
-or claim paired positive-control/native-validation success.
+control interval is allowed. Confined denial observations require the actual
+strict correlator. The fixed confined allowed_pools positive tag instead requires
+its exact all-five-files report, errno zero and normal exit zero; it cannot turn
+an EACCES into positive success. This function does not replace the
+before/confined/after evaluator or claim native-validation success.
 
 Every failure discards the result and attempts both log close and the owner's
 one-shot exact-child abort. A constructor handles its own partial acquisition.
@@ -192,16 +195,25 @@ git diff --check
   limited to the RAM acquisition context accessor, its model tests and owner
   documentation, alongside the three new capture/test/document files.
 
-The installed worker, reviewed worker/bootstrap source pins, AppArmor policy,
-public seed/production inspection inventory and protected helper are unchanged.
+At the capture-only checkpoint, the installed worker, reviewed worker/bootstrap
+source pins, AppArmor policy, public seed/production inspection inventory and
+protected helper were unchanged. The paired-sequence follow-up below explicitly
+updates the validation worker source pin; it does not modify the installed
+protocol worker, production policy/launcher, inventories or protected helper.
 Passing models, cross-target typing and grammar checks are not native kmsg,
 clock, pidfd, AppArmor, lossless-attribution or VM-cleanup observations.
 
 ## Remaining runnable milestone
 
-Next integrate the complete paired nine-worker sequence and confined allowed-
-pool read/write/record-lock controls with a bounded summary. Resolve network/
-capability audit visibility before claiming complete denial coverage. Then
+The [paired sequence and confined pool-control candidate](night_shift_native_paired_sequence.md)
+now implements the complete nine-worker order, bracketed by two confined all-
+five-pool read/write/record-lock workers, with a bounded local summary. All
+**106 new tests** and **1,412 combined related tests with two skips** pass after
+one legacy test-only matrix update. Ruff, Mypy across **98 source files**,
+Linux-targeted typing, the worker pin and inventory exclusions pass. This remains
+an unwired source candidate, not native execution or authenticated evidence.
+Resolve network/capability audit visibility before claiming complete denial
+coverage. Then
 review immutable complete media and the protected single diskless VM operation,
 independent watchdog/evidence and independently verified exact-VM absence.
 

@@ -25,12 +25,13 @@ Two candidates are deliberately absent from production/public media inventories:
   and, in confined mode, perform the fixed profile transition. It must never be
   called in the supervisor or imported as the live worker's package entry.
 
-The existing worker, AppArmor policy, production launcher, public probe,
-inspection bundle and protected deployment remain unchanged.
+The installed protocol worker, AppArmor policy, production launcher, public
+probe, inspection bundle and protected deployment remain unchanged.
 
 ## Exact launch shape, not an arbitrary command interface
 
-The renderer accepts only the existing three fixed cases, `control`/`confined`,
+The renderer accepts the existing three fixed denial cases in `control`/`confined`
+mode and one fixed `allowed_pools` positive case in `confined` mode only, plus
 a canonical attempt/VM binding, support-seed digest, original guest-monotonic
 absolute deadline, and two distinct descriptor numbers. No caller can select
 source, path, command, environment, profile or executable bytes.
@@ -51,7 +52,16 @@ ownership; the future native owner must enforce and check them.
 
 Worker source is independently hard-pinned to canonical-LF SHA-256:
 
-`16d58f03cb7c006b3e647c2475d6dcf217819598480f59592c5027ee58593291`
+`2b6fc9a513525eb2d39a6a4c50ef050620228fc4ff596925c9a279fd86a9d3d2`
+
+The [paired sequence and confined pool-control candidate](night_shift_native_paired_sequence.md)
+extends the worker with that one positive tag and explicitly repins its source.
+That follow-up is now applied and verified offline: **106 new pool/sequence
+tests** and **1,412 combined related tests with two skips** pass after one legacy
+test-matrix update. Repository Ruff, Mypy across **98 source files**, Linux-
+targeted typing of seven changed components and the exact worker pin pass. No
+runtime correction was needed. The earlier verification below describes the
+preceding checkpoint; neither record is native execution or boot provenance.
 
 It is carried in memory, not written to a new guest path or imported from the
 supervisor's loaded support package. A changed worker refuses until separately

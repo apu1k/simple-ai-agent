@@ -18,7 +18,9 @@ from typing import NoReturn
 from night_shifts.bootstrap_native_denials import NativeDenialRefused, correlate_local_denial
 from night_shifts.maintenance_tls_prototype import AttemptBinding
 
-CASES = ('runtime_write', 'pool_sibling_write', 'outside_exec')
+CASES = ('runtime_write', 'pool_sibling_write', 'outside_exec')  # Denial catalog only.
+POOL_CASE = 'allowed_pools'
+WORKER_CASES = (*CASES, POOL_CASE)
 MAX_FRAME_BYTES = 256  # Includes the worker's newline.
 MAX_REPORT_BYTES = 512
 MAX_WORKER_SECONDS = 5
@@ -97,8 +99,9 @@ class WorkerReportSession:
         deadline: float, clock: Callable[[], float] = time.monotonic,
         cancelled: Callable[[], bool] = lambda: False,
     ) -> None:
-        if (type(binding) is not AttemptBinding or type(case_id) is not str or case_id not in CASES
+        if (type(binding) is not AttemptBinding or type(case_id) is not str or case_id not in WORKER_CASES
                 or mode not in ('control', 'confined') or type(mode) is not str
+                or (case_id == POOL_CASE and mode != 'confined')
                 or not _integer(worker_pid, 1, _MAX_PID)
                 or not _seconds(deadline) or not callable(clock) or not callable(cancelled)):
             raise NativeSupervisionRefused('context')
@@ -193,7 +196,11 @@ class WorkerReportSession:
         if not self._ready or not self._released or self._result is not None:
             self._stop('report_order')
         kind, number = value['observation'], value['errno']
-        if kind == 'syscall_error' and _integer(number, 1, 4095):
+        if self._case == POOL_CASE:
+            if kind != 'pools_checked' or not _integer(number, 0, 0):
+                self._stop('pool_control_failed')
+            self._result = (kind, number)
+        elif kind == 'syscall_error' and _integer(number, 1, 4095):
             self._result = (kind, number)
         elif (self._case != 'outside_exec' and _integer(number, 0, 0)
               and kind == ('control_written' if self._mode == 'control' else 'unexpected_open')):
@@ -240,9 +247,13 @@ class WorkerReportSession:
             kind, number = self._result
             if exit_code != 0:
                 self._stop('exit_status_unknown', unknown=True)
-            if self._mode == 'control' and kind != 'control_written':
-                self._stop('control_failed')
-            if self._mode == 'confined':
+            if self._case == POOL_CASE:
+                if kind != 'pools_checked' or number != 0:
+                    self._stop('pool_control_failed')
+            elif self._mode == 'control':
+                if kind != 'control_written':
+                    self._stop('control_failed')
+            elif self._mode == 'confined':
                 if kind == 'unexpected_open':
                     self._stop('negative_allowed')
                 if kind != 'syscall_error' or number != errno.EACCES:

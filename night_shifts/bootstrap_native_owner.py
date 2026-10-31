@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from typing import Protocol, cast
 
 from night_shifts.bootstrap_native_child_plan import render_native_child_plan
-from night_shifts.bootstrap_native_supervision import CASES, LocalWorkerObservation, WorkerReportSession
+from night_shifts.bootstrap_native_supervision import POOL_CASE, WORKER_CASES, LocalWorkerObservation, WorkerReportSession
 from night_shifts.maintenance_tls_prototype import AttemptBinding
 
 # Prevent Popen.__del__ from polling/reaping an uncertain child. Only a verified
@@ -173,8 +173,9 @@ class NativeWorkerOwner:
         self._lifetime_unknown = False
         self._state = 'acquiring'
         self._observed: _Wait | None = None
-        if (type(binding) is not AttemptBinding or type(case_id) is not str or case_id not in CASES
+        if (type(binding) is not AttemptBinding or type(case_id) is not str or case_id not in WORKER_CASES
                 or type(mode) is not str or mode not in ('control', 'confined')
+                or (case_id == POOL_CASE and mode != 'confined')
                 or type(seed_sha256) is not str or re.fullmatch('[0-9a-f]{64}', seed_sha256) is None
                 or type(deadline) not in (int, float) or not 0 <= deadline <= 1e15
                 or not math.isfinite(deadline) or not callable(cancelled)):

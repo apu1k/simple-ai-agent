@@ -36,6 +36,8 @@ _PATHS = {
     'pool_sibling_write': '/var/lib/hyperv/.kvp_pool_denied',
     'outside_exec': '/run/night-shift-bootstrap/denied-exec',
 }
+_POOL_CASE = 'allowed_pools'
+_POOL_PATHS = tuple('/var/lib/hyperv/.kvp_pool_' + str(index) for index in range(5))
 _FIELDS = {'attempt_id', 'vm_id', 'seed_sha256', 'case_id', 'mode', 'deadline'}
 _CAPS = ('CapInh', 'CapPrm', 'CapEff', 'CapBnd', 'CapAmb')
 
@@ -66,6 +68,22 @@ class _LinuxOs(Protocol):
     def fstat(self, fd: int, /) -> _LinuxDeviceStat: ...
     def major(self, device: int, /) -> int: ...
     def minor(self, device: int, /) -> int: ...
+    def pread(self, fd: int, count: int, offset: int, /) -> bytes: ...
+    def pwrite(self, fd: int, data: bytes, offset: int, /) -> int: ...
+
+
+class _RecordLocks(Protocol):
+    LOCK_EX: int
+    LOCK_NB: int
+    LOCK_UN: int
+
+    def lockf(self, fd: int, command: int, length: int, start: int, whence: int, /) -> None: ...
+
+
+def _record_locks() -> _RecordLocks:
+    _linux()
+    import fcntl
+    return cast(_RecordLocks, fcntl)
 
 
 def _linux() -> _LinuxOs:
@@ -80,7 +98,8 @@ def _context(value: object) -> dict[str, str]:
         raise NativeWorkerRefused('context')
     if (re.fullmatch('[0-9a-f]{32}', value['attempt_id']) is None
             or re.fullmatch('[0-9a-f]{64}', value['seed_sha256']) is None
-            or value['case_id'] not in _PATHS or value['mode'] not in ('control', 'confined')):
+            or value['case_id'] not in (*_PATHS, _POOL_CASE) or value['mode'] not in ('control', 'confined')
+            or (value['case_id'] == _POOL_CASE and value['mode'] != 'confined')):
         raise NativeWorkerRefused('context')
     try:
         vm = UUID(value['vm_id'])
@@ -262,8 +281,76 @@ def _gate(context: dict[str, str]) -> None:
     _remaining(context)
 
 
+def _pool_identity(info: os.stat_result) -> tuple[int, ...]:
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid or info.st_gid or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) != 0o600 or info.st_size != 1):
+        raise NativeWorkerRefused('allowed_pool_identity')
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid, info.st_nlink, info.st_size)
+
+
+def _pool_operation(context: dict[str, str]) -> dict[str, object]:
+    """Fixed confined five-file positive control; no caller paths, create or retry.
+
+    Whole-file POSIX record locks (not flock), held together across all five
+    read/write/read-back checks. This does not test interprocess contention or
+    actual daemon compatibility. Closing one exact fd lifetime releases its lock.
+    """
+    if context['case_id'] != _POOL_CASE or context['mode'] != 'confined':
+        raise NativeWorkerRefused('context')
+    native, locks = _linux(), _record_locks()
+    held: list[tuple[int, str, tuple[int, ...]]] = []
+    locked: set[int] = set()
+    unknown = False
+    try:
+        for path in _POOL_PATHS:
+            _remaining(context)
+            before = _pool_identity(os.lstat(path))
+            fd = os.open(path, os.O_RDWR | native.O_NOFOLLOW | native.O_CLOEXEC | native.O_NONBLOCK)
+            held.append((fd, path, before))  # Own immediately, before fallible checks.
+            if (fd < 5 or os.get_inheritable(fd) or os.get_blocking(fd)
+                    or _pool_identity(os.fstat(fd)) != before
+                    or any(pin[:2] == before[:2] for _, _, pin in held[:-1])):
+                raise NativeWorkerRefused('allowed_pool_identity')
+            locks.lockf(fd, locks.LOCK_EX | locks.LOCK_NB, 0, 0, os.SEEK_SET)
+            locked.add(fd)
+        for fd, path, identity in held:
+            _remaining(context)
+            if (_pool_identity(os.lstat(path)) != identity or _pool_identity(os.fstat(fd)) != identity
+                    or native.pread(fd, 2, 0) != b'V'):
+                raise NativeWorkerRefused('allowed_pool_bytes')
+            if native.pwrite(fd, b'V', 0) != 1:
+                raise NativeWorkerUnknown('allowed_pool_write_unknown')
+            _remaining(context)
+            if (native.pread(fd, 2, 0) != b'V' or _pool_identity(os.fstat(fd)) != identity
+                    or _pool_identity(os.lstat(path)) != identity):
+                raise NativeWorkerUnknown('allowed_pool_write_unknown')
+        _remaining(context)
+    except BaseException:
+        unknown = True
+    finally:
+        # Even after partial lock/write, attempt every exact-owned close once.
+        # Never retry a possibly consumed fd or claim rollback of the V write.
+        while held:
+            fd, _, _ = held.pop()
+            if fd in locked:
+                try:
+                    locks.lockf(fd, locks.LOCK_UN, 0, 0, os.SEEK_SET)
+                except BaseException:
+                    unknown = True
+            try:
+                os.close(fd)
+            except BaseException:
+                unknown = True
+    if unknown:
+        raise NativeWorkerUnknown('allowed_pools_unknown') from None
+    _remaining(context)
+    return {'observation': 'pools_checked', 'errno': 0}
+
+
 def _operation(context: dict[str, str]) -> dict[str, object]:
     native = _linux()
+    if context['case_id'] == _POOL_CASE:
+        return _pool_operation(context)
     path = _PATHS[context['case_id']]
     try:
         if context['case_id'] == 'outside_exec':
