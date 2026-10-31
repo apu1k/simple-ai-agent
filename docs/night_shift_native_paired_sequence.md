@@ -207,13 +207,19 @@ protected-runner prerequisites below are not waived by these passing checks.
 
 ## Remaining diskless operation and Gate A boundaries
 
-The next runnable milestone still needs a reviewed validation-only guest boot/
-acquisition entry for the intended isolation/layout and add-only fixed policy,
-complete immutable validation media, protected one-operation diskless host
-runner, independent watchdog/evidence and independently verified exact-VM
-absence. Resolve network/capability audit visibility and actual kernel
-capture/transition feasibility before claiming complete native denial coverage.
-No temporary permissive test policy or live repair is an acceptable substitute.
+The [validation-only boot/acquisition and NoCloud candidate](night_shift_native_boot_acquisition.md)
+now supplies the fixed guest isolation/layout, add-only policy, sealed source
+handoff and sequence invocation, plus five in-memory NoCloud files. All **54 new
+boot/handoff tests** and **1,466 combined related tests with two skips** pass,
+with repository Ruff, Mypy across **100 source files**, Linux-targeted typing,
+source pins and inventory exclusions passing. No source/test repair was needed.
+This is verified offline, not deployed or executed natively; neither application
+nor rendering is execution authorization. Complete immutable validation media,
+protected one-operation diskless host runner, independent watchdog/evidence and
+independently verified exact-VM absence remain outstanding. Resolve network/capability audit
+visibility and actual kernel capture/transition feasibility before claiming
+complete native denial coverage. No temporary permissive test policy or live
+repair is an acceptable substitute.
 
 Only then can the separately approved native attempt provide native evidence.
 Accepted image preparation, trusted real credential provisioning, authenticated
