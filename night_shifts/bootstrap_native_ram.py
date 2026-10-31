@@ -223,7 +223,7 @@ class NativeRamFixtures:
         if (type(binding) is not AttemptBinding or type(seed_sha256) is not str
                 or re.fullmatch('[0-9a-f]{64}', seed_sha256) is None):
             raise NativeRamRefused('context')
-        self._binding = binding
+        self._binding, self._seed_sha256 = binding, seed_sha256
         budget = _Budget(deadline, cancelled)
         try:
             self._mountinfo = _layout(binding, budget)
@@ -341,6 +341,17 @@ class NativeRamFixtures:
             self._check_file(file_pin, budget)
         self._names(fresh=fresh)
         budget.check()
+
+    def launch_context(self) -> tuple[AttemptBinding, str]:
+        """Held acquisition context only, NOT a receipt or fresh verification.
+
+        The fixed supervisor derives child binding/seed from these pins rather
+        than accepting a second, possibly mixed caller context. It must still
+        verify the held fixtures around each child under the original deadline.
+        """
+        if self._closed or self._failed:
+            raise NativeRamRefused('terminal')
+        return self._binding, self._seed_sha256
 
     def verify(self, *, deadline: float, cancelled: Callable[[], bool] = lambda: False) -> None:
         """Check around EACH worker; a new bounded check is not a retry of a probe.

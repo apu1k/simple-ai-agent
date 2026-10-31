@@ -189,8 +189,15 @@ capture or absence of a native process/VM.
 
 Still required before the fixed diskless operation can execute:
 
-1. Bounded fresh lossless /dev/kmsg acquisition/capture and integration with this
-   held-child lifetime, fixtures and the existing paired-control evaluator.
+1. Integrate the [kernel-log capture and single-worker sequence
+   candidate](night_shift_native_kernel_capture.md) into full paired sequencing.
+   It wires fixed /dev/kmsg collection, this held-child lifetime, held fixtures
+   and local denial correlation. Its **107 collector tests**, two additional RAM
+   tests and **1,305 combined related tests with two skips** pass. Ruff and
+   Linux-targeted typing pass; the linked record covers the narrow Windows-
+   hosted Linux-stat declaration follow-up and required applied-file check.
+   Full paired sequencing and actual native lossless attribution remain
+   unverified.
 2. The complete nine-worker order plus confined allowed-pool read/write/record-
    lock positive controls, bounded summary and unresolved network/capability
    audit-visibility decision; no broader policy to force a pass.

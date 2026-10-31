@@ -173,6 +173,26 @@ def acquire(state, **kwargs):
                                   cancelled=kwargs.pop('cancelled', lambda: state.cancelled), **kwargs)
 
 
+def test_launch_context_is_held_data_not_a_fresh_verification(model):
+    pins = acquire(model)
+    events = list(model.events)
+    assert pins.launch_context() == (BINDING, SEED_SHA)
+    assert model.events == events
+    pins.close()
+    with pytest.raises(ram.NativeRamRefused, match='^terminal$'):
+        pins.launch_context()
+
+
+def test_failed_fixture_verification_cannot_supply_launch_context(model):
+    pins = acquire(model)
+    model.nodes[ram._RUNTIME + '/denied-write'].data = b'X'
+    with pytest.raises(ram.NativeRamRefused):
+        pins.verify(deadline=model.now + 5)
+    with pytest.raises(ram.NativeRamRefused, match='^terminal$'):
+        pins.launch_context()
+    pins.close()
+
+
 def test_fixed_catalog_matches_actual_worker_and_all_pins_close_without_deletion(model):
     pins = acquire(model)
     expected = {path + '/' + name: (mode, raw) for path, name, mode, raw in ram._FILES}
