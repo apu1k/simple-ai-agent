@@ -114,11 +114,26 @@ construction checks bounded/coherent local fields but cannot confer authority;
 ordinary Python callers can fabricate objects and descriptors.
 
 The future protected author/runner must independently compare exact file bytes
-and operator-approved digests under held file identities/read locks, alongside
-recovery ISO provenance, installed code/runtime pins, exact VM ownership and
-one-attempt/lifetime policy. It must never treat this descriptor or a guest
-summary as evidence of those host facts. No existing inspection helper, permanent
-claim or retained image/VM is reused or changed by this candidate.
+and trusted expected digests under held file identities/read locks, alongside
+operator-reviewed recovery ISO provenance, installed code/runtime/input pins,
+exact VM ownership and one-attempt/lifetime policy. It must never treat this
+descriptor or a guest summary as evidence of those host facts. No existing
+inspection helper, permanent claim or retained image/VM is reused or changed
+by this candidate.
+
+Binding order matters for integration: Hyper-V supplies the new VM GUID; the
+runner must not pretend an arbitrary preselected UUID is its observed VM ID.
+An eventual fixed protected operation may first create and record its exact
+fresh OFF diskless VM, then render attempt/actual-VM-bound CIDATA from its
+independently reviewed immutable recipe and actual pinned seed. In that route,
+the installed authority derives/binds expected dynamic image/review hashes;
+they are not operator-preapproved static hashes of a not-yet-known GUID, and
+self-hashing untrusted caller output is not an equivalent trust source. Any
+failure after VM creation belongs to the outer exact-VM lifecycle/watchdog and
+requires independently checked absence; the media-store component cannot do
+that cleanup. No start is permitted before media verification and independent
+VM-lifetime supervision are established. This is an integration requirement,
+not a VM operation or new approval supplied by these source candidates.
 
 ## Applied offline verification
 
@@ -178,15 +193,32 @@ external artifact-catalog rehash occurred.
 
 ## Next runnable-milestone boundary
 
-Next supply protected create-new materialization and read-locked binding of the
-complete recovery+CIDATA set, then the separately reviewed fixed diskless runner
+The [media-store source candidate](night_shift_native_media_store.md) now
+supplies create-new materialization and held-file binding of the complete
+recovery+CIDATA set: a preprovisioned private recovery input, fixed new CIDATA/
+review outputs, independent pins, relative handle acquisition, writer-to-reader
+identity/byte verification and final read-sharing-only handles. **Applied and
+verified offline, still unwired.** All **62 new tests** pass; the fresh twenty-
+five-file related selection passes **1,550 with two skips**, warnings as errors.
+Ruff, Mypy across **102 source files**, Linux typing, compilation/grammar, pins,
+payload exclusions, links and whitespace pass. One narrowly scoped legacy
+import-boundary test was adjusted for the explicit primitive reuse; no runtime
+repair was needed. New Windows calls are modeled; existing ordinary temporary
+marker regressions are not native media-store or protected-anchor proof.
+
+This code does not provision actual inputs or supply protected installation or
+execution. The original in-memory media API remains unchanged. Next supply
+reviewed actual-input/deployment provisioning and the fixed diskless runner
 with independent watchdog/evidence and independently verified exact-VM absence.
 The watchdog must cover the Hyper-V VM lifetime, not merely terminate its Python
 controller. A timeout is UNKNOWN until exact-VM final absence is established.
+Held media handles are not that watchdog and controller death releases them.
 
 Actual Linux/NoCloud/parser/mount/transition/audit feasibility and unresolved
 network/capability audit visibility remain native work. Accepted image
 preparation, trusted real credential bootstrap, authenticated Hyper-V UART and
-autonomous Gate A integration remain later prerequisites. No elevation, native
-worker/guest code, file/media write, VM operation, protected deployment or commit
-is part of this checkpoint. **Gate A remains unrun.**
+autonomous Gate A integration remain later prerequisites. No actual validation-
+media write, protected-anchor provisioning, elevation, native worker/guest code,
+VM operation, protected deployment or commit occurred in this verification.
+Existing disposable marker fixtures are distinguished in the store record.
+**Gate A remains unrun.**
