@@ -344,21 +344,21 @@ def test_no_secret_payload_parameter_or_production_caller():
     assert list(inspect.signature(m._Windows.write_marker).parameters) == ['self', 'handle']
     assert m.MARKER.startswith(b'NON-SECRET')
     root = Path(__file__).resolve().parents[2]
-    candidate = root / 'night_shifts' / 'bootstrap_native_media_store.py'
-    primitive_imports = 0
+    candidates = {root / 'night_shifts' / name: 0 for name in
+                  ('bootstrap_native_media_store.py', 'bootstrap_native_provision.py')}
     for path in (root / 'night_shifts').rglob('*.py'):
         if path.name == 'maintenance_store_native_prototype.py':
             continue
         tree = ast.parse(path.read_text(encoding='utf-8-sig'))
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
-                # One exact UNWIRED candidate may reuse the reviewed native
-                # handle/ACL primitives. This is not an exemption for another
-                # importer, direct marker API import, star import or alias.
-                if (path == candidate and node.level == 0 and node.module == 'night_shifts'
+                # Only these two exact UNWIRED bodies may reuse the native
+                # handle/ACL primitives, never marker APIs, star imports or a
+                # different alias. Neither is an installed/production caller.
+                if (path in candidates and node.level == 0 and node.module == 'night_shifts'
                         and [(alias.name, alias.asname) for alias in node.names]
                         == [('maintenance_store_native_prototype', 'native')]):
-                    primitive_imports += 1
+                    candidates[path] += 1
                     continue
                 assert 'maintenance_store_native_prototype' not in (node.module or '')
                 assert all(alias.name != 'maintenance_store_native_prototype' for alias in node.names)
@@ -369,6 +369,6 @@ def test_no_secret_payload_parameter_or_production_caller():
             elif isinstance(node, ast.Import):
                 assert all('maintenance_store_native_prototype' not in alias.name for alias in node.names)
                 assert all('bootstrap_native_media_store' not in alias.name for alias in node.names)
-            elif path == candidate and isinstance(node, ast.Attribute):
+            elif path in candidates and isinstance(node, ast.Attribute):
                 assert node.attr not in ('write_marker', 'probe_new_store')
-    assert primitive_imports == 1
+    assert set(candidates.values()) == {1}

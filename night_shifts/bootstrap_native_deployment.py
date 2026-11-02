@@ -27,7 +27,7 @@ MAX_REVIEW_BYTES = 16384
 _WINDOWS = os.name == 'nt'
 CODE_FILES = (
     'bootstrap_daemon_asset.py', 'bootstrap_probe_seed.py',
-    'bootstrap_native_deployment.py', 'bootstrap_native_handoff.py',
+    'bootstrap_native_deployment.py', 'bootstrap_native_provision.py', 'bootstrap_native_handoff.py',
     'bootstrap_native_media.py', 'bootstrap_native_media_store.py',
     'bootstrap_native_fixture.py', 'bootstrap_native_denials.py',
     'bootstrap_native_supervision.py', 'bootstrap_native_ram.py',

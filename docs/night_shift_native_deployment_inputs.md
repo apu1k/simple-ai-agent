@@ -2,11 +2,22 @@
 
 ## Status and runnable milestone
 
-**Applied and verified offline; unwired, not installed or activated.** All
-**106 new tests** pass. The fresh twenty-six-file related selection passes
-**1,656 tests with two skips**, warnings treated as errors. This is the
-input-review/bundle component for a new protected diskless validator installation,
-following the [held media store](night_shift_native_media_store.md).
+**Current checkpoint:** the [native provisioning body](night_shift_native_provisioning_body.md)
+adds one fixed host source member and one explicitly allowed, still-unwired
+consumer. That catalog/guard extension and its body/tests are **applied and
+verified offline**, not installed or activated. All **52 new provisioning tests**
+and the fresh twenty-seven-file related selection of **1,708 with two skips**
+pass, warnings as errors. Ruff and Mypy across **104 source files**, Linux typing
+of both changed sources, compilation/grammar, pins, payload exclusions, links
+and whitespace pass. The current host inventory is **91 entries**. Fresh
+independent code-tree/bundle review is mandatory; application is not provenance
+or installation authority.
+
+The input-bundle component's original **106 tests** are included in that related
+selection. Its preceding checkpoint `8510310` passed **1,656 with two skips**;
+the detailed record below is preserved as historical evidence, not a native
+attempt. This remains the input-review/bundle component for a new protected
+installation, following the [held media store](night_shift_native_media_store.md).
 It is NOT an installer, protected worker, approval policy, tool, permanent claim,
 VM-lifetime watchdog or evidence producer. The first approved native attempt and
 Gate A remain outstanding. **Do not run checkout code elevated.**
@@ -14,8 +25,9 @@ Gate A remain outstanding. **Do not run checkout code elevated.**
 The pre-draft committed focused eight-file baseline passed **370 tests with one
 skip**, warnings as errors; repository Ruff and Mypy across **102 night-shift
 source files** passed. Those are historical baseline results, not new-test or
-native evidence. The applied checkpoint passes repository Ruff and Mypy across
-**103 source files**, plus Linux-targeted typing. `git status --short` was empty
+native evidence. That earlier checkpoint passed repository Ruff and Mypy across
+**103 source files**, plus Linux-targeted typing; the current extension passes
+across **104 source files**. `git status --short` was empty
 before drafting. An initial command
 named a nonexistent support-seed test file and collected no tests; the corrected
 selection above is the actual baseline result. The one skip is unavailable
@@ -33,7 +45,7 @@ unchanged. No existing installation or authorization is reused.
 
 The source reviewer returns a bounded ASCII JSON inventory of these exact trees:
 
-- **28 code/policy entries**: 26 fixed source/policy files and two deliberately
+- **29 code/policy entries**: 27 fixed source/policy files and two deliberately
   empty package initializers. This includes the public support/guest native
   catalogs, host media/store closure and this stdlib reviewer. No app/provider
   package initializer is copied.
@@ -120,9 +132,9 @@ media store; no permission repair or reuse of a retained failed attempt is allow
 
 The builder returns one ZIP_STORED archive IN MEMORY ONLY, with fixed timestamps,
 regular mode-0444 metadata, sorted inventory and no directory/extra/comment entries.
-Its **90 entries** are fixed:
+Its **91 entries** are fixed (including the provisioning-body catalog extension):
 
-- 48 `payload/` code/policy/codec files;
+- 49 `payload/` code/policy/codec files;
 - 37 derived `runtime/` files;
 - the three public `inputs/` files plus the complete original `inputs/runtime.zip`;
 - a canonical `manifest.json` binding each file and the immutable input recipe.
@@ -161,7 +173,7 @@ supply that binding or authority.
 
 ## Applied offline verification
 
-The new tests mostly substitute source/codec trees, public-asset pins, inert
+The input-bundle tests mostly substitute source/codec trees, public-asset pins, inert
 non-runnable PE/stdlib model bytes, metadata/filesystem observations and runtime
 ZIPs constructed in memory. They cover pin-before-parse ordering, deterministic
 fixed output, archive bounds/shapes, canonical refusal even after rehash, runtime
@@ -181,7 +193,7 @@ mypy night_shifts/bootstrap_native_deployment.py --follow-imports=silent --platf
 git diff --check
 ```
 
-### Applied verification record
+### Preceding checkpoint's applied verification record (`8510310`)
 
 - Initial new selection: **79 passed, one failed**. Initial twenty-six-file related
   selection: **1,629 passed, one failed, two skipped**. Both failures were the
@@ -222,8 +234,8 @@ git diff --check
   from both and from the actual **31-entry inspection ZIP**, built only in memory.
   Static regressions verify complete source closure and no production importer;
   carrying native modules as data does not relax their import/API isolation.
-- The exact deployment inventory remains **90 entries** (28 code/policy, 20 codec,
-  37 runtime, four input files and the manifest). Two actual source/installed-codec
+- At that checkpoint, the exact deployment inventory was **90 entries** (28 code/
+  policy, 20 codec, 37 runtime, four input files and the manifest). Two actual source/installed-codec
   local reviews are identical in memory: **6,347 bytes, 48 entries**, within the
   16 KiB bound. This is local snapshot consistency, not provenance review or
   approval of those tree digests. No real-input deployment archive was assembled.
@@ -238,6 +250,21 @@ snapshot consistency, not publisher authentication, privileged file acquisition,
 protected installation, DLL/import confinement, native guest boot or VM absence.
 
 ## Next exit criteria toward the first native attempt and Gate A
+
+The [provisioning-body candidate](night_shift_native_provisioning_body.md) supplies
+create-new relative-handle installation copying, complete recovery hashing before
+output creation, private descriptors at creation, writer/reader identity handoff,
+full final verification and one-shot checked closure. It reuses only the native
+primitive layer, not marker APIs, the media-store acquisition entry or an old
+installer. **Applied and verified offline, still unwired:** all 52 new tests and
+the explicit import-guard/catalog extensions pass within the **1,708-pass, two-
+skip** related selection. No source/test repair was needed. New Windows calls
+are modeled; actual source/codec inventory reviews are read-only consistency
+checks, not protected runtime or installation evidence.
+
+It does **not** supply its mandatory trusted pre-import bootstrap, permanent
+install-attempt claim or process watchdog, so a protected installation is still
+not runnable. None of the native exit criteria below has been satisfied by it.
 
 1. Independently review the real code/codec/runtime/public/recovery inputs and
    retained provenance evidence; build/review the exact input archive ordinarily.

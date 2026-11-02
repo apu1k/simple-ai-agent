@@ -459,15 +459,23 @@ def test_candidate_stdlib_only_unwired_and_excluded_from_existing_payloads():
             assert node.func.id not in ('exec', 'eval', '__import__', 'compile')
     assert 'bootstrap_native_deployment.py' not in SOURCE_FILES
     assert 'bootstrap_native_deployment.py' not in inspection_bundle.FILES
+    consumer = root / 'bootstrap_native_provision.py'
+    consumer_imports = 0
     for path in root.rglob('*.py'):
         if path == Path(m.__file__):
             continue
         for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
             if isinstance(node, ast.ImportFrom):
+                if (path == consumer and node.level == 0 and node.module == 'night_shifts'
+                        and [(a.name, a.asname) for a in node.names]
+                        == [('bootstrap_native_deployment', 'deployment')]):
+                    consumer_imports += 1
+                    continue
                 assert 'bootstrap_native_deployment' not in (node.module or '')
                 assert all(a.name != 'bootstrap_native_deployment' for a in node.names)
             if isinstance(node, ast.Import):
                 assert all('bootstrap_native_deployment' not in a.name for a in node.names)
+    assert consumer_imports == 1  # Sole explicitly reviewed, still-unwired provisioning body.
 
 
 def test_real_source_and_codec_snapshot_reads_only_no_codec_import(monkeypatch):
