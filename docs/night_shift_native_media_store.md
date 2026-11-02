@@ -204,6 +204,21 @@ non-secret temporary marker tests are explicitly distinguished above.
 
 ## Next exit criteria toward Gate A
 
+The [deployment-input bundle candidate](night_shift_native_deployment_inputs.md)
+now supplies the fixed code/codec/public-input/runtime review archive needed
+before a NEW protected installation. **Applied and verified offline, still
+unwired.** All **106 new tests** and the fresh twenty-six-file related selection
+of **1,656 with two skips** pass, warnings as errors. Ruff, Mypy across **103
+source files**, Linux typing, compilation/grammar, pins, payload exclusions,
+links and whitespace pass. A narrow Windows path/descriptor snapshot comparison
+repair retains exact within-provider metadata checks; codec locations must be
+actual absolute filesystem paths. These are ordinary snapshots/archive models,
+not protected installation or native runtime evidence. It includes the original
+pinned runtime ZIP and requires every derived runtime file to match it. The
+recovery ISO remains an explicitly unverified reference, not an acquired input.
+No installer, protected policy/claim, anchor provisioning or VM supervision is
+supplied by that candidate; none of the native exit criteria below is complete.
+
 1. Review actual seed/recovery/code/codec/runtime inputs under a new fixed
    protected deployment policy. Provision its exact private anchor without
    repairing/reusing retained failed attempts.
