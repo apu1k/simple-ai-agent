@@ -112,6 +112,24 @@ only, NEVER a lookup/termination target; all control uses original process/job
 handles. Host pipe/console/DLL behavior still needs native review, not assumptions
 from source constants.
 
+The separate
+[held executable-target acquisition body](night_shift_native_launch_boundary.md)
+is now applied and verified offline: **120 new tests** pass, including compilation
+of both actual C# sources with a fake file/token/clock backend. The fresh thirty-file
+related selection passes **2,026 with two skips**, warnings as errors. No source
+or test repair was needed. Repository Ruff and Mypy across **104 source files**,
+Python compatibility/grammar, catalog/dependency/pin/payload checks, links and
+whitespace pass; the new document records the scoped Linux-targeted typing result
+and the unchanged Windows-specific import-graph limitations.
+
+It checks the fixed four-file executable/config inventory and initially empty
+private scratch directory, retaining read-sharing-only file handles. It remains
+unwired and unexercised natively, not an authenticated approval channel, protected
+starter or runnable integration. This guardian's sources and native behavior are
+unchanged. The future integration must bind both plans, preserve the original
+budget and retain the lease until exact-tree absence is independently established;
+a failed reverification poisons the new lease without releasing its locks.
+
 A root/filename/SID check is not a held-file verifier. Before any native call,
 the future trusted caller must have established and retained the complete private
 launch closure and its exact approved identities/bytes/DLL/import policy. The
