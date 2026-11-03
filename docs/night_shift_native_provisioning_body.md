@@ -29,8 +29,17 @@ native primitives or the bundle reviewer. That bootstrap must also bind the
 operator-reviewed paths, directory identities, exact bundle/input pins, approval
 window and permanent install-attempt claim, and supply an independent protected
 process watchdog. This body cannot establish its own import provenance or make
-an untrusted interpreter safe by checking itself later. No such bootstrap or
-claim is implemented, installed, reused or invoked here.
+an untrusted interpreter safe by checking itself later. No runnable trusted
+bootstrap, authenticated install-authorization channel or process watchdog is
+implemented, installed, reused or invoked here. The separate
+[C# pre-import acquisition/claim body](night_shift_native_install_boundary.md)
+is now applied and verified offline: **115 new tests** and the fresh related
+selection of **1,823 with two skips** pass, warnings as errors. Both actual C#
+sources compile with a fake file/token/clock backend; no candidate native API is
+invoked. It can acquire/verify the fixed private import closure and create one
+retained claim, but has no executable entry point, trust-establishing installation,
+provisioning handoff or independent process watchdog. This is not activation or
+native evidence; complete protected bootstrap trust remains mandatory.
 
 Consequently this candidate does not yet make a protected installation runnable.
 Its result/record are consistency data, not bootstrap authorization or a new tool
@@ -258,6 +267,17 @@ behavior or final VM absence. The mandatory bootstrap trust boundary remains
 unimplemented and this body remains unwired.
 
 ## Next actual runnable boundary
+
+The applied, offline-verified
+[pre-import acquisition/claim body](night_shift_native_install_boundary.md) is
+the first source slice of item 2 below, not completion of that runnable boundary.
+Its **115 new tests** and fresh twenty-eight-file related selection of **1,823
+with two skips** pass. Repository Ruff and Mypy across **104 source files**,
+Linux typing of this unchanged body/deployment reviewer, compilation/grammar,
+catalog/dependency/pin/payload checks, links and whitespace pass. The C# repair
+follow-up changed only test rights fixtures and exact `.gitignore` exceptions,
+not C# behavior. This does not modify the Python body or 91-entry host bundle;
+no protected claim, installation, process/VM watchdog or native evidence exists.
 
 1. Review/build the real immutable inputs and code/runtime/codec/bootstrap byte
    snapshots under new installation approval. Preserve provenance/source evidence.
