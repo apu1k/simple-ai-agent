@@ -214,10 +214,26 @@ compiler and source checks does not establish actual Windows sharing, native ABI
 calls, private-token/ACL protection, claim durability, protected installation,
 import/DLL confinement, watchdog behavior, native boot or final VM absence.
 
-The next implementation is the separately protected executable/approval/watchdog
-boundary and fixed provisioning handoff, followed by separately approved native
-validation. No existing tool, installation, claim, protected policy or guest
-source is wired or changed here.
+The separate
+[provisioning-process guardian body](night_shift_native_process_guardian.md) is
+now applied and verified offline: **83 new tests**, including compilation of
+both actual C# sources with a fake kernel/token/clock backend, pass. The fresh
+twenty-nine-file related selection passes **1,906 with two skips**, warnings as
+errors. Its private unnamed kill-on-close job, atomic job-list assignment,
+fixed worker role, original deadline and exact-owned empty-tree checks remain
+unexercised natively. No source/test repair was needed after application.
+Repository Ruff and Mypy across **104 source files**, Python compatibility/
+grammar, catalog/dependency/pin/payload checks, links and whitespace pass.
+
+It is not installed, not an executable entry point and not a native watchdog
+result; the trusted approval channel, held-target bootstrap and worker/Python
+handoff remain absent. It deliberately does not load this acquisition assembly
+before containment and does not change this component or its 87-file inventory.
+
+The remaining runnable boundary is the separately protected executable/approval/
+held-target installation and fixed provisioning handoff, followed by separately
+approved native validation. No existing tool, installation, claim, protected
+policy or guest source is wired or changed here.
 
 No actual anchor, claim, input bundle or ISO was created or copied. No elevation,
 protected installation, carried-runtime execution, guest execution, VM operation,

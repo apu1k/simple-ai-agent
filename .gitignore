@@ -54,6 +54,8 @@ Caddyfile
 !/scripts/validate_native_store_guard_checks.ps1
 !/scripts/native_validator_install_boundary.cs
 !/scripts/native_validator_install_windows.cs
+!/scripts/native_validator_process_guardian.cs
+!/scripts/native_validator_process_guardian_windows.cs
 logs
 
 # temporary logs
