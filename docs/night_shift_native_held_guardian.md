@@ -218,6 +218,31 @@ cleanup, installation acceptance or a native provisioning attempt.
 
 ## Remaining protected integration
 
+The subsequent [fixed installation-request contract candidate](night_shift_native_install_request.md)
+is now applied and verified offline: **166 new tests** pass, including compilation
+of five actual C# sources together and the real CLR codec/plan factories exercised
+on synthetic inert descriptors. It supplies the bounded data prerequisite for
+starter/worker delivery: one canonical independently pinned outer request,
+deterministic worker projection and cross-bound launch/import plans without a
+request self-hash cycle. The fresh thirty-two-file related selection passes
+**2,268 with two skips**, warnings as errors. Repository Ruff and Windows-hosted
+Mypy across **105 source files**, scoped Linux typing, Python grammar,
+catalog/dependency/pin/payload checks, links and whitespace pass.
+
+Its required DTO fields were corrected to trivial auto-properties to preserve
+warnings-as-errors compilation; test-helper formatting and a required-member
+guard were also corrected/added. No warning suppression or wire/pin/bound/policy
+relaxation was introduced. No further source or test repair was needed. The
+linked document records the exact applied counts, initial compile/lint blockers,
+probe versus applied evidence and remaining limitations.
+
+The contract does not change this composition, the existing catalogs or either
+native adapter, authenticate approval, deliver a request, consume a permanent
+grant or supply an entry point. Its framework-serialization load dependencies
+still need their own pre-load trust review. The historical 76-test record above
+concerns the earlier composition, not that request contract. Neither checkpoint
+establishes a protected starter, actual-input acquisition or native provisioning.
+
 Still required, before native use:
 
 1. A separately reviewed protected build/install/starter route establishing its
