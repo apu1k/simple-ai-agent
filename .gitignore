@@ -58,6 +58,7 @@ Caddyfile
 !/scripts/native_validator_process_guardian_windows.cs
 !/scripts/native_validator_launch_boundary.cs
 !/scripts/native_validator_launch_windows.cs
+!/scripts/native_validator_held_guardian.cs
 logs
 
 # temporary logs

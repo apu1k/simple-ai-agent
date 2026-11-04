@@ -104,11 +104,20 @@ namespace AiAgent.ValidatorLaunch {
         readonly HashSet<string> identities=new HashSet<string>(StringComparer.Ordinal);
         bool used,closed,poisoned;
         public LaunchBoundary(LaunchPlan value) : this(value,new WindowsLaunchFiles(),new LaunchClock()) { }
-        internal LaunchBoundary(LaunchPlan value,ILaunchFiles files,ILaunchClock time) {
+        internal LaunchBoundary(LaunchPlan value,ILaunchFiles files,ILaunchClock time)
+            : this(value,files,time,null) { }
+        internal LaunchBoundary(LaunchPlan value,ILaunchFiles files,ILaunchClock time,double? originalDeadline) {
             plan=value; api=files; clock=time; Validate(value);
             double now=Now(); long remaining=plan.ApprovedUntilUnix-clock.Unix;
             if (remaining<1 || remaining>86400) throw new LaunchRefused("approval_window");
-            deadline=now+Math.Min(plan.BudgetSeconds,remaining);
+            double limit=now+Math.Min(plan.BudgetSeconds,remaining);
+            if (originalDeadline.HasValue) {
+                double bound=originalDeadline.Value;
+                if (Double.IsNaN(bound) || Double.IsInfinity(bound) || bound<=now)
+                    throw new LaunchRefused("shared_deadline");
+                limit=Math.Min(limit,bound); // caller may shorten, never renew, the window
+            }
+            deadline=limit;
         }
         internal static void Component(string text) {
             if (text==null || text.Length<1 || text.Length>120 ||

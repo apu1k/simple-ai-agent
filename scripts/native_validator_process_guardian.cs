@@ -44,6 +44,11 @@ namespace AiAgent.ValidatorGuardian {
         public double Seconds { get { return clock.Elapsed.TotalSeconds; } }
         public long Unix { get { return (long)(DateTime.UtcNow-new DateTime(1970,1,1)).TotalSeconds; } }
     }
+    // Internal composition hook only. No caller-selected command or public callback.
+    internal interface IGuardianLaunchGate {
+        void BeforeCreate();
+        void BeforeResume();
+    }
     internal interface IGuardianKernel {
         void RequireHost(GuardianPlan plan);
         object NewJob();
@@ -66,20 +71,34 @@ namespace AiAgent.ValidatorGuardian {
         readonly GuardianPlan plan;
         readonly IGuardianClock clock;
         readonly IGuardianKernel api;
+        readonly IGuardianLaunchGate launchGate;
         readonly double deadline, stopAt;
         readonly object[] owned=new object[3]; // job, root process, primary thread
         int ownedCount;
-        bool used, closed, stopAttempted, resumed, timedOut, residual;
+        bool used, closed, stopAttempted, resumed, timedOut, residual, creationAttempted;
+        // Terminal local fact for the held-target composition, NOT approval/evidence.
+        // Any failure after entering creation conservatively keeps the target lease.
+        internal bool LaunchTargetsReleasable { get; private set; }
         object job;
         ChildPair child;
         uint? exitCode;
         public ProvisionProcessGuardian(GuardianPlan value)
             : this(value,new WindowsGuardianKernel(),new GuardianClock()) { }
-        internal ProvisionProcessGuardian(GuardianPlan value,IGuardianKernel kernel,IGuardianClock time) {
-            plan=value; api=kernel; clock=time; Validate(value);
+        internal ProvisionProcessGuardian(GuardianPlan value,IGuardianKernel kernel,IGuardianClock time)
+            : this(value,kernel,time,null,null) { }
+        internal ProvisionProcessGuardian(GuardianPlan value,IGuardianKernel kernel,IGuardianClock time,
+            double? originalDeadline,IGuardianLaunchGate gate) {
+            plan=value; api=kernel; clock=time; launchGate=gate; Validate(value);
             double now=Now(); long remaining=plan.ApprovedUntilUnix-clock.Unix;
             if (remaining<StopReserveSeconds+1 || remaining>86400) throw new GuardianRefused("approval_window");
-            deadline=now+Math.Min(plan.BudgetSeconds,remaining); stopAt=deadline-StopReserveSeconds;
+            double limit=now+Math.Min(plan.BudgetSeconds,remaining);
+            if (originalDeadline.HasValue) {
+                double bound=originalDeadline.Value;
+                if (Double.IsNaN(bound) || Double.IsInfinity(bound) || bound<=now)
+                    throw new GuardianRefused("shared_deadline");
+                limit=Math.Min(limit,bound); // never renew the original attempt budget
+            }
+            deadline=limit; stopAt=deadline-StopReserveSeconds;
         }
         internal static void Component(string text) {
             if (text==null || text.Length<1 || text.Length>120 ||
@@ -164,13 +183,15 @@ namespace AiAgent.ValidatorGuardian {
                 BeforeStart(); api.RequireHost(plan); BeforeStart();
                 object created=api.NewJob();
                 if (!Own(created)) throw new GuardianUnknown("job_handle_unknown"); job=created;
-                BeforeStart(); child=api.CreateSuspended(job,plan.Root);
+                BeforeStart(); if (launchGate!=null) launchGate.BeforeCreate(); BeforeStart();
+                creationAttempted=true; // disarm BEFORE crossing the native creation boundary
+                child=api.CreateSuspended(job,plan.Root);
                 if (child==null) throw new GuardianUnknown("child_unknown");
                 // Adopt BOTH outputs before rejecting malformed/aliased pairs.
                 bool process=Own(child.Process), thread=Own(child.Thread);
                 if (!process || !thread || child.Id==0) throw new GuardianUnknown("child_handles_unknown");
                 if (!api.Member(child.Process,job) || Count()!=1) throw new GuardianUnknown("atomic_membership_unknown");
-                BeforeStart();
+                if (launchGate!=null) launchGate.BeforeResume(); BeforeStart();
                 if (api.Resume(child.Thread)!=1) throw new GuardianUnknown("resume_unknown");
                 resumed=true;
                 for (int poll=0;poll<=MaxSeconds*1000/WaitSliceMs;poll++) {
@@ -192,11 +213,14 @@ namespace AiAgent.ValidatorGuardian {
                 try { ObserveEnd(failure!=null || timedOut || residual); }
                 catch { failure=new GuardianUnknown("termination_unknown"); }
             }
-            try { CloseAll(); } catch { failure=new GuardianUnknown("close_unknown"); }
-            try { if (job!=null && Now()>=deadline) failure=new GuardianUnknown("deadline_outcome_unknown"); }
-            catch { failure=new GuardianUnknown("clock_unknown"); }
+            bool closeKnown=true, windowKnown=true;
+            try { CloseAll(); } catch { closeKnown=false; failure=new GuardianUnknown("close_unknown"); }
+            try { if (job!=null && Now()>=deadline) { windowKnown=false; failure=new GuardianUnknown("deadline_outcome_unknown"); } }
+            catch { windowKnown=false; failure=new GuardianUnknown("clock_unknown"); }
+            if (!creationAttempted && closeKnown && windowKnown) LaunchTargetsReleasable=true;
             if (failure!=null) throw failure;
             if (child==null) throw new GuardianUnknown("child_unknown");
+            LaunchTargetsReleasable=true; // checked empty job/root, closes and original window
             return new LocalProcessObservation(plan,child,exitCode,
                 timedOut?LocalProcessEnd.DeadlineStopped:(residual?LocalProcessEnd.ResidualTreeStopped:LocalProcessEnd.RootExited),resumed);
         }

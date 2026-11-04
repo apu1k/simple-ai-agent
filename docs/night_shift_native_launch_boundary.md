@@ -7,8 +7,8 @@
 fresh thirty-file related selection passes **2,026 with two skips**, warnings
 as errors. This is the held-target source slice following the
 [provisioning-process guardian body](night_shift_native_process_guardian.md).
-It does not change that guardian, install a starter, authenticate approval,
-consume authorization, launch a process or invoke Python. Never compile or load
+That acquisition checkpoint did not change the guardian, install a starter,
+authenticate approval, consume authorization, launch a process or invoke Python. Never compile or load
 checkout code elevated.
 
 - `scripts/native_validator_launch_boundary.cs`: immutable copied plan pins,
@@ -209,8 +209,8 @@ decoding.
   links** resolve. Tracked `git diff --check` passes.
 - Exactly two additional `.gitignore` exceptions expose the new C# paths without
   widening `/scripts/*` otherwise; its no-final-newline convention is preserved.
-  All **six checkpoint files** are visible in `git status --short`. All runtime,
-  Python application, earlier acquisition and guardian source files remain
+  All **six checkpoint files** are visible in `git status --short`. At that checkpoint, runtime,
+  Python application, earlier acquisition and guardian source files remained
   unchanged. The validation-record follow-up is documentation-only.
 - Catalog, dependency, pin and payload regressions pass. The **91-entry Python
   deployment bundle** and **87-file import inventory** are unchanged, and no new
@@ -222,11 +222,29 @@ skip explicitly, never report native success. No executable test bytes are run;
 model executable data is inert, synthetic and kept in memory. Temporary compiler
 files are ordinary non-secret test harness data, not a protected build.
 
+The subsequent [held-target / guardian composition candidate](night_shift_native_held_guardian.md)
+is now applied and verified offline: **76 new tests** pass, including compilation
+of all five actual C# sources in one model assembly. Its fixed library integration
+derives the process plan from the launch plan, conserves one construction-time
+absolute window, reverifies before creation/resume and retains target locks on
+post-creation failures. The fresh thirty-one-file related selection passes
+**2,102 with two skips**, warnings as errors. No source or test repair was needed.
+Repository Ruff and Windows-hosted Mypy across **104 source files**, scoped Linux
+typing, Python grammar, catalog/dependency/pin/payload checks, links and whitespace
+pass; the new document records exact scope and remaining limitations.
+
+The core hooks and composition are not installed or externally wired. Both Windows
+adapters, the four-file catalog and the private-anchor prerequisites are unchanged.
+The 120-test record above concerns the earlier acquisition checkpoint; the new
+composition's fake file/job/process/time models are not native locking, launch,
+containment, protected approval, load provenance or independent cleanup evidence.
+
 Next remains the separately reviewed protected starter/build/install route,
 authenticated and permanently consumed approval, fixed guardian entry point and
 worker/Python handoff, followed by separately approved native provisioning and
-watchdog experiments. This candidate is not called by the guardian, any tool,
-launcher or installer; it does not expand the 91-entry Python deployment bundle,
+watchdog experiments. The boundary is now called by the unwired library
+composition, not an installed guardian, tool, launcher or installer; it does not
+expand the 91-entry Python deployment bundle,
 87-file import inventory, guest payloads, existing claims or protected policies.
 The later diskless VM operation STILL needs independent VM-lifetime enforcement
 and exact-VM absence evidence; process containment does not supply those.

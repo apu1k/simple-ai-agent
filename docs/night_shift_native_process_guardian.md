@@ -125,10 +125,28 @@ and the unchanged Windows-specific import-graph limitations.
 It checks the fixed four-file executable/config inventory and initially empty
 private scratch directory, retaining read-sharing-only file handles. It remains
 unwired and unexercised natively, not an authenticated approval channel, protected
-starter or runnable integration. This guardian's sources and native behavior are
-unchanged. The future integration must bind both plans, preserve the original
-budget and retain the lease until exact-tree absence is independently established;
-a failed reverification poisons the new lease without releasing its locks.
+starter or runnable integration. That acquisition checkpoint left the guardian's
+sources and native behavior unchanged. A failed reverification poisons the lease
+without releasing its locks.
+
+The subsequent [held-target / guardian composition candidate](night_shift_native_held_guardian.md)
+is now applied and verified offline: **76 new tests** pass, including compilation
+of all five actual C# sources together with fake backends. It supplies one derived
+process plan, a shared construction-time absolute window, same-handle gates before
+atomic creation and primary-thread resume, and conservative target-lock retention
+after post-creation failure. Its narrow internal core hooks and terminal local
+lease-release facts do not change the native process adapter, fixed command or
+environment, or atomic job mechanism. No source or test repair was needed.
+
+The fresh thirty-one-file related selection passes **2,102 with two skips**,
+warnings as errors. Repository Ruff and Windows-hosted Mypy across **104 source
+files**, scoped Linux typing, grammar, catalog/dependency/pin/payload checks,
+links and whitespace pass. The composition document records exact scope and
+limitations; the historical 83-test record below concerns the earlier guardian
+checkpoint. Neither supplies protected approval, executable entry points,
+worker/Python delivery or independent protected absence evidence. The new models
+substitute file/job/process/time operations; compilation and modeled cleanup are
+not native launch, atomic assignment, kill-on-close or guardian-death evidence.
 
 A root/filename/SID check is not a held-file verifier. Before any native call,
 the future trusted caller must have established and retained the complete private
