@@ -223,6 +223,31 @@ checks on inert descriptors is not independent acquisition of actual inputs,
 protected request delivery, approval consumption, original-deadline enforcement,
 trusted installation, native provisioning or Gate A.
 
+## Subsequent same-process request/guardian composition
+
+The [request/original-window/held-guardian candidate](night_shift_native_request_guardian.md)
+is now applied and verified offline: **59 new tests** pass, including compilation
+of nine actual C# sources together and the actual codec exercised with fake
+file/process/time backends. The fresh thirty-three-file related selection passes
+**2,327 with two skips**, warnings as errors. Repository Ruff and Windows-hosted
+Mypy across **105 source files**, scoped Linux typing, Python grammar,
+catalog/dependency/pin/payload regressions, links and whitespace pass. No source
+or test repair was needed after application.
+
+It adds one terminal byte-request admission path, independent budget/expiry
+metadata equality and an internal earlier-deadline cap on the same clock origin.
+Waiting for the request and decoding it must consume that local original window
+rather than precede a newly started guardian budget. It uses this unchanged codec,
+not an alternate parser or a separately supplied launch plan. Native adapters,
+request wire bytes, worker projection and all catalogs remain unchanged.
+
+This is a same-process library composition, not authenticated approval, protected
+request transport, permanent authorization consumption or cross-process deadline
+delivery. It does not supply a worker entry point or Python handoff. The linked
+record distinguishes the applied composition checks from this contract's
+historical verified 166-test record. Neither is native installation, containment
+or protected approval evidence.
+
 ## Remaining integration and non-actions
 
 This is the fixed-data-contract prerequisite for the future protected delivery
@@ -237,8 +262,11 @@ The deployment bundle stays at **91 entries**, import catalog at **87 files**,
 and guest catalogs/policies are unchanged. A future Python worker entry point or
 additional carried module requires its own reviewed catalog/closure change; this
 codec does not silently extend the import path or inject inline Python code.
-Existing C# acquisition/guardian bodies, native adapters, tools, PowerShell and
-protected installations/claims are unchanged and do not call this candidate.
+At this contract checkpoint, the existing C# acquisition/guardian bodies, native
+adapters, tools, PowerShell and protected installations/claims were unchanged.
+The subsequent composition adds the held guardian's internal deadline cap and
+calls this codec as documented above; native adapters, tools, PowerShell and
+protected installations/claims remain unchanged and unwired.
 
 After trusted provisioning still follow the fixed diskless VM operation,
 permanent execution claim, independent **VM-lifetime watchdog/evidence**, native

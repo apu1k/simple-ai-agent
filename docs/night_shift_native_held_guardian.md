@@ -243,6 +243,26 @@ still need their own pre-load trust review. The historical 76-test record above
 concerns the earlier composition, not that request contract. Neither checkpoint
 establishes a protected starter, actual-input acquisition or native provisioning.
 
+The next [request/original-window/held-guardian composition](night_shift_native_request_guardian.md)
+is now applied and verified offline: **59 new tests** pass, including compilation
+of nine actual C# sources together and the actual codec with fake file/process/
+time backends. The fresh thirty-three-file related selection passes **2,327 with
+two skips**, warnings as errors. Repository Ruff and Windows-hosted Mypy across
+**105 source files**, scoped Linux typing, Python grammar, catalog/dependency/
+pin/payload regressions, links and whitespace pass. No source or test repair was
+needed after application.
+
+It invokes the actual request codec under a window captured before request
+reception/decoding, checks independently supplied budget/expiry metadata equality
+and passes that same clock origin and earlier absolute cap into this composition.
+The new internal cap can only shorten this body's existing window. Public APIs,
+native adapters, worker command/environment and catalogs are unchanged. This is
+same-process budget conservation, not protected delivery of the actual original
+deadline across starter/guardian/worker processes. The linked record separates
+the applied extension checks from the historical records above. Neither provides
+native locking, atomic job assignment, guardian-death cleanup or protected
+installation evidence.
+
 Still required, before native use:
 
 1. A separately reviewed protected build/install/starter route establishing its

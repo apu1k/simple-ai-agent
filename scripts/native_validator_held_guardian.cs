@@ -56,7 +56,12 @@ namespace AiAgent.ValidatorHandoff {
         }
         public HeldProvisionGuardian(LaunchPlan value)
             : this(value,new WindowsLaunchFiles(),new WindowsGuardianKernel(),new GuardianClock()) { }
-        internal HeldProvisionGuardian(LaunchPlan value,ILaunchFiles files,IGuardianKernel kernel,IGuardianClock time) {
+        internal HeldProvisionGuardian(LaunchPlan value,ILaunchFiles files,IGuardianKernel kernel,IGuardianClock time)
+            : this(value,files,kernel,time,null) { }
+        // Same-process original-window handoff only. The clock must be the SAME
+        // origin as the cap; no public caller-supplied timestamp or renewed budget.
+        internal HeldProvisionGuardian(LaunchPlan value,ILaunchFiles files,IGuardianKernel kernel,IGuardianClock time,
+            double? originalDeadline) {
             if (value==null || files==null || kernel==null || time==null) throw new HeldGuardianRefused("plan");
             try {
                 clock=new HandoffClock(time);
@@ -66,7 +71,14 @@ namespace AiAgent.ValidatorHandoff {
                     remaining<ProvisionProcessGuardian.StopReserveSeconds+1 || remaining>86400)
                     throw new HeldGuardianRefused("attempt_window");
                 approvedUntil=value.ApprovedUntilUnix;
-                deadline=now+Math.Min(value.BudgetSeconds,remaining);
+                double limit=now+Math.Min(value.BudgetSeconds,remaining);
+                if (originalDeadline.HasValue) {
+                    double bound=originalDeadline.Value;
+                    if (Double.IsNaN(bound) || Double.IsInfinity(bound) || bound<=now)
+                        throw new HeldGuardianRefused("shared_deadline");
+                    limit=Math.Min(limit,bound); // preserve time spent decoding/admitting
+                }
+                deadline=limit;
                 // Acquisition/hashing must finish BEFORE the stop reserve, not
                 // consume it and grant the process a fresh full execution budget.
                 boundary=new LaunchBoundary(value,files,clock,deadline-ProvisionProcessGuardian.StopReserveSeconds);
