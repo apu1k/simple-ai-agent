@@ -248,6 +248,29 @@ record distinguishes the applied composition checks from this contract's
 historical verified 166-test record. Neither is native installation, containment
 or protected approval evidence.
 
+## Subsequent approval-anchor isolation check
+
+The [protected-policy approval/permanent-claim guardian body](night_shift_native_approval_guardian.md)
+is now applied and verified offline: **86 new tests** pass, including compilation
+of ten actual C# sources together and actual codec/composition logic with fake
+token/file/process/time backends. Complete claim bytes match an independent
+oracle. The fresh thirty-four-file related selection passes **2,413 with two
+skips**, warnings as errors. Repository Ruff and Windows-hosted Mypy across
+**105 source files**, scoped Linux typing, Python grammar, catalog/dependency/
+pin/payload regressions, links and whitespace pass. No source or test repair was
+needed after application.
+
+It adds one pure internal method to this codec's bound-input object: require that the separate
+approval-root path is lexically disjoint from the launch/import/source/output-
+parent paths and its volume/index differs from all five request directory
+identities, including scratch. That check runs after the new body's fixed claim
+is consumed and before target/process work. It is not a native alias/security
+observation, protected approval channel or executable entry point. Wire bytes,
+canonical validation, public factories, worker projection and catalogs are
+unchanged. The linked record distinguishes the applied isolation/composition
+checks from this contract's historical record. Neither is native alias/security,
+claim-durability, protected authorization or installation evidence.
+
 ## Remaining integration and non-actions
 
 This is the fixed-data-contract prerequisite for the future protected delivery

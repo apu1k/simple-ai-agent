@@ -85,6 +85,20 @@ namespace AiAgent.ValidatorRequest {
             data=value; RequestSha256=digest; worker=projection;
         }
         public byte[] WorkerRequestBytes() { return (byte[])worker.Clone(); }
+        // Pure plan-shape isolation for the separately held approval anchor.
+        // Not an observation of existence, aliases, NTFS, security or authority.
+        internal void RequireSeparateApprovalAnchor(string root,uint volume,ulong index) {
+            string[] paths={data.Launch.Path,data.Import.Path,data.Provision.Source.Path,data.Provision.Parent.Path};
+            foreach (string path in paths)
+                if (String.Equals(root,path,StringComparison.OrdinalIgnoreCase) ||
+                    root.StartsWith(path+"\\",StringComparison.OrdinalIgnoreCase) ||
+                    path.StartsWith(root+"\\",StringComparison.OrdinalIgnoreCase))
+                    throw new InstallRequestRefused("approval_anchor_overlap");
+            IdentityData[] ids={data.Launch.Identity,data.Launch.Scratch,data.Import.Identity,
+                data.Provision.Source.Identity,data.Provision.Parent.Identity};
+            foreach (IdentityData id in ids)
+                if (id.Volume==volume && id.Index==index) throw new InstallRequestRefused("approval_anchor_alias");
+        }
         public LaunchPlan CreateLaunchPlan() {
             var files=new Dictionary<string,LaunchFilePin>(StringComparer.Ordinal);
             foreach (MemberData m in data.Launch.Files) files.Add(m.Name,new LaunchFilePin(m.Bytes,m.Sha));

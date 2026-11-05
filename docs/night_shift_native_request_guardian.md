@@ -178,6 +178,34 @@ models on synthetic inputs is not protected request transport, authenticated
 permanent authorization, actual original-deadline delivery across processes,
 trusted installation, native containment, native provisioning or Gate A.
 
+## Subsequent protected-policy consumption body
+
+The [protected-policy approval/permanent-claim guardian body](night_shift_native_approval_guardian.md)
+is now applied and verified offline: **86 new tests** pass, including compilation
+of ten actual C# sources together, actual codec/composition logic and complete
+claim bytes checked against an independent oracle with fake token/file/process/
+time backends. The fresh thirty-four-file related selection passes **2,413 with
+two skips**, warnings as errors. Repository Ruff and Windows-hosted Mypy across
+**105 source files**, scoped Linux typing, Python grammar, catalog/dependency/
+pin/payload regressions, links and whitespace pass. No source or test repair was
+needed after application.
+
+It verifies a separately installed private policy through the unchanged native
+relative-acquisition adapter, creates/flushes/reads back one fixed claim before
+request decoding and holds that policy through this request/target/process chain.
+Its earlier same-process clock/deadline is passed through a new internal
+shorten-only cap; this body's public API, worker command and native adapters are
+unchanged. It retains the approval lease conservatively on any exception after
+entering this body's `Run()`, not treating a false launch-retention flag as proof
+of child absence. Its claim and returned observations never imply acceptance.
+
+The protected policy's installation/pre-load provenance, authenticated delivery,
+permanent early-failure/cancellation handling and cross-process original-deadline
+transport still require the future trusted starter/channel. This is not an
+installed authorization mechanism. The linked record separates its applied
+cap/composition checks from the historical records above. Neither establishes
+native policy security, claim durability, containment or protected installation.
+
 ## Remaining protected integration and non-actions
 
 Still required before native use:

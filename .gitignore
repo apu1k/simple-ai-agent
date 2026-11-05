@@ -61,6 +61,7 @@ Caddyfile
 !/scripts/native_validator_held_guardian.cs
 !/scripts/native_validator_install_request.cs
 !/scripts/native_validator_request_guardian.cs
+!/scripts/native_validator_approval_guardian.cs
 logs
 
 # temporary logs

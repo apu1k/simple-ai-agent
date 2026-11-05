@@ -33,7 +33,11 @@ namespace AiAgent.ValidatorAdmission {
             : this(requestBytes,requestSha256,seconds,expiresUnix,
                 new WindowsLaunchFiles(),new WindowsGuardianKernel(),new GuardianClock()) { }
         internal RequestProvisionGuardian(long requestBytes,string requestSha256,int seconds,long expiresUnix,
-            ILaunchFiles targetFiles,IGuardianKernel processKernel,IGuardianClock time) {
+            ILaunchFiles targetFiles,IGuardianKernel processKernel,IGuardianClock time)
+            : this(requestBytes,requestSha256,seconds,expiresUnix,targetFiles,processKernel,time,null) { }
+        // Same-process approval composition only: carry its earlier clock/cap.
+        internal RequestProvisionGuardian(long requestBytes,string requestSha256,int seconds,long expiresUnix,
+            ILaunchFiles targetFiles,IGuardianKernel processKernel,IGuardianClock time,double? originalDeadline) {
             if (requestBytes<1 || requestBytes>InstallationRequest.MaxRequestBytes || requestSha256==null ||
                 !Regex.IsMatch(requestSha256,"\\A[0-9a-f]{64}\\z") ||
                 seconds<ProvisionProcessGuardian.StopReserveSeconds+1 || seconds>ProvisionProcessGuardian.MaxSeconds ||
@@ -46,7 +50,14 @@ namespace AiAgent.ValidatorAdmission {
                 double now=clock.Seconds; long remaining=approvedUntil-clock.Unix;
                 if (remaining<ProvisionProcessGuardian.StopReserveSeconds+1 || remaining>86400)
                     throw new RequestGuardianRefused("attempt_window");
-                deadline=now+Math.Min(budgetSeconds,remaining);
+                double limit=now+Math.Min(budgetSeconds,remaining);
+                if (originalDeadline.HasValue) {
+                    double bound=originalDeadline.Value;
+                    if (Double.IsNaN(bound) || Double.IsInfinity(bound) || bound<=now)
+                        throw new RequestGuardianRefused("shared_deadline");
+                    limit=Math.Min(limit,bound);
+                }
+                deadline=limit;
                 if (Double.IsNaN(deadline) || Double.IsInfinity(deadline) || deadline<=now ||
                     deadline-ProvisionProcessGuardian.StopReserveSeconds<=now)
                     throw new RequestGuardianRefused("attempt_window");
