@@ -38,8 +38,18 @@ Before importing this module, the separately trusted installed caller must:
 Python objects and matching hashes are forgeable consistency data, not authority.
 This body cannot authenticate the transport or establish its own pre-import trust.
 It does not take a policy-shaped object or installation record as approval.
-Existing C# import-lease failure/closure behavior still needs lifetime-safe worker
-integration; this Python body does not fix or replace that ownership boundary.
+The [C# import-lease update](night_shift_native_install_boundary.md) is now
+applied and verified offline: **155 boundary tests**, including **40 added tests**,
+and the fresh thirty-five-module related selection of **2,578 with two skips**
+pass, warnings as errors. Both actual C# sources compile with fake token/file/time
+observations. It adds fixed held-reader worker-byte copying, an internal
+shorten-only deadline cap and poisoned lock retention instead of automatic release
+on verification failure. No source or test repair was needed after application.
+That update is a primitive, NOT a worker lifetime owner: explicit disposal still
+requires independently established child absence. Native locking, delivery and
+process-absence behavior remain unverified. Actual lifetime-safe launch/
+reconciliation integration remains required; this Python body does not fix or
+replace that ownership boundary.
 
 ## Fixed data and execution sequence
 
@@ -137,6 +147,11 @@ process/marker/repair/deletion prohibitions and the no-application-importer guar
 remain in place. No broad importer or arbitrary callback exception is added.
 
 ### Applied verification record
+
+This record describes the original Python-only handoff checkpoint, not the later
+C# import-lease changes linked above. Their separate applied validation record
+and remaining limits are in that component's document. No Python source, request
+schema or catalog changes are made by the C# update.
 
 The initial applied handoff selection passed **123 tests** and its wider selection
 passed **2,536 with two skips**. An additional constructor boundary check then

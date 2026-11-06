@@ -2,10 +2,15 @@
 
 ## Status: applied and verified offline, not a trusted bootstrap
 
-**Applied and verified offline; not installed or exercised natively.** All
-**115 new tests** pass, including compilation of both actual C# sources. The
-fresh twenty-eight-file related selection passes **1,823 with two skips**,
-warnings as errors. This is the first implementation slice of the installation
+**Original checkpoint applied and verified offline; not installed or exercised
+natively.** Its **115 new tests** passed, including compilation of both actual
+C# sources; its twenty-eight-file related selection passed **1,823 with two
+skips**, warnings as errors. Those are historical original-checkpoint results.
+The worker-input/lease update below is now separately applied and verified
+offline: **155 boundary tests**, including **40 added tests**, and the fresh
+thirty-five-module related selection of **2,578 with two skips** pass, warnings
+as errors. Neither checkpoint is installed or exercised natively. This is the
+first implementation slice of the installation
 trust boundary after the
 [create-new provisioning body](night_shift_native_provisioning_body.md).
 It is two C# library sources, not an executable, installer, approval mechanism,
@@ -58,10 +63,14 @@ public/native/inspection payload catalogs are unchanged. The C# boundary must
 be protected independently; carrying it inside an unchecked Python bundle would
 not establish pre-import trust.
 
-The request is at most 32 KiB and is hashed but never parsed here. The future
-fixed wrapper must validate its exact approved provisioning semantics, including
-source/output paths, identities and bundle/recovery pins, before invoking the
-provisioning body. A hash of operator-unreviewed bytes is not authorization.
+The base import-plan request bound remains 32 KiB; request bytes are hashed but
+never parsed here. The fixed worker-copy API additionally
+requires 1–8,192 bytes, matching the existing derived worker projection. The
+[Python-side worker handoff](night_shift_native_worker_handoff.md) validates that
+projection's canonical provisioning semantics, including source/output paths,
+identities and bundle/recovery pins. Trusted pre-load acquisition, delivery and
+actual fixed launch are still required before invoking that Python body. A hash
+of operator-unreviewed bytes is not authorization.
 
 ## Fixed acquisition and claim ordering
 
@@ -118,18 +127,31 @@ repeated metadata checks remain separate protections.
 ## Lifetime, failure and remaining authorization boundary
 
 Acquisition is serialized and one-shot, including concurrent callers. Lease
-reverification/disposal is serialized separately. Failure attempts every acquired
-handle close in reverse order. Both the resource slot and native handle are
+reverification/copy/disposal is serialized separately. Acquisition failure still
+attempts every acquired handle close in reverse order; it has returned no lease
+and starts no process. Both the resource slot and native handle are
 disarmed before the single close attempt; close uncertainty overrides otherwise
 successful work. Native scratch allocations are released before handle transfer,
 so a release failure cannot strand a returned, unowned handle.
 
-Any lease reverification failure is terminal and closes its handles. Disposal is
-idempotent; an uncertain first close is not retried. There is no finalizer,
-automatic retry, overwrite, unlink, rollback, claim reset, permission repair,
-source/output copy, process start or cleanup sweep. A dropped undisposed lease
-is a process-resource leak; this is another reason external process containment
-is mandatory. Locks do not survive disposal and cannot authorize a later import.
+The worker-input update changes the original lease failure behavior:
+after successful acquisition, reverification or fixed request-copy failure poisons
+the lease but NEVER automatically closes its handles. Further verification/copy
+refuses before native access, even if a fault is repaired or a clock recovers.
+This prevents a failed check from silently unlocking a potentially live child's
+import closure; it is NOT proof of child absence or a complete lifetime owner.
+
+Explicit disposal remains available and idempotent, including after poisoning;
+an uncertain first close is not retried. The future worker lifetime owner MUST
+establish child absence before calling it. Do not wrap a potentially live/uncertain
+child's lease in an unconditional `using`/`finally`. No process starts here, so
+explicit test disposal after failure is only a no-child model cleanup, not native
+reconciliation evidence. There is no finalizer, automatic retry, overwrite,
+unlink, rollback, claim reset, permission repair, source/output copy, process
+start or cleanup sweep. A dropped undisposed lease is a process-resource leak;
+external process containment and protected reconciliation remain mandatory. Locks
+do not survive disposal/host death and cannot authorize a later import. A
+successful/idempotent disposal is not a process-absence certificate.
 
 A successful flush/read-back is not a power-loss/storage-rollback guarantee.
 Native filesystem durability remains to be established. Claims/artifacts after
@@ -153,7 +175,125 @@ entire child lifetime, and reconcile uncertain child termination before closing
 it. This checkpoint supplies no such wrapper or Python provisioning entry point.
 A locally verified lease is NOT a launch grant or protected receipt.
 
-## Applied offline verification and next milestone
+## Worker-input lease update — applied and verified offline
+
+The applied boundary suite passes **155 tests**: **148 CLR models and seven
+source guards**, including **37 added CLR models and three added source guards**.
+Both actual C# sources compile with the fake token/file/time backend. No source
+or test repair was needed after application. The changes stay in the existing
+two-source compilation unit and introduce no native API, adapter change, executable entry
+point, C# application DLL, tool wiring, runtime language or third-party dependency.
+The C#/Python split is unchanged; no Rust is introduced.
+
+`ImportClosureLease.CopyWorkerRequest()` has no path/name/handle argument. It:
+
+1. Requires a still-open, unpoisoned lease and the independent fixed request pin's
+   1–8,192-byte bound. An over-bound request poisons without starting a copy.
+2. Repeats the complete held inventory/metadata/hash/claim verification.
+3. Allocates one fresh bounded byte array and hashes/copies ONLY
+   `provision-request.json` through its ALREADY HELD read-only reader. Exact
+   length, full pin/hash, EOF and before/after metadata still apply. There is no
+   reopen, new handle, source path, parser, caller callback, claim write or reset.
+4. Repeats the complete closure/claim verification BEFORE releasing any bytes.
+   The returned array is independent of the held file and every other return.
+   Caller mutation cannot change the held data or the next copy.
+5. On any failure, returns no bytes, permanently poisons the lease and retains
+   its locks. Unknown native exception text remains normalized to fixed labels.
+
+This supplies actual fixed held-file bytes, not proof of protected transport or
+request authorization. The trusted caller must derive the worker pin from the
+bound outer request and must still deliver the bytes/pins under the independent
+original deadline BEFORE Python reception/decoding. No live policy or actual
+worker request is acquired in the offline models.
+
+A new INTERNAL constructor overload accepts an earlier absolute deadline in the
+SAME supplied monotonic-clock origin. It can only shorten the existing budget/
+expiry window; NaN, infinity and expired/equal caps refuse before native work.
+The public constructor is unchanged. All acquisition, hashing, verification and
+fixed-copy passes consume that original cap; observed monotonic rollback and
+nonfinite readings refuse. A clock/window failure after acquisition also poisons
+and retains the lease. Null internal file/clock dependencies refuse at construction.
+This is same-process budget conservation, NOT authenticated cross-process clock
+translation or hard interruption of a blocked native call. The future process
+watchdog and its stop/cleanup reserve remain independently required.
+
+Fresh committed baseline before drafting this update: **709 passed in 7.84
+seconds**, warnings as errors, no skips, across installation boundary, request
+codec, request guardian, approval guardian, Python worker handoff, deployment and
+provisioning. Repository Ruff and Windows-hosted Mypy across **105 night-shift
+source files** pass. These are historical baseline results, not validation of
+the new C# or test additions. Fresh applied results are recorded below.
+
+The applied CLR models extend the existing fake token/file/time backend. They
+cover fixed held-file bytes and independent copies, full pre/post verification,
+short reads, bounds, read/hash/metadata/inventory/EOF faults, post-copy drift,
+poisoned lock retention/no-I/O reuse refusal, concurrent copies, checked explicit
+close failure and shorten-only/original-window/rollback behavior. The original
+reverification-failure model is intentionally updated from automatic close to
+poisoned retention. Source guards bind the independent 8 KiB limit to both worker
+contracts and prohibit a new opener/parser/claim/reset or production wiring.
+These are not native Windows sharing, claim durability, Python execution or
+process-absence observations.
+
+Catalog names/counts remain **91 bundle entries / 87 pinned import files**.
+The updated C# is outside the carried Python catalog. Future guardian/worker
+builds require fresh independently reviewed executable pins; this does not
+materialize an executable, deployment bundle, request or protected anchor.
+
+### Worker-input update applied verification record
+
+- Applied boundary suite: **155 passed in 1.08 seconds**, warnings as errors,
+  no skips or exclusions. All **148 CLR cases** compile/run the actual two C#
+  sources with substituted token/file/time observations; **seven source guards**
+  pass. Relative to the original suite, this adds **37 CLR cases and three source
+  guards**. The original verification-failure case now requires poisoning and
+  retained handles rather than automatic closure. Counts overlap and must not
+  be added.
+- Fresh **thirty-five-module** related selection: **2,578 passed, two skipped in
+  18.60 seconds**, warnings as errors, no exclusions. This is not a full-repository
+  runtime test run. The selection is all `test_bootstrap*.py` modules plus
+  `test_public_bootstrap_kvp.py`, `test_maintenance_credentials_prototype.py`,
+  `test_protocol_bootstrap_main.py`, `test_protocol_test_bootstrap.py`,
+  `test_linux_payload_newlines.py`, `test_maintenance_store_native_prototype.py`,
+  `test_native_metadata_comparison.py` and the seven `test_native_validator_*`
+  modules: installation boundary, process guardian, launch boundary, held
+  guardian, installation request, request guardian and approval guardian.
+- Existing skipped fixtures are not native successes. Ordinary disposable native
+  primitive fixtures are not this C# adapter or a protected installation/anchor.
+  No new model invokes the adapter's P/Invoke, native import acquisition, a real
+  claim, installed worker/guardian, carried interpreter, provisioner or VM.
+  Temporary CLR compiler/harness files are ordinary non-secret model fixtures.
+- New cases establish modeled fixed held-reader copying, independent arrays,
+  full pre/post verification, no reopen/extra handle/claim write, the exact 8 KiB
+  copy bound, short-read progress, hash/metadata/inventory/read/EOF/post-copy
+  faults, permanent poison/no-I/O reuse refusal, lock retention, concurrent
+  serialization and terminal explicit-close uncertainty. Deadline cases cover
+  shortening/non-extension, invalid caps, reception/hash/copy budget consumption,
+  UTC expiry, observed rollback/nonfinite values and null internal dependencies.
+- Repository Ruff and Windows-hosted Mypy across **105 night-shift source files**
+  pass. Scoped Linux-targeted Mypy of provisioning, deployment and the host request
+  reviewer passes with `--follow-imports silent`. This is not complete Linux
+  import-graph validation or native Windows ABI/locking evidence.
+- The changed Python test passes warning-as-error in-memory compilation and
+  Python **3.12** grammar parsing. All **four checkpoint files** pass UTF-8,
+  final-newline and trailing-whitespace checks. All **seven local document links**
+  resolve. Tracked `git diff --check` passes; exactly the four intended files
+  appear in `git status --short`.
+- The Windows adapter and native open/security/claim contracts are unchanged.
+  Public acquisition construction, fixed claim bytes/name, `.gitignore`, tool/
+  PowerShell wiring, guardian/request codec sources, all Python sources and
+  deployment/import/guest catalogs are unchanged. The bundle remains **91
+  entries**, the pinned import inventory **87 files**. Updated future executable
+  builds still need fresh independent pins and protected review before use.
+
+The validation-record follow-up is documentation-only. These models do not prove
+native share modes, lock retention, claim durability, protected delivery,
+pre-load provenance, process absence, installed execution or watchdog behavior.
+Explicit disposal still needs an external lifetime owner's absence decision;
+this API is not that owner or a protected cleanup/evidence channel. No source
+or test repair was required after application.
+
+## Original applied offline verification and next milestone
 
 The new Python test module compiles both actual C# files with an ordinary
 same-assembly fake token/file/clock backend using the existing Windows CLR
@@ -228,7 +368,10 @@ grammar, catalog/dependency/pin/payload checks, links and whitespace pass.
 It is not installed, not an executable entry point and not a native watchdog
 result; the trusted approval channel, held-target bootstrap and worker/Python
 handoff remain absent. It deliberately does not load this acquisition assembly
-before containment and does not change this component or its 87-file inventory.
+before containment; the original guardian checkpoint did not change this
+component or its 87-file inventory. The worker-input lease update above changes
+only this acquisition body and its models, not that guardian. It is now verified
+offline, not wired into a worker or protected execution route.
 
 The remaining runnable boundary is the separately protected executable/approval/
 held-target installation and fixed provisioning handoff, followed by separately

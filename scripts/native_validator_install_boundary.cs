@@ -75,15 +75,21 @@ namespace AiAgent.NativeValidator {
     }
     public sealed class ImportClosureLease : IDisposable {
         // Local consistency and held handles ONLY; not authority to launch.
+        // Reverification/copy failure poisons but NEVER automatically unlocks.
+        // The lifetime owner must prove child absence before explicit disposal.
         readonly object sync=new object();
         InstallBoundary owner;
         internal ImportClosureLease(InstallBoundary value) { owner=value; }
         public void Reverify() {
             lock (sync) {
                 if (owner==null) throw new BoundaryRefused("lease_closed");
-                InstallBoundary current=owner;
-                try { current.Reverify(); }
-                catch { owner=null; current.CloseAll(); throw; }
+                owner.Reverify();
+            }
+        }
+        public byte[] CopyWorkerRequest() {
+            lock (sync) {
+                if (owner==null) throw new BoundaryRefused("lease_closed");
+                return owner.CopyWorkerRequest();
             }
         }
         public void Dispose() {
@@ -95,6 +101,7 @@ namespace AiAgent.NativeValidator {
     }
     public sealed class InstallBoundary {
         internal const string ClaimName="install-attempt.claim";
+        internal const int MaxWorkerRequestBytes=8192;
         internal const long MaxFileBytes=32L*1024*1024, MaxClosureBytes=96L*1024*1024;
         internal static readonly byte[] Pth=Encoding.ASCII.GetBytes(
             "python314.zip\r\n.\r\n\r\n# Uncomment to run site.main() automatically\r\n#import site\r\n");
@@ -145,18 +152,31 @@ namespace AiAgent.NativeValidator {
         readonly HashSet<string> identities=new HashSet<string>(StringComparer.Ordinal);
         readonly SortedDictionary<string,SortedSet<string>> inventory=
             new SortedDictionary<string,SortedSet<string>>(StringComparer.Ordinal);
-        bool used, closed;
+        bool used, closed, poisoned;
+        double lastSeconds=Double.NegativeInfinity;
         public InstallBoundary(InstallBoundaryPlan value,int budgetSeconds)
             : this(value,budgetSeconds,new WindowsBoundaryFiles(),new BoundaryClock()) { }
-        internal InstallBoundary(InstallBoundaryPlan value,int budgetSeconds,IBoundaryFiles files,IBoundaryClock time) {
+        internal InstallBoundary(InstallBoundaryPlan value,int budgetSeconds,IBoundaryFiles files,IBoundaryClock time)
+            : this(value,budgetSeconds,files,time,null) { }
+        // Same-process cap ONLY: caller must supply this clock's SAME origin.
+        // This does not authenticate or translate a deadline across processes.
+        internal InstallBoundary(InstallBoundaryPlan value,int budgetSeconds,IBoundaryFiles files,IBoundaryClock time,
+            double? originalDeadline) {
             // No filesystem/token/native acquisition in the constructor.
             plan=value; api=files; clock=time; Validate(value);
+            if (files==null || time==null) throw new BoundaryRefused("plan");
             if (budgetSeconds<1 || budgetSeconds>900) throw new BoundaryRefused("deadline");
-            double now=clock.Seconds;
-            if (Double.IsNaN(now) || Double.IsInfinity(now)) throw new BoundaryRefused("deadline");
+            double now=Now();
             long remaining=plan.ApprovedUntilUnix-clock.Unix;
             if (remaining<1 || remaining>86400) throw new BoundaryRefused("approval_window");
-            deadline=now+Math.Min(budgetSeconds,remaining);
+            double limit=now+Math.Min(budgetSeconds,remaining);
+            if (originalDeadline.HasValue) {
+                double bound=originalDeadline.Value;
+                if (Double.IsNaN(bound) || Double.IsInfinity(bound) || bound<=now)
+                    throw new BoundaryRefused("shared_deadline");
+                limit=Math.Min(limit,bound); // shorten, never renew, the earlier window
+            }
+            deadline=limit;
             inventory.Add("",new SortedSet<string>(StringComparer.Ordinal));
             foreach (string name in Catalog()) AddInventory(name);
             AddInventory("claims/"+ClaimName);
@@ -198,9 +218,14 @@ namespace AiAgent.NativeValidator {
                 if (i+1<parts.Length && !inventory.ContainsKey(parent)) inventory.Add(parent,new SortedSet<string>(StringComparer.Ordinal));
             }
         }
-        void Budget() {
+        double Now() {
             double now=clock.Seconds;
-            if (Double.IsNaN(now) || Double.IsInfinity(now) || now>=deadline || clock.Unix>=plan.ApprovedUntilUnix)
+            if (Double.IsNaN(now) || Double.IsInfinity(now) || now<lastSeconds)
+                throw new BoundaryRefused("deadline");
+            lastSeconds=now; return now;
+        }
+        void Budget() {
+            if (Now()>=deadline || clock.Unix>=plan.ApprovedUntilUnix)
                 throw new BoundaryRefused("deadline");
         }
         Held Own(object handle,string name,bool directory,bool ancestor) {
@@ -241,7 +266,7 @@ namespace AiAgent.NativeValidator {
                 return Encoding.ASCII.GetBytes(text);
             }
         }
-        void Hash(Held value,FilePin pin,byte[] exact) {
+        void Hash(Held value,FilePin pin,byte[] exact,byte[] copy=null) {
             Match(value);
             if (value.Before.Bytes!=pin.Bytes) throw new BoundaryRefused("file_size");
             api.Rewind(value.Handle);
@@ -252,6 +277,7 @@ namespace AiAgent.NativeValidator {
                     if (count<1 || count>wanted) throw new BoundaryRefused("read_extent");
                     if (exact!=null) for (int i=0;i<count;i++)
                         if (buffer[i]!=exact[(int)total+i]) throw new BoundaryRefused("fixed_bytes");
+                    if (copy!=null) Buffer.BlockCopy(buffer,0,copy,(int)total,count);
                     sha.TransformBlock(buffer,0,count,buffer,0); total+=count;
                 }
                 Budget(); if (api.Read(value.Handle,buffer,1)!=0) throw new BoundaryRefused("read_extent");
@@ -302,8 +328,12 @@ namespace AiAgent.NativeValidator {
               catch (BoundaryUnknown) { CloseAll(); throw; }
               catch { CloseAll(); throw new BoundaryUnknown("boundary_unknown"); }
         }
-        internal void Reverify() {
+        void RequireUsable() {
             if (closed) throw new BoundaryRefused("lease_closed");
+            if (poisoned) throw new BoundaryRefused("lease_poisoned");
+        }
+        internal void Reverify() {
+            RequireUsable();
             try {
                 foreach (Held value in held) Match(value);
                 foreach (KeyValuePair<string,SortedSet<string>> pair in inventory) {
@@ -314,9 +344,26 @@ namespace AiAgent.NativeValidator {
                     Hash(tree[pair.Key],pair.Value,pair.Key=="runtime/python314._pth"?Pth:null);
                 byte[] bytes=ClaimBytes(); Hash(tree["claims/"+ClaimName],new FilePin(bytes.Length,Sha(bytes)),bytes);
                 foreach (Held value in held) Match(value); Budget();
-            } catch (BoundaryRefused) { throw; }
-              catch (BoundaryUnknown) { throw; }
-              catch { throw new BoundaryUnknown("boundary_unknown"); }
+            } catch (BoundaryRefused) { poisoned=true; throw; }
+              catch (BoundaryUnknown) { poisoned=true; throw; }
+              catch { poisoned=true; throw new BoundaryUnknown("boundary_unknown"); }
+        }
+        internal byte[] CopyWorkerRequest() {
+            RequireUsable();
+            try {
+                FilePin pin=plan.Files["provision-request.json"];
+                if (pin.Bytes<1 || pin.Bytes>MaxWorkerRequestBytes) throw new BoundaryRefused("worker_request_size");
+                Reverify();
+                // Fixed leaf through the ALREADY HELD reader, no reopen/path input.
+                // Never parse here; only a private bounded copy whose complete
+                // hash/EOF/metadata match the independently bound import pin.
+                byte[] copy=new byte[(int)pin.Bytes];
+                Hash(tree["provision-request.json"],pin,null,copy);
+                Reverify(); // full closure/claim/inventory again BEFORE releasing bytes
+                return copy;
+            } catch (BoundaryRefused) { poisoned=true; throw; }
+              catch (BoundaryUnknown) { poisoned=true; throw; }
+              catch { poisoned=true; throw new BoundaryUnknown("boundary_unknown"); }
         }
         internal void CloseAll() {
             if (closed) return;

@@ -53,6 +53,16 @@ SCENARIOS = (
     'directory:oversize', 'directory:zero', 'directory:next', 'directory:unaligned',
     'directory:duplicate', 'directory:bound', 'directory:unsafe',
     'layout:unicode', 'layout:attributes', 'layout:status', 'layout:fileinfo',
+    'cap:shorter', 'cap:cannot_extend', 'cap:nan', 'cap:infinite', 'cap:past', 'cap:equal',
+    'cap:arrival_consumes', 'cap:hash_consumes', 'cap:copy_consumes', 'cap:wall_expiry_copy',
+    'cap:rollback_before_acquire', 'cap:rollback_copy', 'cap:nonfinite_copy',
+    'cap:null_files', 'cap:null_clock',
+    'copy:fixed_bytes', 'copy:short_reads', 'copy:snapshot_independent', 'copy:no_reopen',
+    'copy:max_bytes', 'copy:oversize', 'copy:hash_drift', 'copy:metadata_drift',
+    'copy:extra_inventory', 'copy:zero_read', 'copy:overread', 'copy:read_error',
+    'copy:unexpected_read', 'copy:trailing', 'copy:post_copy_drift', 'copy:closed',
+    'copy:poisoned', 'copy:concurrent', 'lease:reverify_retains',
+    'lease:reverify_native_failure_retains', 'lease:poison_no_io', 'lease:dispose_poison_close_failure',
 )
 
 HARNESS = r'''
@@ -328,7 +338,166 @@ namespace AiAgent.NativeValidator {
             Action run=delegate { WindowsBoundaryFiles.DecodeNames(bytes,names); };
             if (valid) { run(); Check(names.Count==(test=="dot"?0:(test=="two"?2:1))); } else Refused(run);
         }
+        static void AllHeld(Env e) {
+            foreach (TestHandle h in e.Api.Handles) Check(!h.Closed && h.Closes==0);
+        }
+        static void PoisonNoIo(Env e,ImportClosureLease lease) {
+            int events=e.Api.Events.Count;
+            Refused(delegate { lease.Reverify(); },"lease_poisoned");
+            Refused(delegate { lease.CopyWorkerRequest(); },"lease_poisoned");
+            Check(events==e.Api.Events.Count); AllHeld(e);
+        }
+        static void CapCase(string name) {
+            var e=new Env(); double bound=105; int seconds=900;
+            switch (name) {
+                case "nan": bound=Double.NaN; break;
+                case "infinite": bound=Double.PositiveInfinity; break;
+                case "past": bound=99; break;
+                case "equal": bound=100; break;
+                case "cannot_extend": bound=5000; seconds=10; break;
+                case "null_files":
+                    Refused(delegate { new InstallBoundary(e.Plan(),900,null,e.Clock,105); },"plan");
+                    Check(e.Api.Events.Count==0); return;
+                case "null_clock":
+                    Refused(delegate { new InstallBoundary(e.Plan(),900,e.Api,null,105); },"plan");
+                    Check(e.Api.Events.Count==0); return;
+            }
+            if (name=="nan" || name=="infinite" || name=="past" || name=="equal") {
+                Refused(delegate { new InstallBoundary(e.Plan(),seconds,e.Api,e.Clock,bound); },"shared_deadline");
+                Check(e.Api.Events.Count==0); return;
+            }
+            var gate=new InstallBoundary(e.Plan(),seconds,e.Api,e.Clock,bound);
+            if (name=="arrival_consumes" || name=="rollback_before_acquire") {
+                e.Clock.Time=name=="arrival_consumes"?105:99;
+                Refused(delegate { gate.Acquire(); },"deadline"); Check(e.Api.Events.Count==0);
+                Refused(delegate { gate.Acquire(); },"one_shot"); return;
+            }
+            if (name=="hash_consumes") {
+                e.Api.Hook=delegate(string at) { if (at=="read:runtime/python.exe") e.Clock.Time=105; };
+                Refused(delegate { gate.Acquire(); },"deadline"); e.Api.AllClosed();
+                Check(e.Api.Writes==1); Refused(delegate { gate.Acquire(); },"one_shot"); return;
+            }
+            if (name=="shorter" || name=="cannot_extend") e.Clock.Time=name=="shorter"?104:109;
+            ImportClosureLease lease=gate.Acquire();
+            switch (name) {
+                case "shorter":
+                case "cannot_extend":
+                    Check(Encoding.ASCII.GetString(lease.CopyWorkerRequest())=="{}\n");
+                    e.Clock.Time=name=="shorter"?105:110; break;
+                case "copy_consumes":
+                    int rewinds=0;
+                    e.Api.Hook=delegate(string at) {
+                        if (at=="rewind:provision-request.json") rewinds++;
+                        if (at=="read:provision-request.json" && rewinds==2) e.Clock.Time=105;
+                    }; break;
+                case "wall_expiry_copy": e.Clock.Wall=1900; break;
+                case "rollback_copy": e.Clock.Time=99; break;
+                case "nonfinite_copy": e.Clock.Time=Double.NaN; break;
+                default: throw new Exception("UNKNOWN_MODEL_CAP");
+            }
+            Refused(delegate { lease.CopyWorkerRequest(); },"deadline");
+            PoisonNoIo(e,lease); lease.Dispose(); e.Api.AllClosed();
+        }
+        static void WorkerLeaseCase(string name) {
+            var e=new Env(); const string request="provision-request.json";
+            if (name=="copy:max_bytes" || name=="copy:oversize") {
+                byte[] bytes=Encoding.ASCII.GetBytes(new string('w',name=="copy:max_bytes"?8192:8193));
+                e.Api.Data[request]=bytes; e.Api.Meta[request].Bytes=bytes.Length;
+                e.Pins[request]=new FilePin(bytes.Length,InstallBoundary.Sha(bytes));
+            }
+            InstallBoundary gate=e.Gate(); ImportClosureLease lease=gate.Acquire();
+            int count=e.Api.Handles.Count,start=e.Api.Events.Count;
+            switch (name) {
+                case "copy:fixed_bytes":
+                case "copy:short_reads":
+                case "copy:snapshot_independent":
+                case "copy:no_reopen":
+                case "copy:max_bytes":
+                    if (name=="copy:short_reads") e.Api.ShortReads=true;
+                    byte[] copy=lease.CopyWorkerRequest();
+                    Check(copy.Length==e.Pins[request].Bytes && InstallBoundary.Sha(copy)==e.Pins[request].Sha256);
+                    Check(!Object.ReferenceEquals(copy,e.Api.Data[request]));
+                    if (name=="copy:snapshot_independent") {
+                        copy[0]^=1; byte[] again=lease.CopyWorkerRequest();
+                        Check(InstallBoundary.Sha(again)==e.Pins[request].Sha256 && !Object.ReferenceEquals(copy,again));
+                    }
+                    Check(e.Api.Handles.Count==count && e.Api.Writes==1);
+                    for (int i=start;i<e.Api.Events.Count;i++) {
+                        string at=e.Api.Events[i];
+                        Check(!at.StartsWith("open:",StringComparison.Ordinal) && at!="root" && at!="claim" && at!="operator" && at!="write_claim");
+                    }
+                    AllHeld(e); lease.Dispose(); e.Api.AllClosed(); return;
+                case "copy:closed":
+                    lease.Dispose(); e.Api.AllClosed(); start=e.Api.Events.Count;
+                    Refused(delegate { lease.CopyWorkerRequest(); },"lease_closed");
+                    Check(start==e.Api.Events.Count); return;
+                case "copy:concurrent":
+                    Func<byte[]> run=delegate { return lease.CopyWorkerRequest(); };
+                    Task<byte[]> a=Task.Run(run),b=Task.Run(run); Task.WaitAll(a,b);
+                    Check(InstallBoundary.Sha(a.Result)==e.Pins[request].Sha256 &&
+                        InstallBoundary.Sha(b.Result)==e.Pins[request].Sha256 && !Object.ReferenceEquals(a.Result,b.Result));
+                    AllHeld(e); lease.Dispose(); e.Api.AllClosed(); return;
+                case "lease:reverify_native_failure_retains":
+                    e.Api.Fault="read:runtime/python.exe";
+                    Unknown(delegate { lease.Reverify(); },"boundary_unknown");
+                    PoisonNoIo(e,lease); lease.Dispose(); e.Api.AllClosed(); return;
+                case "lease:reverify_retains":
+                case "lease:poison_no_io":
+                case "lease:dispose_poison_close_failure":
+                case "copy:poisoned":
+                    e.Api.Data["runtime/python.exe"][0]^=1;
+                    Refused(delegate { lease.Reverify(); },"file_hash"); PoisonNoIo(e,lease);
+                    if (name=="lease:dispose_poison_close_failure") {
+                        e.Api.CloseFault=request; Unknown(delegate { lease.Dispose(); },"close_unknown");
+                        start=e.Api.Events.Count; lease.Dispose(); Check(start==e.Api.Events.Count);
+                        Refused(delegate { lease.CopyWorkerRequest(); },"lease_closed");
+                    } else lease.Dispose();
+                    e.Api.AllClosed(); return;
+            }
+            string label="file_hash"; bool unknown=false;
+            switch (name) {
+                case "copy:oversize": label="worker_request_size"; break;
+                case "copy:hash_drift": e.Api.Data[request][0]^=1; break;
+                case "copy:metadata_drift": e.Api.Meta[request].Security+="CHANGED"; label="metadata_drift"; break;
+                case "copy:extra_inventory": e.Api.ExtraAt="runtime"; label="unexpected_entry"; break;
+                case "copy:zero_read":
+                case "copy:overread":
+                case "copy:read_error":
+                case "copy:unexpected_read":
+                case "copy:trailing":
+                case "copy:post_copy_drift":
+                    int rewinds=0;
+                    e.Api.Hook=delegate(string at) {
+                        if (at!="rewind:"+request) return;
+                        rewinds++;
+                        if (rewinds==2) {
+                            if (name=="copy:zero_read") e.Api.ReadMode="zero";
+                            if (name=="copy:overread") e.Api.ReadMode="over";
+                            if (name=="copy:read_error") e.Api.ReadMode="error";
+                            if (name=="copy:unexpected_read") e.Api.Fault="read:"+request;
+                            if (name=="copy:trailing") {
+                                byte[] raw=e.Api.Data[request],extra=new byte[e.Api.Data[request].Length+1];
+                                Array.Copy(raw,extra,raw.Length); e.Api.Data[request]=extra;
+                            }
+                        }
+                        if (rewinds==3 && name=="copy:post_copy_drift") e.Api.Data["runtime/python.exe"][0]^=1;
+                    };
+                    if (name=="copy:read_error") { unknown=true; label="read_unknown"; }
+                    else if (name=="copy:unexpected_read") { unknown=true; label="boundary_unknown"; }
+                    else if (name!="copy:post_copy_drift") label="read_extent";
+                    break;
+                default: throw new Exception("UNKNOWN_MODEL_WORKER");
+            }
+            if (unknown) Unknown(delegate { lease.CopyWorkerRequest(); },label);
+            else Refused(delegate { lease.CopyWorkerRequest(); },label);
+            Check(e.Api.Handles.Count==count && e.Api.Writes==1); PoisonNoIo(e,lease);
+            lease.Dispose(); e.Api.AllClosed();
+        }
         static void Scenario(string name) {
+            if (name.StartsWith("cap:",StringComparison.Ordinal)) { CapCase(name.Substring(4)); return; }
+            if (name.StartsWith("copy:",StringComparison.Ordinal) || name.StartsWith("lease:",StringComparison.Ordinal)) {
+                WorkerLeaseCase(name); return;
+            }
             if (name.StartsWith("plan:",StringComparison.Ordinal)) { PlanCase(name.Substring(5)); return; }
             if (name.StartsWith("fault:",StringComparison.Ordinal)) { FaultCase(name.Substring(6)); return; }
             if (name.StartsWith("security:",StringComparison.Ordinal)) { SecurityCase(name.Substring(9)); return; }
@@ -380,8 +549,8 @@ namespace AiAgent.NativeValidator {
                 case "directory_size_not_identity":
                     using (ImportClosureLease lease=gate.Acquire()) { e.Api.Meta["runtime"].Bytes=123456; lease.Reverify(); } e.Api.AllClosed(); return;
                 case "reverify_failure_terminal": ImportClosureLease failed=gate.Acquire(); e.Api.Data["runtime/python.exe"][0]^=1;
-                    Refused(delegate { failed.Reverify(); },"file_hash"); e.Api.AllClosed();
-                    Refused(delegate { failed.Reverify(); },"lease_closed"); failed.Dispose(); return;
+                    Refused(delegate { failed.Reverify(); },"file_hash"); AllHeld(e);
+                    PoisonNoIo(e,failed); failed.Dispose(); e.Api.AllClosed(); return;
                 case "close_failure_terminal": ImportClosureLease uncertain=gate.Acquire(); e.Api.CloseFault="runtime/python.exe";
                     Unknown(delegate { uncertain.Dispose(); },"close_unknown"); e.Api.AllClosed(); uncertain.Dispose(); return;
                 case "all_closes_attempted": e.Api.ReadMode="error"; e.Api.CloseFault="claims/install-attempt.claim";
@@ -460,6 +629,40 @@ def test_independent_preimport_catalog_matches_exact_host_closure():
     assert {'night_shifts/' + n for n in code} == set(deployment.CODE_NAMES)
     assert set(codec) == set(deployment.CODEC_FILES)
     assert not any('install_boundary' in n or n.endswith('.cs') for n in deployment.BUNDLE_NAMES)
+
+
+def test_worker_copy_uses_only_held_fixed_leaf_and_reverifies_complete_closure():
+    text = CORE.read_text(encoding='utf-8')
+    assert 'public byte[] CopyWorkerRequest()' in text
+    assert 'return owner.CopyWorkerRequest();' in text
+    assert 'Hash(tree["provision-request.json"],pin,null,copy);' in text
+    method = text[text.index('        internal byte[] CopyWorkerRequest()'):text.index('        internal void CloseAll()')]
+    assert method.count('Reverify();') == 2
+    for forbidden in ('api.Open(', 'api.Root(', 'api.CreateClaim(', 'Json', 'File.Read', 'new Windows'):
+        assert forbidden not in method
+    from night_shifts import bootstrap_native_install_request as profile
+    from night_shifts import bootstrap_native_provision as worker
+    limit = re.search(r'const int MaxWorkerRequestBytes=(\d+);', text)
+    assert limit and int(limit[1]) == profile.MAX_WORKER_BYTES == worker._MAX_WORKER_BYTES == 8192
+
+
+def test_import_lease_poison_never_automatically_closes_or_rearms():
+    text = CORE.read_text(encoding='utf-8')
+    lease = text[text.index('    public sealed class ImportClosureLease'):text.index('    public sealed class InstallBoundary {')]
+    verify_and_copy = lease[lease.index('        public void Reverify()'):lease.index('        public void Dispose()')]
+    assert 'CloseAll' not in verify_and_copy and 'owner=null' not in verify_and_copy
+    assert 'if (poisoned) throw new BoundaryRefused("lease_poisoned");' in text
+    assert text.count('catch (BoundaryRefused) { poisoned=true; throw; }') == 2
+    assert 'poisoned=false' not in text and '~ImportClosureLease' not in text
+
+
+def test_import_deadline_cap_is_internal_shorten_only_and_detects_rollback():
+    text = CORE.read_text(encoding='utf-8')
+    assert 'double? originalDeadline' in text and 'limit=Math.Min(limit,bound)' in text
+    assert 'Double.IsNaN(bound) || Double.IsInfinity(bound) || bound<=now' in text
+    assert 'now<lastSeconds' in text and 'deadline=limit;' in text
+    assert 'public InstallBoundary(InstallBoundaryPlan value,int budgetSeconds)' in text
+    assert 'public InstallBoundary(InstallBoundaryPlan value,int budgetSeconds,double' not in text
 
 
 def test_candidate_remains_no_entrypoint_launcher_or_production_wiring():
