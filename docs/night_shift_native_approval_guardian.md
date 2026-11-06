@@ -270,6 +270,19 @@ native claim durability, atomic containment, protected evidence or Gate A.
 
 ## Remaining integration and non-actions
 
+The [Python-side provisioning worker handoff](night_shift_native_worker_handoff.md)
+is applied and verified offline in the existing provisioning member: **125 new
+tests** and the fresh thirty-five-module selection of **2,538 with two skips**
+pass, warnings as errors, including a narrow constructor integer-overflow repair.
+It consumes only the already derived worker projection, checks independent
+byte/request/window references and enters the fixed Python provisioner under a
+supplied earlier local deadline. New tests use fake clocks/provisioner/Windows
+backends, not installed execution. It is not a C# worker entry point, Python
+launcher, import-lease lifetime fix, approval channel or actual cross-process
+deadline delivery. Catalog names/counts remain unchanged, but changed Python
+source bytes require fresh code/bundle review and pins. No change is made to
+this approval body, its native adapters or its historical verification record.
+
 Still required: independently trusted protected build/install/starter and pre-load
 policy; actual protected policy/request provisioning and approval delivery with
 permanent early-failure/cancellation handling; actual original-deadline transport;

@@ -10,10 +10,15 @@ from __future__ import annotations
 
 import ctypes as c
 import hashlib
+import json
+import math
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from threading import Lock
 from time import monotonic as _now
+from time import time as _utc
+from typing import cast
 
 from night_shifts import bootstrap_native_deployment as deployment
 from night_shifts import maintenance_store_native_prototype as native
@@ -299,6 +304,199 @@ def _read(api: _Windows, resources: _Resources, parent: _Directory, name: str, s
     entry = _File(handle, observed, parent.path.rstrip('\\') + '\\' + name, size, digest, private, expected)
     _metadata(api, entry)
     return entry
+
+
+# Worker projection consumer lives in the existing carried member: no new import
+# catalog entry or host-reviewer dependency. These references are forgeable DATA.
+# Trusted import acquisition, permanent claims, exact operator/host role, process
+# containment and authenticated deadline delivery MUST precede this body.
+_MAX_WORKER_BYTES = 8192
+_WORKER_FIELDS = ('version', 'scope', 'operation', 'installation_id', 'operator_sid',
+    'budget_seconds', 'expires_unix', 'request_sha256', 'launch_anchor', 'import_anchor', 'provision')
+
+
+def _worker_fields(value: object, names: tuple[str, ...]) -> dict[str, object]:
+    if type(value) is not dict or set(value) != set(names):
+        raise ProvisionRefused('worker_schema')
+    return cast(dict[str, object], value)
+
+
+def _worker_number(value: object, minimum: int, maximum: int) -> int:
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise ProvisionRefused('worker_number')
+    return value
+
+
+def _worker_digest(value: object) -> str:
+    if not deployment._digest(value):
+        raise ProvisionRefused('worker_digest')
+    return cast(str, value)
+
+
+def _worker_identity(value: object) -> native.FileIdentity:
+    fields = _worker_fields(value, ('volume', 'index'))
+    return native.FileIdentity(_worker_number(fields['volume'], 0, 2**32 - 1),
+                               _worker_number(fields['index'], 1, 2**64 - 1))
+
+
+def _worker_path(value: object, maximum: int = 240) -> str:
+    if (type(value) is not str or not 4 <= len(value) <= maximum
+            or re.match(r'^[A-Z]:\\', value) is None):
+        raise ProvisionRefused('worker_path')
+    _path(value)  # Pure component validation, no native access or normalization.
+    return value
+
+
+def _worker_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for name, value in pairs:
+        if name in result:
+            raise ProvisionRefused('worker_duplicate')
+        result[name] = value
+    return result
+
+
+def _worker_bind(raw: bytes, size: int, digest: str, request: str, seconds: int,
+                 until: int) -> tuple[str, str, ValidationProvisionPlan]:
+    # Size/type and independent whole-byte pin BEFORE any JSON parser. Immutable
+    # bytes only: no mutable caller buffer, file reopen or unbounded stdin read.
+    if type(raw) is not bytes or len(raw) != size:
+        raise ProvisionRefused('worker_pin')
+    if hashlib.sha256(raw).hexdigest() != digest:
+        raise ProvisionRefused('worker_pin')
+    try:
+        value = json.loads(raw.decode('ascii'), object_pairs_hook=_worker_pairs)
+    except (ValueError, UnicodeError, RecursionError):
+        raise ProvisionRefused('worker_json') from None
+    root = _worker_fields(value, _WORKER_FIELDS)
+    if (type(root['version']) is not int or root['version'] != 1
+            or root['scope'] != 'bound_worker_request_not_authorization'
+            or root['operation'] != 'native_validator_provision_once'):
+        raise ProvisionRefused('worker_schema')
+    installation_id = root['installation_id']
+    if type(installation_id) is not str or re.fullmatch('[0-9a-f]{32}', installation_id) is None:
+        raise ProvisionRefused('worker_id')
+    sid = root['operator_sid']
+    if (type(sid) is not str or len(sid) > 80
+            or re.fullmatch('S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+', sid) is None):
+        raise ProvisionRefused('worker_sid')
+    for part in sid.split('-')[4:]:
+        if str(int(part)) != part or int(part) > 2**32 - 1:
+            raise ProvisionRefused('worker_sid')
+    if (_worker_digest(root['request_sha256']) != request
+            or _worker_number(root['budget_seconds'], 6, 900) != seconds
+            or _worker_number(root['expires_unix'], 1, 253402300799) != until):
+        raise ProvisionRefused('worker_binding')
+    launch = _worker_fields(root['launch_anchor'], ('path', 'identity', 'scratch_identity'))
+    imp = _worker_fields(root['import_anchor'], ('path', 'identity'))
+    provision = _worker_fields(root['provision'], ('source', 'output_parent', 'bundle', 'pins'))
+    source = _worker_fields(provision['source'], ('path', 'identity'))
+    parent = _worker_fields(provision['output_parent'], ('path', 'identity'))
+    paths = (_worker_path(launch['path'], 200), _worker_path(imp['path']),
+             _worker_path(source['path']), _worker_path(parent['path']))
+    if len(paths[3] + '\\native-validator-' + installation_id) > 240:
+        raise ProvisionRefused('worker_output_path')
+    identities = tuple(_worker_identity(item['identity']) for item in (launch, imp, source, parent))
+    scratch = _worker_identity(launch['scratch_identity'])
+    if scratch.volume != identities[0].volume or len(set((*identities, scratch))) != 5:
+        raise ProvisionRefused('worker_identity_alias')
+    folded = tuple(path.lower() for path in paths)
+    if any(a == b or a.startswith(b + '\\') or b.startswith(a + '\\')
+           for i, a in enumerate(folded) for b in folded[i + 1:]):
+        raise ProvisionRefused('worker_path_overlap')
+    bundle = _worker_fields(provision['bundle'], ('bytes', 'sha256'))
+    pins = _worker_fields(provision['pins'], ('code_tree_sha256', 'codec_tree_sha256',
+        'runtime_sha256', 'runtime_bytes', 'recovery_sha256', 'recovery_bytes'))
+    plan = ValidationProvisionPlan(installation_id, identities[2], identities[3],
+        _worker_digest(bundle['sha256']), _worker_number(bundle['bytes'], 1, deployment.MAX_BUNDLE_BYTES),
+        deployment.ValidationDeploymentPins(_worker_digest(pins['code_tree_sha256']),
+            _worker_digest(pins['codec_tree_sha256']), _worker_digest(pins['runtime_sha256']),
+            _worker_number(pins['runtime_bytes'], 1, deployment.MAX_RUNTIME_BYTES),
+            _worker_digest(pins['recovery_sha256']),
+            _worker_number(pins['recovery_bytes'], 20 * 2048, 8 * 1024**3)))
+    _plan(plan)
+    # Reject whitespace, duplicate/unknown fields, noncanonical numbers/escapes,
+    # alternate order, non-ASCII, trailing input and missing/extra final newline.
+    if deployment._json(root) != raw:
+        raise ProvisionRefused('worker_canonical')
+    return paths[2], paths[3], plan
+
+
+class ProvisionWorkerHandoff:
+    """Unwired one-shot Python-side projection consumer, NOT a launcher or grant.
+
+    Construct BEFORE receiving bytes. The trusted caller must already hold the
+    complete import closure and pass an independently bound projection pin plus
+    an earlier deadline in THIS Python clock domain, excluding guardian cleanup.
+    No cross-process deadline translation, transport or authentication is supplied.
+    """
+
+    def __init__(self, *, expected_bytes: int, expected_sha256: str, request_sha256: str,
+                 budget_seconds: int, expires_unix: int, deadline: float) -> None:
+        self._size = _worker_number(expected_bytes, 1, _MAX_WORKER_BYTES)
+        self._digest = _worker_digest(expected_sha256)
+        self._request = _worker_digest(request_sha256)
+        self._seconds = _worker_number(budget_seconds, 6, 900)
+        self._until = _worker_number(expires_unix, 1, 253402300799)
+        if type(deadline) not in (int, float):
+            raise ProvisionRefused('worker_window')
+        try:
+            finite = math.isfinite(deadline)
+        except OverflowError:
+            finite = False
+        if not finite:
+            raise ProvisionRefused('worker_window')
+        self._last = float('-inf')
+        now, wall = self._sample()
+        remaining = self._until - wall
+        if not 0 < remaining <= 86400 or deadline <= now:
+            raise ProvisionRefused('worker_window')
+        # Only shorten the supplied earlier local deadline. NEVER start a fresh
+        # budget in run(), after decoding, or at the provisioner handoff.
+        self._deadline = min(deadline, now + self._seconds, now + remaining)
+        self._used = False
+        self._lock = Lock()
+
+    def _sample(self) -> tuple[float, float]:
+        now, wall = _now(), _utc()
+        if (not math.isfinite(now) or not math.isfinite(wall)
+                or now < self._last or wall < 0):
+            raise ProvisionRefused('worker_clock')
+        self._last = now
+        return now, wall
+
+    def _check(self) -> None:
+        now, wall = self._sample()
+        if now >= self._deadline or wall >= self._until:
+            raise ProvisionRefused('worker_window')
+
+    def run(self, raw: bytes) -> LocalProvisionedInputs:
+        with self._lock:
+            if self._used:
+                raise ProvisionRefused('one_shot')
+            self._used = True  # disarm before clock, hash, parser or provisioner
+            entered = False
+            try:
+                self._check()
+                source, parent, plan = _worker_bind(raw, self._size, self._digest, self._request,
+                                                   self._seconds, self._until)
+                self._check()
+                body = NativeValidationProvisioner(source, parent, plan, deadline=self._deadline)
+                self._check()
+                entered = True
+                result = body.run()
+                self._check()
+                if type(result) is not LocalProvisionedInputs or result.installation_id != plan.installation_id:
+                    raise ProvisionUnknown('worker_result_unknown')
+                return result  # unchanged local consistency data, NOT acceptance
+            except ProvisionUnknown:
+                raise
+            except ProvisionRefused:
+                if entered:
+                    raise ProvisionUnknown('worker_provision_outcome_unknown') from None
+                raise
+            except Exception:
+                raise ProvisionUnknown('worker_unknown') from None
 
 
 class NativeValidationProvisioner:

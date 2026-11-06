@@ -414,7 +414,20 @@ def test_candidates_are_data_catalogued_but_provisioner_remains_unwired():
     assert not hasattr(m, 'main')
     tree = ast.parse(Path(m.__file__).read_text(encoding='utf-8'))
     assert not any(isinstance(n, ast.Attribute) and n.attr in ('write_marker', 'probe_new_store',
-        'unlink', 'rmdir', 'remove', 'chmod', 'Popen', 'run', 'execve', 'extractall') for n in ast.walk(tree))
+        'unlink', 'rmdir', 'remove', 'chmod', 'Popen', 'execve', 'extractall') for n in ast.walk(tree))
+    # Exactly one new internal run edge, not a blanket exemption for .run calls.
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Attribute) and n.attr == 'run']
+    assert len(calls) == 1 and ast.unparse(calls[0]) == 'body.run'
+    worker = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'ProvisionWorkerHandoff')
+    method = next(n for n in worker.body if isinstance(n, ast.FunctionDef) and n.name == 'run')
+    assert calls[0] in list(ast.walk(method))
+    creations = [n for n in ast.walk(method) if isinstance(n, ast.Assign)
+                 and any(isinstance(t, ast.Name) and t.id == 'body' for t in n.targets)]
+    assert len(creations) == 1
+    assert ast.unparse(creations[0].value) == (
+        'NativeValidationProvisioner(source, parent, plan, deadline=self._deadline)')
+    runs = [n for n in ast.walk(method) if isinstance(n, ast.Call) and n.func is calls[0]]
+    assert len(runs) == 1 and not runs[0].args and not runs[0].keywords
     for path in root.rglob('*.py'):
         if path == Path(m.__file__):
             continue

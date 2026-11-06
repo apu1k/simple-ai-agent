@@ -41,6 +41,22 @@ retained claim, but has no executable entry point, trust-establishing installati
 provisioning handoff or independent process watchdog. This is not activation or
 native evidence; complete protected bootstrap trust remains mandatory.
 
+The [Python-side worker handoff](night_shift_native_worker_handoff.md) is now
+applied and verified offline inside this existing carried member: **125 new tests**
+and the fresh thirty-five-module related selection of **2,538 with two skips**
+pass, warnings as errors. It validates the bounded, independently pinned canonical
+worker projection and invokes only this fixed provisioner under a supplied earlier
+local deadline. A narrow integer-deadline overflow repair and two regressions are
+included; no valid-deadline behavior changes. The actual provisioner composition
+uses an inert archive and fake Windows backend, not native file provisioning.
+Repository Ruff, Windows-hosted Mypy across **105 source files**, scoped Linux
+typing, Python 3.12 grammar, links and whitespace checks pass. There is still no
+CLI, application importer, Python launch, protected transport, authenticated
+deadline delivery or installed execution route.
+Catalog names/counts remain unchanged; changed source bytes require fresh code
+and bundle review/pins. This internal data-to-provisioner edge does not establish
+pre-import trust or permanent approval.
+
 Consequently this candidate does not yet make a protected installation runnable.
 Its result/record are consistency data, not bootstrap authorization or a new tool
 operation. The older inspection/command/evidence installations, claims and
