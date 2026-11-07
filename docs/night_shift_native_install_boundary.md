@@ -175,6 +175,24 @@ entire child lifetime, and reconcile uncertain child termination before closing
 it. This checkpoint supplies no such wrapper or Python provisioning entry point.
 A locally verified lease is NOT a launch grant or protected receipt.
 
+The subsequent [worker lifetime composition candidate](night_shift_native_worker_guardian.md)
+is applied and verified OFFLINE, NOT installed or exercised natively. Its **83 new
+tests** pass, including **78 CLR scenarios** and compilation of all eight actual
+C# sources together; the fresh thirty-six-module related selection passes
+**2,661 with two skips**, warnings as errors. A test-only repair forwards close
+events from the extracted disposable fake into the merged trace, restoring
+close-order assertions and late-close fault injection. The original shared
+fixture, production sources and native adapters needed no repair. It binds the
+actual outer request, derives this import plan, acquires this claim/lease and
+composes fixed held-byte copying and pre-resume reverification with the actual
+process-guardian core. It owns conditional lease disposal and conservative
+retention after post-create failure. This is not the completed wrapper: its
+distinct internal Python-kernel seam has NO production implementation, protected
+transport, clock translation or native Python launcher. The existing native
+adapters and this boundary's public API remain unchanged. Original and lease-update
+verification records in this document concern earlier checkpoints; the linked
+composition document records its separate applied verification and limits.
+
 ## Worker-input lease update — applied and verified offline
 
 The applied boundary suite passes **155 tests**: **148 CLR models and seven

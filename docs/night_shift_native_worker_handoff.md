@@ -206,6 +206,23 @@ No further source or test repair was needed after the integer-deadline fix.
 
 ## Remaining integration and non-actions
 
+The [worker lifetime composition candidate](night_shift_native_worker_guardian.md)
+is now applied and verified OFFLINE, NOT installed or exercised natively. All
+**83 new tests** pass, including **78 CLR scenarios** and compilation of all eight
+actual C# sources together. The fresh thirty-six-module related selection passes
+**2,661 with two skips**, warnings as errors. The sole repair was test-only
+close-event forwarding in the extracted disposable fake, with a regression guard;
+production sources, native adapters and the original shared fixture are unchanged.
+It composes the actual outer codec, import claim/lease, fixed held-reader copy and
+process-guardian core under one mandatory earlier same-origin deadline. It releases
+import locks only on the core's terminal release fact and conservatively retains
+them after post-create failure. A distinct internal Python-kernel seam has NO
+production implementation or fallback to the guardian's C# worker launcher. This
+is the first worker-owner composition slice, not completed fixed Python launch
+or an invocation of this Python handoff/provisioner. Native transport, clock-domain
+delivery and executable entry integration remain required; see that candidate's
+separate applied verification record and explicit limits.
+
 Still required: trusted protected build/install/starter; protected policy/request
 provisioning and permanent approval delivery including early cancellation; actual
 cross-process deadline transport; executable entry points; lifetime-safe held
