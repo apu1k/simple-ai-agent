@@ -1,7 +1,8 @@
 // UNWIRED worker lifetime composition, not an executable or protected transport.
 // Never compile/load checkout code elevated. Trusted pre-load provenance,
 // permanent approval and original-deadline delivery MUST precede this body.
-// No native Python adapter is supplied: no fallback to the guardian's worker EXE.
+// The separate fixed Python adapter is an unwired candidate, never a fallback
+// to the guardian's worker EXE. No installed entry point or approval is supplied.
 using System;
 using System.Text.RegularExpressions;
 using AiAgent.NativeValidator;
@@ -40,7 +41,9 @@ namespace AiAgent.ValidatorWorker {
         internal readonly int BudgetSeconds;
         internal readonly long ApprovedUntilUnix,WorkerBytes;
         internal readonly double RunDeadline;
-        internal WorkerLaunchContext(GuardianPlan process,InstallBoundaryPlan imports,byte[] raw,double stopAt) {
+        internal readonly IGuardianClock Clock;
+        internal WorkerLaunchContext(GuardianPlan process,InstallBoundaryPlan imports,byte[] raw,double stopAt,
+            IGuardianClock clock) {
             FilePin pin=imports.Files["provision-request.json"];
             if (raw==null || raw.Length!=pin.Bytes || InstallBoundary.Sha(raw)!=pin.Sha256)
                 throw new WorkerGuardianRefused("worker_pin");
@@ -48,12 +51,12 @@ namespace AiAgent.ValidatorWorker {
             LaunchRoot=process.Root; ImportRoot=imports.Root; InstallationId=process.InstallationId;
             OperatorSid=process.OperatorSid; RequestSha256=process.ApprovalSha256;
             BudgetSeconds=process.BudgetSeconds; ApprovedUntilUnix=process.ApprovedUntilUnix;
-            RunDeadline=stopAt;
+            RunDeadline=stopAt; Clock=clock;
         }
         internal byte[] CopyRequest() { return (byte[])request.Clone(); }
     }
-    // Internal compile-time seam, not a public callback/command API. There is NO
-    // production implementation yet. A future reviewed fixed Python adapter must
+    // Internal compile-time seam, not a public callback/command API. The separate
+    // native adapter remains unwired/uninstalled. The protected fixed route must
     // authenticate/translate delivery before load, enforce worker host role and
     // fixed interpreter/import/environment/DLL policy, and atomically contain it.
     // Bind ONLY stages bounded data; it MUST NOT create/resume a process. ONLY
@@ -87,7 +90,7 @@ namespace AiAgent.ValidatorWorker {
                 byte[] raw=owner.lease.CopyWorkerRequest();
                 owner.BeforeWork();
                 var context=new WorkerLaunchContext(owner.processPlan,owner.importPlan,raw,
-                    owner.deadline-ProvisionProcessGuardian.StopReserveSeconds);
+                    owner.deadline-ProvisionProcessGuardian.StopReserveSeconds,owner.clock);
                 owner.kernel.Bind(context);
                 owner.BeforeWork();
             }

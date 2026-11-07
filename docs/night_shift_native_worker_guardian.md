@@ -15,9 +15,21 @@ body and process-guardian lifecycle in one same-assembly C# worker owner:
 The current native process adapter launches the C# worker from the separate
 guardian; it is NOT a Python launcher. This candidate deliberately cannot use
 that adapter as a fallback. Its distinct internal `IWorkerPythonKernel` has
-**no production implementation**. There is no public constructor, `Main`, CLI,
-installer, tool wiring, carried-runtime execution or new Python source/catalog
-member. The C#/Python split and all native adapters are unchanged.
+**no installed implementation or live default**. The subsequent
+[fixed Python adapter and private entry candidate](night_shift_native_worker_windows.md)
+is now applied and verified OFFLINE, NOT installed or exercised natively. Its
+**76 new tests** pass, including **26 CLR scenarios** and compilation of all nine
+actual C# sources together; the fresh thirty-seven-module related selection
+passes **2,737 with two skips**, warnings as errors. It adds a separate native
+adapter, a bounded non-secret argument frame and conservative QPC-to-Python
+deadline translation. This owner's immutable context now carries the SAME
+internal clock used by its lifetime checks. The **83-test** and **2,661-test**
+records below concern the preceding committed lifetime checkpoint, not the new
+adapter/context/entry validation. That component's document records its applied
+verification and narrow fixture/typing repairs; no C# source repair was needed.
+There is still no public constructor, `Main`, installer, tool wiring or installed
+executable route. The C#/Python split and original outer guardian adapter remain
+unchanged.
 
 **Never compile or load checkout code elevated.** Trusted OS/CLR/executable/load
 provenance, authenticated permanent whole-attempt approval, protected request
@@ -176,13 +188,19 @@ protected delivery, actual child absence, installed execution or provisioning.
 
 ## Remaining worker milestone and non-actions
 
-Next is the reviewed fixed Python adapter and entry/transport integration:
-fixed interpreter/arguments/import paths/environment/CWD/DLL search, authenticated
-bounded held-byte/metadata delivery, same-origin sampling and shorten-only
-translation into Python's monotonic domain, process containment and checked
-termination. A numeric C# deadline cannot simply be serialized as a Python
-`monotonic()` timestamp. The internal staging seam does NOT solve delivery or
-cross-process clocks and must not become a generic command/callback API.
+The [fixed Python adapter/entry candidate](night_shift_native_worker_windows.md)
+is applied and verified offline. It supplies the fixed interpreter/source/argument
+path, restricted environment/CWD/import paths, single-process inner atomic job
+and a conservative common-QPC bridge to Python's local monotonic domain. This is
+compiled source plus modeled behavior, NOT native launch/clock/CRT/loader/job
+characterization. It does NOT supply the protected starter or parent
+authentication: fixed fields/hashes are consistency data, never authorization.
+The worker lifetime body still has no live default or executable constructor.
+Next are the protected build/install/starter, executable entry points, original
+request/approval/deadline delivery INTO the worker, protected receipts and
+independent reconciliation, followed by separately approved native experiments.
+No numeric process-relative C# deadline is simply serialized as a Python
+`monotonic()` timestamp.
 
 The existing Python handoff/provisioner is not invoked by this candidate. No
 end-to-end provisioning or installed-worker success is claimed. Trusted protected

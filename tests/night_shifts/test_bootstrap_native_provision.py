@@ -415,9 +415,10 @@ def test_candidates_are_data_catalogued_but_provisioner_remains_unwired():
     tree = ast.parse(Path(m.__file__).read_text(encoding='utf-8'))
     assert not any(isinstance(n, ast.Attribute) and n.attr in ('write_marker', 'probe_new_store',
         'unlink', 'rmdir', 'remove', 'chmod', 'Popen', 'execve', 'extractall') for n in ast.walk(tree))
-    # Exactly one new internal run edge, not a blanket exemption for .run calls.
-    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Attribute) and n.attr == 'run']
-    assert len(calls) == 1 and ast.unparse(calls[0]) == 'body.run'
+    # Exactly two fixed internal edges, not a blanket exemption for .run calls.
+    all_calls = [n for n in ast.walk(tree) if isinstance(n, ast.Attribute) and n.attr == 'run']
+    assert len(all_calls) == 2 and {ast.unparse(n) for n in all_calls} == {'body.run', 'handoff.run'}
+    calls = [n for n in all_calls if ast.unparse(n) == 'body.run']
     worker = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'ProvisionWorkerHandoff')
     method = next(n for n in worker.body if isinstance(n, ast.FunctionDef) and n.name == 'run')
     assert calls[0] in list(ast.walk(method))
@@ -428,6 +429,16 @@ def test_candidates_are_data_catalogued_but_provisioner_remains_unwired():
         'NativeValidationProvisioner(source, parent, plan, deadline=self._deadline)')
     runs = [n for n in ast.walk(method) if isinstance(n, ast.Call) and n.func is calls[0]]
     assert len(runs) == 1 and not runs[0].args and not runs[0].keywords
+    entry = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_run_fixed_worker')
+    entry_calls = [n for n in ast.walk(entry) if isinstance(n, ast.Call)
+                   and isinstance(n.func, ast.Attribute) and n.func.attr == 'run']
+    assert len(entry_calls) == 1 and ast.unparse(entry_calls[0]) == 'handoff.run(raw)'
+    entry_creations = [n for n in ast.walk(entry) if isinstance(n, ast.Assign)
+                       and any(isinstance(t, ast.Name) and t.id == 'handoff' for t in n.targets)]
+    assert len(entry_creations) == 1
+    assert ast.unparse(entry_creations[0].value) == (
+        'ProvisionWorkerHandoff(expected_bytes=size, expected_sha256=digest, request_sha256=request, '
+        'budget_seconds=seconds, expires_unix=until, deadline=deadline)')
     for path in root.rglob('*.py'):
         if path == Path(m.__file__):
             continue

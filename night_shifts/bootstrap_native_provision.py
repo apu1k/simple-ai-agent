@@ -5,15 +5,20 @@ establish runtime/code/import provenance and permanent install-attempt authority
 BEFORE importing this closed dependency set. This body cannot supply that trust,
 install its own trusted entry point, authorize execution or supervise any VM.
 No CLI, tool, process launch, credentials, policy activation, repair or deletion.
+The private fixed-worker entry is callable only after separately trusted launch;
+its argument/counter checks cannot authenticate its own imports or parent.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import ctypes as c
 import hashlib
 import json
 import math
 import re
-from collections.abc import Iterator
+import sys
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from threading import Lock
 from time import monotonic as _now
@@ -497,6 +502,123 @@ class ProvisionWorkerHandoff:
                 raise
             except Exception:
                 raise ProvisionUnknown('worker_unknown') from None
+
+
+class _WindowsWorkerCounter:
+    """Common-machine QPC samples, not process-relative Stopwatch timestamps."""
+
+    _counter: Callable[[object], int]
+    _frequency: Callable[[object], int]
+
+    def __init__(self) -> None:
+        if sys.platform != 'win32' or c.sizeof(c.c_void_p) != 8:
+            raise ProvisionRefused('worker_native_host')
+        kernel = getattr(c, 'WinDLL')('kernel32.dll', use_last_error=True)
+        counter = kernel.QueryPerformanceCounter
+        frequency = kernel.QueryPerformanceFrequency
+        for function in (counter, frequency):
+            function.argtypes = [c.POINTER(c.c_longlong)]
+            function.restype = c.c_int
+        self._counter = counter
+        self._frequency = frequency
+
+    def sample(self) -> tuple[int, int]:
+        ticks, frequency = c.c_longlong(), c.c_longlong()
+        if not self._counter(c.byref(ticks)) or not self._frequency(c.byref(frequency)):
+            raise ProvisionUnknown('worker_counter_unknown')
+        if not 0 < ticks.value < 2**63 or not 0 < frequency.value <= 10**9:
+            raise ProvisionRefused('worker_counter')
+        return ticks.value, frequency.value
+
+
+def _worker_local_deadline(limit: int, frequency: int) -> float:
+    # The local sample is BEFORE QPC. Map onto that EARLIER local instant,
+    # never onto a later receipt/parse time. Bound both sampling intervals and
+    # subtract one millisecond plus a downward float step for rounding.
+    counter = _WindowsWorkerCounter()
+    before = _now()
+    first, observed = counter.sample()
+    second, again = counter.sample()
+    after = _now()
+    if (not math.isfinite(before) or not math.isfinite(after)
+            or not 0 <= before <= after < 2**40 or after - before > 0.25
+            or observed != frequency or again != frequency or not 0 < first <= second < limit
+            or second - first > frequency // 4):
+        raise ProvisionRefused('worker_counter_sample')
+    remaining = (limit - first) / frequency
+    if not 0 < remaining <= 900:
+        raise ProvisionRefused('worker_counter_window')
+    deadline = math.nextafter(before + remaining - 0.001, float('-inf'))
+    if deadline <= after:
+        raise ProvisionRefused('worker_counter_window')
+    return deadline
+
+
+def _fixed_worker_host(root: str) -> None:
+    # These checks are consistency gates AFTER trusted pre-import acquisition,
+    # not a self-authenticating launcher or permission to run checkout code.
+    runtime = root + '\\runtime'
+    expected_path = [root + '\\payload', runtime + '\\python314.zip', runtime]
+    if (sys.platform != 'win32' or c.sizeof(c.c_void_p) != 8
+            or sys.version_info[:2] != (3, 14)
+            or sys.executable != runtime + '\\python.exe' or sys.path != expected_path
+            or not all(getattr(sys.flags, name, 0) == 1 for name in
+                       ('isolated', 'no_site', 'dont_write_bytecode', 'ignore_environment', 'safe_path'))):
+        raise ProvisionRefused('worker_fixed_host')
+
+
+def _entry_number(text: str, maximum: int) -> int:
+    if len(text) > len(str(maximum)) or re.fullmatch('[1-9][0-9]*', text) is None:
+        raise ProvisionRefused('worker_frame')
+    number = int(text)
+    if number > maximum:
+        raise ProvisionRefused('worker_frame')
+    return number
+
+
+def _run_fixed_worker(arguments: tuple[str, ...]) -> int:
+    """Private fixed -c target: no CLI/import-time execution, output or grant.
+
+    Arguments are non-secret consistency data supplied ONLY by the reviewed
+    installed worker's fixed CreateProcess path. A matching frame/hash/counter
+    is NOT parent authentication. Permanent approval/import locks/containment
+    and protected reconciliation are external; exit zero is local success only.
+    """
+    try:
+        if (type(arguments) is not tuple or len(arguments) != 9
+                or any(type(value) is not str for value in arguments)):
+            raise ProvisionRefused('worker_frame')
+        root, encoded, size_text, digest, request, seconds_text, until_text, limit_text, frequency_text = arguments
+        _worker_path(root)
+        size = _entry_number(size_text, _MAX_WORKER_BYTES)
+        seconds = _entry_number(seconds_text, 900)
+        until = _entry_number(until_text, 253402300799)
+        limit = _entry_number(limit_text, 2**63 - 1)
+        frequency = _entry_number(frequency_text, 10**9)
+        _worker_digest(digest)
+        _worker_digest(request)
+        if seconds < 6 or len(encoded) != 4 * ((size + 2) // 3):
+            raise ProvisionRefused('worker_frame')
+        _fixed_worker_host(root)
+        deadline = _worker_local_deadline(limit, frequency)
+        handoff = ProvisionWorkerHandoff(expected_bytes=size, expected_sha256=digest,
+            request_sha256=request, budget_seconds=seconds, expires_unix=until, deadline=deadline)
+        # Construct under the earlier window BEFORE decoding worker bytes. No
+        # request file reopen, stdin read, JSON parse or provisioning before pins.
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error):
+            raise ProvisionRefused('worker_frame') from None
+        if len(raw) != size or base64.b64encode(raw).decode('ascii') != encoded:
+            raise ProvisionRefused('worker_frame')
+        handoff.run(raw)
+        return 0  # local provisioning consistency only, NEVER acceptance
+    except ProvisionUnknown:
+        return 125
+    except ProvisionRefused:
+        return 126
+    except Exception:
+        return 125  # no path/payload/native exception text or traceback emitted
 
 
 class NativeValidationProvisioner:

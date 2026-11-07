@@ -354,7 +354,7 @@ def test_actual_provisioner_composition_with_fake_windows(env, wire, monkeypatch
     assert env.api.events == events
 
 
-def test_existing_catalog_no_host_import_or_entrypoint():
+def test_existing_catalog_no_host_import_or_public_entrypoint():
     source = Path(m.__file__).read_text(encoding='utf-8')
     tree = ast.parse(source)
     assert not hasattr(m, 'main')
@@ -364,6 +364,15 @@ def test_existing_catalog_no_host_import_or_entrypoint():
     assert len(profile.IMPORT_NAMES) + 1 == 87
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            assert not {n.name for n in node.names} & {'subprocess', 'argparse', 'sys'}
+            assert not {n.name for n in node.names} & {'subprocess', 'argparse'}
         if isinstance(node, ast.Attribute):
-            assert node.attr not in ('Popen', 'execve', 'extractall', 'unlink', 'rmdir')
+            assert node.attr not in ('Popen', 'execve', 'extractall', 'unlink', 'rmdir', 'argv', 'exit')
+    # sys is allowed only for the private fixed-host consistency checks, never
+    # generic CLI parsing, exit, process launch or application importing.
+    allowed = {'platform', 'version_info', 'executable', 'path', 'flags'}
+    uses = [n for n in ast.walk(tree) if isinstance(n, ast.Attribute)
+            and isinstance(n.value, ast.Name) and n.value.id == 'sys']
+    assert uses and {n.attr for n in uses} == allowed
+    owners = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))
+              and any(use in list(ast.walk(n)) for use in uses)]
+    assert {n.name for n in owners} == {'_fixed_worker_host', '_WindowsWorkerCounter'}

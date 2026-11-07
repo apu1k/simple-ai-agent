@@ -187,11 +187,22 @@ actual outer request, derives this import plan, acquires this claim/lease and
 composes fixed held-byte copying and pre-resume reverification with the actual
 process-guardian core. It owns conditional lease disposal and conservative
 retention after post-create failure. This is not the completed wrapper: its
-distinct internal Python-kernel seam has NO production implementation, protected
-transport, clock translation or native Python launcher. The existing native
-adapters and this boundary's public API remain unchanged. Original and lease-update
-verification records in this document concern earlier checkpoints; the linked
-composition document records its separate applied verification and limits.
+distinct internal Python-kernel seam has no installed route or live default. The
+subsequent [fixed Python adapter/entry candidate](night_shift_native_worker_windows.md)
+is applied and verified OFFLINE, NOT installed or exercised natively. Its **76
+new tests** pass, including **26 CLR scenarios** and compilation of all nine
+actual C# sources together. The fresh thirty-seven-module related selection
+passes **2,737 with two skips**, warnings as errors. It consumes the held
+worker-byte snapshot, uses bounded non-secret arguments and conservatively maps
+the earlier execution cap through common QPC into Python's monotonic domain.
+It adds a separate native adapter rather than changing the original outer
+guardian adapter, and no fallback, reopen or unconditional lease disposal.
+Narrow compiler-fixture/input/typing repairs were needed; no C# source repair
+was needed. Original-window delivery into the worker, pre-load provenance,
+permanent approval, protected receipts and native characterization remain
+required. This boundary's API and native adapter remain unchanged. Its earlier
+verification records do NOT cover the new adapter; the linked component records
+its separate applied verification, fake-backend scope and remaining limits.
 
 ## Worker-input lease update — applied and verified offline
 

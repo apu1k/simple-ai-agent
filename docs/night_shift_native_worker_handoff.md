@@ -206,6 +206,25 @@ No further source or test repair was needed after the integer-deadline fix.
 
 ## Remaining integration and non-actions
 
+The subsequent [fixed Python adapter and private entry candidate](night_shift_native_worker_windows.md)
+is now applied and verified OFFLINE, NOT installed or exercised natively. All
+**76 new tests** pass, including **26 CLR scenarios**, compilation of all nine
+actual C# sources together and CLR-frame-to-actual-Python entry/handoff composition
+with a fake provisioner. The fresh thirty-seven-module related selection passes
+**2,737 with two skips**, warnings as errors. A private entry in this existing
+carried module checks the fixed host/import profile, bounded canonical argument
+frame and common-QPC-to-local deadline before invoking this actual handoff. A
+separate C# adapter starts ONLY the held interpreter with fixed source, restricted
+environment and an atomic single-process inner job. No generic CLI, new catalog
+member, request-file reopen, inherited handle or live default is added. Matching
+arguments are consistency data, not parent authentication. Earlier Python handoff
+and C# lifetime verification records concern preceding checkpoints; the linked
+component records this update's separate applied verification and narrow fixture/
+typing repairs. No C# source repair was needed. Changed carried source STILL
+requires fresh independent code/bundle pins before use. Native launch/clock/
+loader/CRT behavior and the protected installed/approval/receipt route remain
+unverified.
+
 The [worker lifetime composition candidate](night_shift_native_worker_guardian.md)
 is now applied and verified OFFLINE, NOT installed or exercised natively. All
 **83 new tests** pass, including **78 CLR scenarios** and compilation of all eight
@@ -216,12 +235,14 @@ production sources, native adapters and the original shared fixture are unchange
 It composes the actual outer codec, import claim/lease, fixed held-reader copy and
 process-guardian core under one mandatory earlier same-origin deadline. It releases
 import locks only on the core's terminal release fact and conservatively retains
-them after post-create failure. A distinct internal Python-kernel seam has NO
-production implementation or fallback to the guardian's C# worker launcher. This
-is the first worker-owner composition slice, not completed fixed Python launch
-or an invocation of this Python handoff/provisioner. Native transport, clock-domain
-delivery and executable entry integration remain required; see that candidate's
-separate applied verification record and explicit limits.
+them after post-create failure. Its distinct internal Python-kernel seam has no
+installed implementation, live default or fallback to the guardian's C# worker
+launcher. The separately linked native candidate is verified only by compilation
+and synthetic counter/process/provisioning models, NOT installed execution.
+This is the first worker-owner composition slice, not completed protected fixed
+Python launch. Authenticated original-window delivery into the worker, executable
+entry integration, native characterization and protected reconciliation remain
+required; see the separate component verification records and explicit limits.
 
 Still required: trusted protected build/install/starter; protected policy/request
 provisioning and permanent approval delivery including early cancellation; actual
