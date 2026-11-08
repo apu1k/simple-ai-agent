@@ -4,6 +4,7 @@
 // installation, Python invocation, VM control, claim reset or fallback launcher.
 using System;
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 namespace AiAgent.ValidatorGuardian {
     public sealed class GuardianRefused : Exception {
@@ -22,6 +23,28 @@ namespace AiAgent.ValidatorGuardian {
             Root=root; OperatorSid=sid; InstallationId=id; ApprovalSha256=approval;
             ApprovedUntilUnix=until; BudgetSeconds=seconds;
         }
+    }
+    // Immutable NON-SECRET consistency bytes for the fixed optional section
+    // delivery path. No codec, file access, authorization or application import.
+    internal sealed class GuardianRequest {
+        readonly byte[] raw;
+        internal readonly GuardianPlan Plan;
+        internal readonly long Bytes;
+        internal readonly string Sha256;
+        internal GuardianRequest(GuardianPlan plan,byte[] request,long bytes,string digest) {
+            ProvisionProcessGuardian.Validate(plan);
+            if (request==null || bytes<1 || bytes>32768 || request.Length!=bytes || digest!=plan.ApprovalSha256 ||
+                plan.ApprovedUntilUnix<1 || plan.ApprovedUntilUnix>253402300799L)
+                throw new GuardianRefused("delivery_request_pin");
+            Plan=plan; Bytes=bytes; Sha256=digest; raw=(byte[])request.Clone();
+            if (!Matches(raw)) throw new GuardianRefused("delivery_request_pin");
+        }
+        internal bool Matches(byte[] value) {
+            if (value==null || value.Length!=Bytes) return false;
+            using (SHA256 sha=SHA256.Create())
+                return BitConverter.ToString(sha.ComputeHash(value)).Replace("-","").ToLowerInvariant()==Sha256;
+        }
+        internal byte[] CopyRequest() { return (byte[])raw.Clone(); }
     }
     public enum LocalProcessEnd { RootExited, DeadlineStopped, ResidualTreeStopped }
     public sealed class LocalProcessObservation {
@@ -61,6 +84,14 @@ namespace AiAgent.ValidatorGuardian {
         void Stop(object job); // whole exact-owned job, never PID/name lookup
         void Pause(int milliseconds);
         void Close(object handle);
+    }
+    // Same-assembly OPTIONAL fixed delivery seam. Both binds ONLY stage data:
+    // no native/file/process operation or callback into caller-selected code.
+    // BindWindow supplies THIS core's actual clock and stopAt AFTER its held
+    // pre-create gate, not a cap guessed earlier by request admission.
+    internal interface IGuardianRequestKernel : IGuardianKernel {
+        void BindRequest(GuardianRequest request);
+        void BindWindow(GuardianPlan plan,IGuardianClock clock,double runDeadline);
     }
     public sealed class ProvisionProcessGuardian {
         internal const string GuardianExe="validator-install-guardian.exe";
@@ -107,7 +138,7 @@ namespace AiAgent.ValidatorGuardian {
                 Regex.IsMatch(text,"\\A(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\\..*)?\\z",RegexOptions.IgnoreCase))
                 throw new GuardianRefused("path_component");
         }
-        static void Validate(GuardianPlan p) {
+        internal static void Validate(GuardianPlan p) {
             if (p==null || p.Root==null || p.Root.Length<4 || p.Root.Length>200 ||
                 !Regex.IsMatch(p.Root,"\\A[A-Za-z]:\\\\") || p.OperatorSid==null ||
                 !Regex.IsMatch(p.OperatorSid,"\\AS-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+\\z") ||
@@ -184,6 +215,11 @@ namespace AiAgent.ValidatorGuardian {
                 object created=api.NewJob();
                 if (!Own(created)) throw new GuardianUnknown("job_handle_unknown"); job=created;
                 BeforeStart(); if (launchGate!=null) launchGate.BeforeCreate(); BeforeStart();
+                var delivery=api as IGuardianRequestKernel;
+                if (delivery!=null) {
+                    delivery.BindWindow(plan,clock,stopAt);
+                    BeforeStart();
+                }
                 creationAttempted=true; // disarm BEFORE crossing the native creation boundary
                 child=api.CreateSuspended(job,plan.Root);
                 if (child==null) throw new GuardianUnknown("child_unknown");

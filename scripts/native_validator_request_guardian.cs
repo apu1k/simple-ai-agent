@@ -85,8 +85,21 @@ namespace AiAgent.ValidatorAdmission {
                     LaunchPlan plan=inputs.CreateLaunchPlan();
                     if (plan.BudgetSeconds!=budgetSeconds || plan.ApprovedUntilUnix!=approvedUntil)
                         throw new RequestGuardianRefused("request_window_mismatch");
+                    // Optional fixed section path: stage a separately cloned,
+                    // re-pinned snapshot of the SAME outer bytes, not its worker
+                    // projection. Binding performs NO native work. The process
+                    // core later supplies its ACTUAL clock/stop point after the
+                    // held pre-create gate; no earlier guessed cap is delivered.
+                    var delivery=kernel as IGuardianRequestKernel;
+                    if (delivery!=null) {
+                        var process=new GuardianPlan(plan.Root,plan.OperatorSid,plan.InstallationId,
+                            plan.ApprovalSha256,plan.ApprovedUntilUnix,plan.BudgetSeconds);
+                        delivery.BindRequest(new GuardianRequest(process,request,expectedBytes,expectedSha256));
+                        BeforeRunWork();
+                    }
                     // Pass BOTH the same monotonic origin and the earlier cap.
-                    // Nothing here serializes or authenticates a cross-process cap.
+                    // Only the explicit section adapter can deliver that cap;
+                    // binding/metadata equality alone is NOT authentication.
                     guardian=new HeldProvisionGuardian(plan,files,kernel,clock,deadline);
                     BeforeRunWork();
                     LocalProcessObservation answer=guardian.Run();

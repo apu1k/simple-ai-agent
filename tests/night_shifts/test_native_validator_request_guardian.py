@@ -385,7 +385,7 @@ def test_one_shot_pin_first_metadata_equality_and_original_cap():
     assert 'limit=Math.Min(limit,bound); // preserve time spent decoding/admitting' in held
 
 
-def test_no_authorization_transport_entrypoint_or_unsafe_release_added():
+def test_no_authorization_native_io_entrypoint_or_unsafe_release_added():
     text = CORE.read_text(encoding='utf-8')
     for forbidden in ('DllImport', 'Assembly.Load', 'Process.Start', 'File.Open', 'File.Write',
                       'CreateClaim', 'CreateProcessW', 'WorkerRequestBytes', 'CreateImportPlan'):
@@ -393,7 +393,9 @@ def test_no_authorization_transport_entrypoint_or_unsafe_release_added():
     assert not re.search(r'\b(?:Main|Dispose|ShellExecute|DeleteFile)\s*\(', text)
     assert '~RequestProvisionGuardian' not in text
     assert 'not authentication' in text and 'permanent authenticated approval MUST precede' in text
-    assert 'cross-process cap' in text and 'same monotonic origin' in text
+    assert 'same monotonic origin' in text
+    assert 'kernel as IGuardianRequestKernel' in text
+    assert 'delivery.BindRequest(new GuardianRequest(process,request,expectedBytes,expectedSha256))' in text
 
 
 def test_source_is_visible_and_not_deployed_or_wired():

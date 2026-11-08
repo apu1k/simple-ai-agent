@@ -1,5 +1,34 @@
 # Fixed C# worker entry and section receiver — uninstalled candidate
 
+## Subsequent parent-section delivery candidate
+
+The [parent publisher and explicit one-handle worker launch](night_shift_native_section_delivery.md)
+is a subsequent candidate **applied and verified OFFLINE, NOT installed or
+exercised natively**. Its **90 new tests** pass, including **86 CLR scenarios**,
+four source guards and compilation of all fifteen actual C# sources together as
+a library. The fresh 39-module related selection passes **2,912 with two skips**,
+warnings as errors. These overlapping counts must not be added to the historical
+receiver-checkpoint counts below.
+
+It stages the complete pinned outer request through the existing request
+guardian, binds the actual process core's clock/stop point after held pre-create
+verification, removes owned section write capability and supplies a candidate
+explicit single-read-handle list together with atomic job assignment. Its applied
+models compose the actual approval/request/held/process bodies with fake native
+backends and the actual worker frame/deadline receiver logic. Neither native
+section APIs nor worker `Main`, a native process or carried Python is run by
+those tests. The component document records the test-only helper tightening and
+legacy source-guard repair; no production source repair was needed.
+
+The receiver and Python adapter remain unchanged. Existing public defaults still
+select the historical no-inheritance launcher, which cannot supply this entry's
+frame; the new adapter requires explicit future trusted same-assembly composition.
+There is still no guardian executable entry, reviewed build/install/starter,
+authenticated pre-load original-window delivery, independent watchdog, protected
+receipts/reconciliation or installed runnable route. Earlier statements below
+about a missing parent publisher describe the preceding receiver checkpoint;
+the subsequent candidate is not an installed or authenticated delivery channel.
+
 ## Status and exact scope
 
 **Applied and verified offline; not installed or exercised natively.** All
