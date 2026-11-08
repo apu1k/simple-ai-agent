@@ -1,5 +1,29 @@
 # Fixed Python launch and worker entry — unwired candidate
 
+## Subsequent C# worker-entry candidate
+
+The [fixed C# worker entry and section receiver](night_shift_native_worker_entry.md)
+is a subsequent candidate **applied and verified OFFLINE, NOT installed or
+exercised natively**. Its **85 new tests** pass, including **81 CLR scenarios**,
+four source guards and compilation of all ten actual C# sources together as a
+library. The fresh 38-module related selection passes **2,822 with two skips**,
+warnings as errors. These overlapping counts must not be added to the historical
+Python-adapter checkpoint counts below.
+
+Its separate source contains a worker `Main`, bounded read-only inherited section
+receiver and composition into the actual import/process lifetime owner. An
+additional post-sampling fault check required one shared clock guard across
+translation, owner construction and reception; the component document records
+the applied repair and three new regressions. Neither `Main` nor a native
+receiver/worker/Python launch was exercised.
+
+It does not change this Python adapter, the outer guardian launcher, carried
+Python or catalogs. The protected parent publisher, explicit one-handle atomic
+launch, approval/deadline binding and reviewed build/install/starter remain
+missing. The unchanged historical outer command cannot supply that entry's
+versioned frame; there is still no installed runnable route. References below to
+no `Main` describe the preceding Python-adapter checkpoint, not this new candidate.
+
 ## Status and scope
 
 **Applied and verified offline; not installed or exercised natively.** All
