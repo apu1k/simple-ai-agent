@@ -52,7 +52,12 @@ namespace AiAgent.ValidatorApproval {
         public ApprovalProvisionGuardian(ApprovalAnchorPlan value)
             : this(value,new WindowsBoundaryFiles(),new WindowsLaunchFiles(),new WindowsGuardianKernel(),new GuardianClock()) { }
         internal ApprovalProvisionGuardian(ApprovalAnchorPlan value,IBoundaryFiles files,ILaunchFiles launchFiles,
-            IGuardianKernel processKernel,IGuardianClock time) {
+            IGuardianKernel processKernel,IGuardianClock time)
+            : this(value,files,launchFiles,processKernel,time,null) { }
+        // Fixed guardian entry only: translated incoming cap in the SAME guarded
+        // clock origin, already earlier than any budget granted by this body.
+        internal ApprovalProvisionGuardian(ApprovalAnchorPlan value,IBoundaryFiles files,ILaunchFiles launchFiles,
+            IGuardianKernel processKernel,IGuardianClock time,double? originalDeadline) {
             Validate(value);
             if (files==null || launchFiles==null || processKernel==null || time==null) throw new ApprovalRefused("plan");
             plan=value; api=files; targets=launchFiles; kernel=processKernel;
@@ -64,7 +69,14 @@ namespace AiAgent.ValidatorApproval {
                 clock=new HandoffClock(time);
                 double now=clock.Seconds; long remaining=plan.ExpiresUnix-clock.Unix;
                 if (remaining<6 || remaining>86400) throw new ApprovalRefused("attempt_window");
-                deadline=now+Math.Min(plan.BudgetSeconds,remaining);
+                double limit=now+Math.Min(plan.BudgetSeconds,remaining);
+                if (originalDeadline.HasValue) {
+                    double bound=originalDeadline.Value;
+                    if (Double.IsNaN(bound) || Double.IsInfinity(bound) || bound<=now)
+                        throw new ApprovalRefused("shared_deadline");
+                    limit=Math.Min(limit,bound);
+                }
+                deadline=limit;
                 if (Double.IsNaN(deadline) || Double.IsInfinity(deadline) ||
                     deadline-ProvisionProcessGuardian.StopReserveSeconds<=now) throw new ApprovalRefused("attempt_window");
             } catch (ApprovalRefused) { throw; }

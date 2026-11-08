@@ -1,5 +1,32 @@
 # Parent request-section publication and fixed worker launch — uninstalled candidate
 
+## Subsequent fixed guardian-entry candidate
+
+The [fixed guardian entry and non-circular build profile](night_shift_native_guardian_entry.md)
+is a subsequent candidate **applied and verified OFFLINE, NOT installed or
+exercised natively**. Its **86 new tests** pass: **59 CLR scenarios plus 27
+Python/profile/source checks**. The sixteen repository C# sources compile with
+one inert generated profile as a library. The fresh 40-module related selection
+passes **2,998 with two skips**, warnings as errors. These overlapping counts
+must not be added to the historical parent-delivery counts below.
+
+Its new guardian `Main` explicitly selects this section adapter; an incoming
+earlier counter cap is translated BEFORE reception and passed through a new
+internal shorten-only approval overload. Both fixed entries share the identical
+read-only section operation after their own host gates. No source or test repair
+was needed after application of the final draft.
+
+The required separately generated build profile contains only fixed approval
+anchor identity/operator/launch-root references, NEVER request/policy hashes:
+those would be circular because the outer request pins the finished executables.
+The host emitter is memory-only, and there is no shipped production profile,
+installer, starter, tool default or installed route. Its applied tests compile
+sixteen repository sources plus one inert generated profile as a library; neither
+`Main` nor native input/section/process/Python operations are invoked. Pre-load
+trust, actual setup/build/install, authenticated delivery and independent watchdog/
+receipts/reconciliation remain required. Earlier statements below about the
+missing guardian entry describe the preceding parent-delivery checkpoint.
+
 ## Status and scope
 
 **Applied and verified offline; not installed or exercised natively.** All

@@ -149,6 +149,13 @@ namespace AiAgent.ValidatorWorker {
         public byte[] Read(WorkerEntryFrame frame) {
             if (used) throw new WorkerEntryRefused("entry_input_one_shot"); used=true;
             if (!host || frame==null) throw new WorkerEntryRefused("entry_input_binding");
+            return ReadSection(frame);
+        }
+        // Shared ONLY by the two fixed host-gated entries in the reviewed
+        // assembly. Canonical frame already bounded; no path/name or public API.
+        // Native read/rights/inheritance/adoption/close policy remains identical.
+        internal static byte[] ReadSection(WorkerEntryFrame frame) {
+            if (frame==null) throw new WorkerEntryRefused("entry_input_binding");
             IntPtr handle=new IntPtr(frame.Handle),view=IntPtr.Zero;
             bool adopted=false;
             try {

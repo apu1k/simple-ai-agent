@@ -16,6 +16,8 @@ from typing import cast
 MAX_REQUEST_BYTES = 32768
 MAX_WORKER_BYTES = 8192
 MAX_REVIEW_BYTES = 65536
+MAX_GUARDIAN_PROFILE_BYTES = 2048
+GUARDIAN_PROFILE_SCOPE = 'reviewed_guardian_build_references_not_authorization'
 OPERATION = 'native_validator_provision_once'
 SCOPE = 'reviewed_installation_inputs_not_authorization'
 WORKER_SCOPE = 'bound_worker_request_not_authorization'
@@ -231,3 +233,47 @@ def bind_validation_install_request(raw: bytes, *, expected_bytes: int, expected
     if len(review) > MAX_REVIEW_BYTES:
         raise InstallRequestRefused('review_bound')
     return BoundInstallRequest(expected_sha256, worker, review)
+
+
+def build_validation_guardian_profile(value: object) -> bytes:
+    """Emit memory-only fixed C# build DATA, never compile/install/approve it.
+
+    Only independent anchor identity/SID/host references are embedded. Request
+    and policy hashes MUST NOT enter this profile: the request pins the binaries
+    built from it, so embedding those hashes would create a circular pin.
+    The future separately trusted build/install/starter must review these bytes
+    and establish pre-load provenance; emitted source is not authorization.
+    """
+    root = _fields(value, ('version', 'scope', 'operator_sid', 'approval_anchor', 'launch_root'))
+    _number(root['version'], 1, 1)
+    if type(root['scope']) is not str or root['scope'] != GUARDIAN_PROFILE_SCOPE:
+        raise InstallRequestRefused('guardian_profile_scope')
+    anchor = _fields(root['approval_anchor'], ('path', 'identity'))
+    approval = _path(anchor['path'])
+    launch = _path(root['launch_root'], 200)
+    volume, index = _identity(anchor['identity'])
+    if (approval.lower() == launch.lower() or approval.lower().startswith(launch.lower() + '\\')
+            or launch.lower().startswith(approval.lower() + '\\')):
+        raise InstallRequestRefused('guardian_profile_overlap')
+    sid = root['operator_sid']
+    if (type(sid) is not str or len(sid) > 80
+            or re.fullmatch(r'S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+', sid) is None):
+        raise InstallRequestRefused('sid')
+    if any(str(int(part)) != part or int(part) > 2**32 - 1 for part in sid.split('-')[4:]):
+        raise InstallRequestRefused('sid')
+    # Path/SID alphabets exclude quotes, line breaks and source delimiters. Never
+    # accept code, source members, commands, plugins, request hashes or options.
+    source = (
+        '// GENERATED REVIEW DATA ONLY; not authorization or pre-load trust.\n'
+        '// Independently review before compilation; never build/load checkout elevated.\n'
+        'namespace AiAgent.ValidatorEntry {\n'
+        '    internal static class ReviewedGuardianProfile {\n'
+        '        internal static GuardianEntryProfile Create() {\n'
+        f'            return new GuardianEntryProfile(@"{approval}",{volume}u,{index}UL,"{sid}",@"{launch}");\n'
+        '        }\n'
+        '    }\n'
+        '}\n'
+    ).encode('ascii')
+    if len(source) > MAX_GUARDIAN_PROFILE_BYTES:
+        raise InstallRequestRefused('guardian_profile_bound')
+    return source
