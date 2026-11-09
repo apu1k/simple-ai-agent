@@ -6,7 +6,13 @@
 **86 new tests** pass: **59 CLR scenarios and 27 Python/profile/source checks**.
 The sixteen repository C# sources compile together with one inert generated
 profile as a library (seventeen compilation inputs). The fresh 40-module related
-selection passes **2,998 with two skips**, warnings as errors.
+selection passes **2,998 with two skips**, warnings as errors. Those are the
+original entry-checkpoint results. The later applied
+[closed build recipe](night_shift_native_build_recipe.md) separately passes
+**65 new tests**, including both fixed executable builds and metadata-only
+inspection with an inert profile; its complete 41-module related selection
+passes **3,063 with two skips** in two disjoint bounded shards. Neither Main is
+invoked, and this is not protected build/load trust or installed execution.
 This adds a fixed C# guardian `Main` and the first explicit entry composition selecting the
 [parent section/worker adapter](night_shift_native_section_delivery.md). It is
 NOT a reviewed compiler/build/install/starter implementation, protected tool,
@@ -137,8 +143,12 @@ self-pin cycle:
    build the two fixed x64 executables unelevated under the reviewed compiler/
    dependency recipe. Both compile the required profile and common sources;
    explicit entry selections are `AiAgent.ValidatorEntry.ValidatorGuardianProgram`
-   and `AiAgent.ValidatorWorker.ValidatorWorkerProgram`. This document is not
-   that compiler recipe and does not execute one or claim binary reproducibility.
+   and `AiAgent.ValidatorWorker.ValidatorWorkerProgram`. The separately applied,
+   offline-verified [closed build recipe](night_shift_native_build_recipe.md) fixes the source,
+   compiler/reference inputs, arguments and explicit entry selections. It is
+   memory-only HOST data, not a trusted builder or full loader-closure review;
+   its disposable executable-compilation tests do not establish protected
+   installation or binary reproducibility.
 3. Independently pin the FINISHED binaries/configurations/runtime/code inputs,
    then construct/review the canonical outer request.
 4. Separately install/review the private one-attempt approval policy binding that
@@ -148,7 +158,7 @@ self-pin cycle:
    delivers the exact request/read capability/metadata to the fixed guardian.
 
 Changing the compiled anchor/SID/root requires a separately reviewed new build
-and fresh binary/request/policy pins. It is not a runtime retry option. No actual
+and fresh binary/request/policy pins. It is not a runtime retry option. No production
 build, setup, installation or approval-channel implementation is supplied here.
 
 ## Fixed incoming frame and approval authority
