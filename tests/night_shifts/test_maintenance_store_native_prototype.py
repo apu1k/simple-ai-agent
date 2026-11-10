@@ -345,16 +345,18 @@ def test_no_secret_payload_parameter_or_production_caller():
     assert m.MARKER.startswith(b'NON-SECRET')
     root = Path(__file__).resolve().parents[2]
     candidates = {root / 'night_shifts' / name: 0 for name in
-                  ('bootstrap_native_media_store.py', 'bootstrap_native_provision.py')}
+                  ('bootstrap_native_media_store.py', 'bootstrap_native_provision.py',
+                   'bootstrap_native_build_windows.py', 'bootstrap_native_build_stage.py')}
     for path in (root / 'night_shifts').rglob('*.py'):
         if path.name == 'maintenance_store_native_prototype.py':
             continue
         tree = ast.parse(path.read_text(encoding='utf-8-sig'))
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
-                # Only these two exact UNWIRED bodies may reuse the native
+                # Only these exact uninstalled candidates may reuse the native
                 # handle/ACL primitives, never marker APIs, star imports or a
-                # different alias. Neither is an installed/production caller.
+                # different alias. Build adapters are explicitly UNELEVATED;
+                # none is an installed/production marker-store caller.
                 if (path in candidates and node.level == 0 and node.module == 'night_shifts'
                         and [(alias.name, alias.asname) for alias in node.names]
                         == [('maintenance_store_native_prototype', 'native')]):

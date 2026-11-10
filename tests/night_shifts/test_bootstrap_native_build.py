@@ -43,7 +43,9 @@ def _candidate(sources=None, tools=None):
     review = {'version': 1, 'scope': build.BUILD_SCOPE, 'windows_root': r'C:\Windows',
               'staging_root': r'C:\Disposable Build', 'guardian_profile': profile,
               'source_pins': _pins({**sources, build.PROFILE_NAME: request.build_validation_guardian_profile(profile)}),
-              'toolchain_pins': _pins(tools)}
+              'toolchain_pins': _pins(tools),
+              'toolchain_aliases': {name: [r'C:\Windows\Microsoft.NET\Framework64\v4.0.30319' + '\\' + name]
+                                    for name in build.TOOLCHAIN_NAMES}}
     return review, sources, tools
 
 
@@ -58,6 +60,8 @@ BAD_REVIEWS = (
     ('extra_option', ('options',), ['/unsafe+']),
     ('extra_entry', ('main',), 'Injected.Main'),
     ('extra_reference', ('references',), ['Injected.dll']),
+    ('extra_process_limit', ('active_process_limit',), 8),
+    ('extra_helper', ('helper_executable',), r'C:\Injected.exe'),
     ('request_hash', ('request_sha256',), 'a' * 64),
     ('policy_hash', ('policy_sha256',), 'a' * 64),
     ('windows_relative', ('windows_root',), 'Windows'),
@@ -81,6 +85,13 @@ BAD_REVIEWS = (
     ('profile_pin_bad', ('source_pins', build.PROFILE_NAME, 'sha256'), 'a' * 64),
     ('toolchain_config', ('toolchain_pins', 'csc.exe.config', 'bytes'), 1),
     ('toolchain_pin', ('toolchain_pins', 'mscorlib.dll', 'sha256'), 'a' * 64),
+    ('aliases_missing', ('toolchain_aliases',), {}),
+    ('aliases_empty', ('toolchain_aliases', 'csc.exe'), []),
+    ('aliases_nonlist', ('toolchain_aliases', 'csc.exe'), ('C:\\Windows\\csc.exe',)),
+    ('aliases_wrong_selected', ('toolchain_aliases', 'csc.exe'), [r'C:\Windows\Other\csc.exe']),
+    ('aliases_outside_os', ('toolchain_aliases', 'csc.exe'), [r'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe', r'C:\Other\csc.exe']),
+    ('aliases_case_alias', ('toolchain_aliases', 'csc.exe'), [r'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe', r'C:\WINDOWS\MICROSOFT.NET\FRAMEWORK64\V4.0.30319\CSC.EXE']),
+    ('aliases_unbounded', ('toolchain_aliases', 'csc.exe'), [r'C:\Windows\csc.exe'] * 9),
 )
 
 
@@ -176,6 +187,10 @@ def test_recipe_selects_only_fixed_entries_references_outputs_and_environment():
         assert not any(arg.startswith('@') or 'Injected' in arg for arg in command)
         assert len(subprocess.list2cmdline(command)) < 8192
     assert len(recipe.toolchain_pins) == len(build.TOOLCHAIN_NAMES)
+    assert build.BUILD_ACTIVE_PROCESS_LIMIT == 2 and build.BUILD_TOTAL_PROCESS_LIMIT == 3
+    assert {'cvtres.exe', 'cvtres.exe.config'} <= set(build.TOOLCHAIN_NAMES)
+    assert len(recipe.toolchain_aliases) == len(build.TOOLCHAIN_NAMES)
+    assert all(paths == (selected,) for selected, paths in recipe.toolchain_aliases)
     xml = ElementTree.fromstring(build.MANIFEST_BYTES)
     requested = xml.find('.//{urn:schemas-microsoft-com:asm.v3}requestedExecutionLevel')
     assert requested is not None and requested.attrib == {'level': 'asInvoker', 'uiAccess': 'false'}

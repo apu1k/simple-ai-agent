@@ -35,7 +35,12 @@ SOURCE_NAMES = (
 PROFILE_NAME = 'ReviewedGuardianProfile.g.cs'
 MANIFEST_NAME = 'validator.manifest'
 REFERENCE_NAMES = ('mscorlib.dll', 'System.dll', 'System.Core.dll', 'System.Xml.dll', 'System.Runtime.Serialization.dll')
-TOOLCHAIN_NAMES = ('csc.exe', 'csc.exe.config', *REFERENCE_NAMES)
+TOOLCHAIN_NAMES = ('csc.exe', 'csc.exe.config', 'cvtres.exe', 'cvtres.exe.config', *REFERENCE_NAMES)
+# Fixed BUILD-only profile, never caller-selected and unrelated to worker caps.
+# This Framework profile permits the root plus two resource-converter creations.
+# Accounting may still include an exiting helper; it is not the limit counter.
+BUILD_ACTIVE_PROCESS_LIMIT = 2  # set/read back natively; NOT raised for accounting
+BUILD_TOTAL_PROCESS_LIMIT = 3  # root + two helper invocations; observed cooperatively
 ENTRY_POINTS = (
     ('validator-install-guardian.exe', 'AiAgent.ValidatorEntry.ValidatorGuardianProgram'),
     ('validator-provision-worker.exe', 'AiAgent.ValidatorWorker.ValidatorWorkerProgram'),
@@ -73,6 +78,9 @@ class ValidatorBuildRecipe:
     expected_outputs: tuple[str, ...]
     # Reviewed byte pins to REACQUIRE through trusted native handles later.
     toolchain_pins: tuple[tuple[str, int, str], ...]
+    # Independent COMPLETE alias inventories for the selected OS tool files.
+    # They select verification targets only, never additional code to execute.
+    toolchain_aliases: tuple[tuple[str, tuple[str, ...]], ...]
 
 
 def _fields(value: object, names: tuple[str, ...]) -> dict[str, object]:
@@ -109,11 +117,30 @@ def _overlap(a: str, b: str) -> bool:
     return a == b or a.startswith(b + '\\') or b.startswith(a + '\\')
 
 
+def _aliases(value: object, windows: str, framework: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    inventory = _fields(value, TOOLCHAIN_NAMES)
+    result = []
+    for name in TOOLCHAIN_NAMES:
+        paths = inventory[name]
+        if type(paths) is not list or not 1 <= len(paths) <= 8:
+            raise ValidatorBuildRefused('build_tool_aliases')
+        copied = tuple(_path(path, 240) for path in paths)
+        lowered = tuple(path.lower() for path in copied)
+        selected = framework + '\\' + name
+        if (len(set(lowered)) != len(lowered) or selected.lower() not in lowered
+                or any(not path.startswith(windows.lower() + '\\') for path in lowered)):
+            raise ValidatorBuildRefused('build_tool_aliases')
+        result.append((selected, tuple(sorted(copied, key=str.lower))))
+    return tuple(result)
+
+
 def plan_validation_build(value: object, *, source_files: object, toolchain_files: object) -> ValidatorBuildRecipe:
     """Bind reviewed byte snapshots and emit ONLY the two fixed compiler argv.
 
     The closed review contains version/scope, Windows/staging paths, fixed
-    guardian-profile data, and independent source/toolchain pin maps. The source
+    guardian-profile data, independent source/toolchain pins and complete reviewed
+    tool-alias maps. Aliases are held verification paths, NOT executable selectors.
+    Unreviewed multi-link OS inputs still refuse. The source
     map includes the generated profile's independent pin; caller source bytes
     contain only the sixteen fixed repository members. No commands, reference
     selection, response files, request/policy hashes or build options accepted.
@@ -121,12 +148,13 @@ def plan_validation_build(value: object, *, source_files: object, toolchain_file
     native identities, loader security, freshness, environment and child absence.
     """
     root = _fields(value, ('version', 'scope', 'windows_root', 'staging_root',
-                           'guardian_profile', 'source_pins', 'toolchain_pins'))
+                           'guardian_profile', 'source_pins', 'toolchain_pins', 'toolchain_aliases'))
     if type(root['version']) is not int or root['version'] != 1 or root['scope'] != BUILD_SCOPE:
         raise ValidatorBuildRefused('build_scope')
     windows = _path(root['windows_root'], 64)
     stage = _path(root['staging_root'], 100)
     framework = windows + '\\Microsoft.NET\\Framework64\\v4.0.30319'
+    aliases = _aliases(root['toolchain_aliases'], windows, framework)
     try:
         generated = request.build_validation_guardian_profile(root['guardian_profile'])
     except request.InstallRequestRefused:
@@ -159,5 +187,5 @@ def plan_validation_build(value: object, *, source_files: object, toolchain_file
     return ValidatorBuildRecipe(
         staging_files=(*staged, (MANIFEST_NAME, MANIFEST_BYTES), *configs),
         commands=commands, working_directory=stage, directories=('out', 'temp'),
-        environment=environment, expected_outputs=outputs, toolchain_pins=pins,
+        environment=environment, expected_outputs=outputs, toolchain_pins=pins, toolchain_aliases=aliases,
     )

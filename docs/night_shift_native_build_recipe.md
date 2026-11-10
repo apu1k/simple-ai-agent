@@ -2,6 +2,10 @@
 
 ## Status and scope
 
+The figures below record the earlier recipe-only checkpoint. The current
+combined native-build transaction and its repair evidence are recorded in
+[the build-transaction checkpoint](night_shift_native_build_owner.md).
+
 **Applied and verified with unelevated compiler/metadata tests; not installed
 or executed as a protected operation.** All **65 new tests** pass without skips.
 Both fixed executables compile from the actual sixteen repository C# sources
@@ -46,8 +50,18 @@ only in-memory data. Its review dictionary has exactly:
 - `source_pins`: independent complete byte count/SHA-256 pairs for exactly the
   sixteen fixed repository C# sources plus `ReviewedGuardianProfile.g.cs`.
 - `toolchain_pins`: independent complete byte count/SHA-256 pairs for exactly
-  `csc.exe`, `csc.exe.config`, `mscorlib.dll`, `System.dll`, `System.Core.dll`,
-  `System.Xml.dll` and `System.Runtime.Serialization.dll`.
+  `csc.exe`, `csc.exe.config`, `cvtres.exe`, `cvtres.exe.config`, `mscorlib.dll`,
+  `System.dll`, `System.Core.dll`, `System.Xml.dll` and
+  `System.Runtime.Serialization.dll`.
+- `toolchain_aliases`: independently reviewed COMPLETE alias inventories for
+  exactly those nine fixed members. Each is a list of 1–8 bounded canonical
+  local paths below the reviewed Windows root, including the fixed selected
+  path, without duplicates/case aliases. These select held verification targets,
+  NOT commands, extra references, plugins or code to execute. The native candidate
+  must enumerate and hold/reverify every alias, native identity, count and byte
+  pin; unreviewed multi-link inputs refuse. Stage files/directories retain their
+  single-link rule. This is a mandatory HOST review-profile extension; it does
+  not change the outer installation request or carried runtime schema.
 
 The caller's source byte map contains exactly the sixteen repository members.
 The profile is generated internally from the existing fixed-reference emitter;
@@ -127,7 +141,7 @@ eliminate compiler timestamps, MVID variation or host dependencies.
 
 ## Compiler inputs are NOT the full pre-load trust closure
 
-The seven selected toolchain members are an explicit byte-input set, NOT a claim
+The nine selected toolchain members are an explicit byte-input set, NOT a claim
 that these are every file the compiler or CLR can load. `/noconfig` suppresses
 `csc.rsp`, NOT `csc.exe.config`, machine configuration or CLR loader policy.
 `/nostdlib+` suppresses implicit reference selection, NOT trusted OS/native DLL
@@ -143,6 +157,18 @@ exclude every .NET probing, GAC, publisher or machine-policy influence. No
 in-process hash check can retrospectively authenticate an already loaded
 compiler, assembly, CLR or DLL. These conditions must not be inferred from the
 pure data review or compilation tests.
+
+The build-only native candidate explicitly pins/holds the Framework resource
+helper `cvtres.exe` and its config as well as the compiler and references. It
+sets and reads back a fixed native active-process limit of **two** per compiler
+job and separately bounds cumulative accounting by **three** (root plus two
+helper creations). Basic job accounting was observed at three active entries
+with the native limit still set to two; the accounting observation bound must
+not be confused with the kernel's enforcement counter. The hard limit is NOT
+raised to accommodate that observation. Neither limit identifies helper images
+or provides an executable allowlist; compiler/helper/platform load trust remains
+a prerequisite. This profile is fixed, not caller-selectable, and does not alter
+runtime-worker limits.
 
 A future separately reviewed builder must hold/reverify the actual input paths
 and native identities, bound its own compiler process lifetime, reject occupied
@@ -223,6 +249,16 @@ Main nor native receiver/park path was invoked. No elevation, protected claim,
 installation, provisioning, VM operation, Gate A run or commit occurred.
 
 ## Remaining route
+
+The [combined build-transaction checkpoint](night_shift_native_build_owner.md)
+connects the lifetime core, held native staging, atomic compiler jobs and data-only
+artifact inspection into one explicit UNELEVATED candidate. Its single record
+covers the applied native results, the accounting/source-guard repair and
+in-memory validation of that proposed repair. Full applied regression verification
+is required before committing the combined batch; a focused pass alone is not
+that result. The candidate has no protected installation/tool route or fallback
+and does not establish compiler/build-runtime load trust or independent artifact
+review. There is no separate documentation-only commit milestone.
 
 Next: independently reviewed compiler/OS/CLR/load closure and actual profile
 setup; separately protected builder/installer/starter; authenticated one-shot
