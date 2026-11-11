@@ -118,19 +118,24 @@ def test_tool_failure_is_not_refunded_or_leaked(gate, monkeypatch, failure):
         return {'status': 'uac_cancelled', 'launch_authorized': False}
     monkeypatch.setattr(tool_module, 'collect_installed_evidence', collect)
     from pathlib import Path
-    monkeypatch.setattr(tool_module, 'load_policy', lambda: (Path('fixed'), Path('powershell.exe'), {}))
+    monkeypatch.setattr(tool_module, 'load_policy', lambda: (Path('fixed'), Path('powershell.exe'), {'max_execution_seconds': 900}))
     state = SimpleNamespace(privileged_turn=permit)
     assert tool_module.collect_privileged_host_evidence(state).startswith('Error:')
     permit.arm()
+    approved = []
     def approve_notice(message):
         if message.startswith('[privileged-approval] '):
-            permit.decide(message.removeprefix('[privileged-approval] '), accept=True)
+            identity = message.removeprefix('[privileged-approval] ')
+            import json
+            assert json.loads(permit.pending()[identity].review_json)['max_execution_seconds'] == 900
+            approved.append(identity)
+            permit.decide(identity, accept=True)
     with permit.turn('head'), approval_ui_context(), tool_progress_listener(approve_notice):
         result = tool_module.collect_privileged_host_evidence(state)
         assert 'PRIVATE_CANARY' not in result
         assert 'false' in result
         assert tool_module.collect_privileged_host_evidence(state).startswith('Error:')
-    assert len(calls) == 1
+    assert len(calls) == len(approved) == 1
     assert permit.status == 'disabled'
     with pytest.raises(TypeError):
         tool_module.collect_privileged_host_evidence(state, command='Remove-VM')

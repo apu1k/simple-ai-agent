@@ -75,6 +75,10 @@ namespace AiAgent.ValidatorSetup {
             return Encoding.ASCII.GetBytes("{\"host_bytes\":"+HostBytes.ToString(CultureInfo.InvariantCulture)+",\"host_sha256\":\""+HostSha256+
                 "\",\"profile_sha256\":\""+Host.Digest+"\",\"scope\":\"protected_setup_operation_approval_once\",\"version\":1}\n");
         }
+        internal byte[] OuterClaim() {
+            return Encoding.ASCII.GetBytes("{\"policy_sha256\":\""+InstallBoundary.Sha(Policy())+"\",\"profile_sha256\":\""+Host.Digest+
+                "\",\"scope\":\"setup_outer_attempt_consumed_not_acceptance\",\"version\":1}\n");
+        }
         internal byte[] Claim() {
             return Encoding.ASCII.GetBytes("{\"policy_sha256\":\""+InstallBoundary.Sha(Policy())+"\",\"profile_sha256\":\""+Host.Digest+
                 "\",\"scope\":\"setup_host_attempt_consumed_not_acceptance\",\"version\":1}\n");
@@ -108,7 +112,7 @@ namespace AiAgent.ValidatorSetup {
         internal readonly long Limit,Frequency;
         internal readonly SetupSupervisorProfile Profile;
         SetupHostFrame(long limit,long rate,SetupSupervisorProfile profile) { Limit=limit; Frequency=rate; Profile=profile; }
-        static long N(string s,long max) {
+        internal static long N(string s,long max) {
             long n;
             if (s==null || s.Length>19 || !Int64.TryParse(s,System.Globalization.NumberStyles.None,CultureInfo.InvariantCulture,out n) ||
                 n<1 || n>max || n.ToString(CultureInfo.InvariantCulture)!=s) throw new SetupRefused("host_frame"); return n;
@@ -124,11 +128,14 @@ namespace AiAgent.ValidatorSetup {
                 " "+f.Frequency.ToString(CultureInfo.InvariantCulture)+" "+p.HostBytes.ToString(CultureInfo.InvariantCulture)+" "+p.HostSha256;
         }
         internal double Translate(SetupClock clock,ISectionCounter counter) {
+            return TranslateWindow(Profile.Host,Limit,Frequency,clock,counter);
+        }
+        internal static double TranslateWindow(SetupHostProfile profile,long limit,long frequency,SetupClock clock,ISectionCounter counter) {
             double first=clock.Seconds; long rate=counter.Frequency(),start=counter.Read(),end=counter.Read(),again=counter.Frequency();
             double last=clock.Seconds; long wall=clock.Unix;
-            if (rate<1 || rate!=Frequency || again!=rate || start<1 || end<start || end-start>rate/4 || last-first>0.25 || Limit<=end || wall>=Profile.Host.ExpiresUnix)
+            if (rate<1 || rate!=frequency || again!=rate || start<1 || end<start || end-start>rate/4 || last-first>0.25 || limit<=end || wall>=profile.ExpiresUnix)
                 throw new SetupRefused("host_counter");
-            decimal remaining=Math.Min((decimal)(Limit-end)/rate,(decimal)Profile.Host.ExpiresUnix-wall);
+            decimal remaining=Math.Min((decimal)(limit-end)/rate,(decimal)profile.ExpiresUnix-wall);
             double cap=first+(double)remaining-0.001001;
             if (remaining<=0 || remaining>300 || Double.IsNaN(cap) || Double.IsInfinity(cap) || cap<=last) throw new SetupRefused("host_counter"); return cap;
         }

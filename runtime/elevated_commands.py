@@ -108,12 +108,17 @@ def validate_receipt(receipt: dict[str, Any], claim: PrivilegedClaim, digest: st
 
 
 def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: str,
-                        timeout: int, reason: str, cwd: str) -> dict[str, Any]:
+                        timeout: int, reason: str, cwd: str, *,
+                        required_helper_sha256: str | None = None) -> dict[str, Any]:
     if os.name != 'nt' or claim.operation != 'elevated_commands':
         raise PrivilegedHostError('Windows elevated-command grant required')
     validate_script(script, timeout, reason)
     local_path(cwd, directory=True)
     root, powershell, policy = load_launcher()
+    # Optional independent caller pin only NARROWS the installed authority.
+    # Fixed handoffs must refuse an older/different helper BEFORE pending/UAC.
+    if required_helper_sha256 is not None and policy['helper_sha256'] != required_helper_sha256:
+        raise PrivilegedHostError('Independently reviewed command helper required')
     # Retained 60-second installations stay usable but never inherit wider authority.
     if timeout > policy['max_timeout']:
         raise PrivilegedHostError('Requested timeout exceeds installed launcher policy; reviewed deployment required')

@@ -136,11 +136,23 @@ function Write-Receipt([string]$Name,[object]$Value) {
     if ($data.Length -gt 65536) { throw 'Oversized receipt' }
     Write-New $Name $data
 }
+# Capture the ORIGINAL execution window BEFORE claims, snapshots or compilation.
+# This protected monotonic record may only shorten the later native worker wait.
+$qpcFrequency = [Diagnostics.Stopwatch]::Frequency
+$qpcFirst = [Diagnostics.Stopwatch]::GetTimestamp()
+$qpcWall = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+$executionSeconds = [Math]::Min([int]$request.timeout, ($DeadlineUnix - $qpcWall / 1000.0))
+if ($qpcFrequency -lt 1 -or $qpcFrequency -gt 1000000000 -or $qpcFirst -lt 1 -or $executionSeconds -le 0) {
+    throw 'Original execution window unavailable'
+}
+$qpcLimit = [long]([decimal]$qpcFirst + [Math]::Floor([decimal]$executionSeconds * $qpcFrequency))
+if ($qpcLimit -le $qpcFirst) { throw 'Original execution window expired' }
 # Atomic request claim and durable exact approved bytes BEFORE executing anything.
 Write-Receipt ($RequestId + '.start.json') @{
     version=1; request_id=$RequestId; operation='elevated_commands'; status='started';
     request_sha256=$digest; helper_sha256=$helperHash; operator_sid=$identity.User.Value;
-    started_at_utc=[DateTime]::UtcNow.ToString('o'); timeout=$request.timeout; deadline_unix=$DeadlineUnix
+    started_at_utc=[DateTime]::UtcNow.ToString('o'); timeout=$request.timeout; deadline_unix=$DeadlineUnix;
+    execution_qpc_limit=$qpcLimit; execution_qpc_frequency=$qpcFrequency
 }
 Write-New ($RequestId + '.approved.json') $bytes
 $scriptPath = [IO.Path]::Combine($receipts,($RequestId + '.payload.ps1'))
@@ -214,6 +226,23 @@ public static class CommandWatchdog {
         });
     }
     public static Answer Run(string exe,string args,string cwd,uint ms) {
+        return RunCore(exe,args,cwd,ms,0,0); // historical ordinary characterization API
+    }
+    static uint Remaining(uint maximum,long limit,long frequency) {
+        if (limit==0 && frequency==0) return maximum; // inaccessible through RunWithin
+        if (limit<1 || frequency<1 || frequency>1000000000L || frequency!=System.Diagnostics.Stopwatch.Frequency)
+            throw new ArgumentOutOfRangeException("originalWindow");
+        long now=System.Diagnostics.Stopwatch.GetTimestamp();
+        if (now<1 || limit<=now) return 0;
+        decimal ms=Decimal.Floor(((decimal)limit-now)*1000/frequency);
+        if (ms>900000) throw new ArgumentOutOfRangeException("originalWindow");
+        return (uint)Math.Min(maximum,ms);
+    }
+    public static Answer RunWithin(string exe,string args,string cwd,uint ms,long limit,long frequency) {
+        if (limit<1 || frequency<1) throw new ArgumentOutOfRangeException("originalWindow");
+        return RunCore(exe,args,cwd,ms,limit,frequency);
+    }
+    static Answer RunCore(string exe,string args,string cwd,uint ms,long limit,long frequency) {
         // Native boundary: callers cannot exceed the reviewed 15-minute cap.
         if (ms == 0 || ms > 900000) throw new ArgumentOutOfRangeException("ms");
         IntPtr job=IntPtr.Zero,or=IntPtr.Zero,ow=IntPtr.Zero,er=IntPtr.Zero,ew=IntPtr.Zero,input=IntPtr.Zero;
@@ -229,13 +258,16 @@ public static class CommandWatchdog {
             input=CreateFile("NUL",0x80000000,3,ref sa,3,0,IntPtr.Zero);
             if (input==new IntPtr(-1)) { input=IntPtr.Zero; throw new Exception("Cannot disable input"); }
             Startup s=new Startup(); s.Size=(uint)Marshal.SizeOf(s); s.Flags=0x100; s.In=input; s.Out=ow; s.Error=ew;
+            if (Remaining(ms,limit,frequency)==0) throw new Exception("Original window expired before creation");
             if (!CreateProcess(exe,new StringBuilder("\""+exe+"\" "+args),IntPtr.Zero,IntPtr.Zero,true,0x08000004,IntPtr.Zero,cwd,ref s,out p))
                 throw new Exception("Cannot create suspended command");
             CloseHandle(ow); ow=IntPtr.Zero; CloseHandle(ew); ew=IntPtr.Zero;
             stdout=Drain(or); or=IntPtr.Zero; stderr=Drain(er); er=IntPtr.Zero;
             if (!AssignProcessToJobObject(job,p.Process)) { TerminateProcess(p.Process,2); throw new Exception("Cannot assign watchdog"); }
+            if (Remaining(ms,limit,frequency)==0) throw new Exception("Original window expired before resume");
             if (ResumeThread(p.Thread)==0xffffffff) throw new Exception("Cannot resume command");
-            uint wait=WaitForSingleObject(p.Process,ms); bool timeout=wait==258; uint code=0;
+            uint wait=WaitForSingleObject(p.Process,Remaining(ms,limit,frequency));
+            bool timeout=wait==258 || (wait==0 && limit!=0 && Remaining(ms,limit,frequency)==0); uint code=0;
             if (timeout) {
                 if (!TerminateJobObject(job,124) || WaitForSingleObject(p.Process,5000)!=0) throw new Exception("Termination unknown");
                 code=124;
@@ -259,8 +291,8 @@ public static class CommandWatchdog {
     $ms = [uint32]([Math]::Min($remaining,[Math]::Min([int]$request.timeout,900)) * 1000)
     # Mark launch uncertainty before the native call; only a returned answer proves completion.
     $result.executed = $null
-    $answer = [CommandWatchdog]::Run($exe,
-        (Command-Arguments $scriptPath),$request.cwd,$ms)
+    $answer = [CommandWatchdog]::RunWithin($exe,
+        (Command-Arguments $scriptPath),$request.cwd,$ms,$qpcLimit,$qpcFrequency)
     $result.executed = $true
     $result.exit_code = $answer.Code; $result.stdout = $answer.Stdout; $result.stderr = $answer.Stderr
     $result.output_truncated = $answer.Truncated

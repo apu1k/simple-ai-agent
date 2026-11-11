@@ -136,7 +136,7 @@ namespace AiAgent.ValidatorSetup {
         static int Main(string[] args) {
             var p=ReviewedSetupSupervisor.Create(); var role=new FixtureRole();
             var entry=new SetupSupervisorEntry(p,new GuardianClock(),role,new DiskFactory(),new ObservedKernel(p,role));
-            int code=entry.Run(args);
+            int code=args.Length==0?entry.Run(args):entry.RunDelivered(args,new SetupCounter());
             if (entry.MustParkForSupervisor) for (;;) { Thread.Sleep(1000); GC.KeepAlive(entry); }
             return code;
         }
@@ -156,7 +156,7 @@ def _compile(folder, paths, output, entry):
     Path(str(output) + '.config').write_bytes(request._CONFIG)
 
 
-@pytest.mark.parametrize('mode', ['normal', 'deadline', 'owner_death'])
+@pytest.mark.parametrize('mode', ['normal', 'deadline', 'owner_death', 'incoming_deadline'])
 def test_native_setup_job_window_termination_and_exact_child_handle(mode):
     if os.name != 'nt':
         pytest.skip('requires ordinary x64 Windows job/QPC characterization')
@@ -169,7 +169,7 @@ def test_native_setup_job_window_termination_and_exact_child_handle(mode):
     p = profile()
     p['operator_sid'] = sid
     p['expires_unix'] = int(time.time()) + 600
-    p['budget_seconds'] = 8
+    p['budget_seconds'] = 20 if mode == 'incoming_deadline' else 8
     p['host_anchor']['path'] = str(folder)
     paths = []
     for name in setup_build.WATCHDOG_SOURCES:
@@ -204,7 +204,17 @@ def test_native_setup_job_window_termination_and_exact_child_handle(mode):
     k.CloseHandle.argtypes = [c.c_void_p]
     k.CloseHandle.restype = c.c_int
     child_handle = None
-    proc = subprocess.Popen([str(watchdog)], cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    argv = [str(watchdog)]
+    if mode == 'incoming_deadline':
+        k.QueryPerformanceCounter.argtypes = [c.POINTER(c.c_int64)]
+        k.QueryPerformanceCounter.restype = c.c_int
+        k.QueryPerformanceFrequency.argtypes = [c.POINTER(c.c_int64)]
+        k.QueryPerformanceFrequency.restype = c.c_int
+        counter, frequency = c.c_int64(), c.c_int64()
+        assert k.QueryPerformanceFrequency(c.byref(frequency)) and k.QueryPerformanceCounter(c.byref(counter))
+        argv += ['--setup-supervise-qpc-v1', str(counter.value + 8 * frequency.value), str(frequency.value)]
+    began = time.monotonic()
+    proc = subprocess.Popen(argv, cwd=folder, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         limit = time.monotonic() + 7
         while not ((folder / 'resumed.marker').exists() and (folder / 'child-handle.txt').exists()):
@@ -224,6 +234,8 @@ def test_native_setup_job_window_termination_and_exact_child_handle(mode):
             assert receipt['empty_job_observed'] is True and receipt['result_valid'] == (mode == 'normal')
             assert receipt['end'] == ('RootExited' if mode == 'normal' else 'DeadlineStopped')
             assert proc.returncode == (0 if mode == 'normal' else 124)
+            if mode == 'incoming_deadline':
+                assert time.monotonic() - began < 10, 'Incoming original cap renewed to profile budget'
         else:
             assert not (folder / 'supervisor-receipt.json').exists()
     finally:

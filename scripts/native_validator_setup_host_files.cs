@@ -12,7 +12,7 @@ namespace AiAgent.ValidatorSetup {
         }
     }
     internal sealed class WindowsSetupAttemptFiles : ISetupAttemptFiles {
-        const string ClaimName="install-attempt.claim",ResultName="operation-result.bin",ReceiptName="supervisor-receipt.json";
+        const string ClaimName="install-attempt.claim",OuterClaimName="outer-attempt.claim",ResultName="operation-result.bin",ReceiptName="supervisor-receipt.json";
         readonly SetupSupervisorProfile profile;
         readonly SetupClock clock;
         readonly double cap;
@@ -98,10 +98,15 @@ namespace AiAgent.ValidatorSetup {
                 SetupHostProfile.WatchdogExe+".config","policy.json","claims","receipts","scratch"});
             if (profile.Host.Operation=="publish") names.Add("setup.packet"); Names(root,names.ToArray()); Names(receipts); Names(scratch);
             Input("policy.json",1024,-1,null,profile.Policy()); // AUTHENTIC private policy BEFORE claim/load
+            // Permanent pre-load claim comes from the independently approved
+            // outer snapshot. It is NEVER synthesized by the loaded watchdog.
+            if (supervisor) Names(claims,OuterClaimName); else Names(claims,OuterClaimName,ClaimName);
+            Held outer=Open(claims,OuterClaimName,false,false); tree.Add("claims/"+OuterClaimName,outer);
+            exact.Add("claims/"+OuterClaimName,Read(outer,1024,profile.OuterClaim()));
             if (supervisor) {
-                Names(claims); WriteNew(claims,"claims/"+ClaimName,ClaimName,profile.Claim());
+                WriteNew(claims,"claims/"+ClaimName,ClaimName,profile.Claim());
             } else {
-                Names(claims,ClaimName); Held h=Open(claims,ClaimName,false,false); tree.Add("claims/"+ClaimName,h);
+                Held h=Open(claims,ClaimName,false,false); tree.Add("claims/"+ClaimName,h);
                 exact.Add("claims/"+ClaimName,Read(h,1024,profile.Claim()));
             }
             Input(SetupHostProfile.HostExe,16*1024*1024,profile.HostBytes,profile.HostSha256,null);
@@ -117,7 +122,7 @@ namespace AiAgent.ValidatorSetup {
             if (!used || closed) throw new SetupRefused("attempt_terminal");
             foreach (Held h in all) Match(h);
             foreach (KeyValuePair<string,byte[]> p in exact) Read(tree[p.Key],p.Value.Length,p.Value);
-            Names(claims,ClaimName); Names(scratch);
+            Names(claims,OuterClaimName,ClaimName); Names(scratch);
             var names=new List<string>(); if (resultPresent) names.Add(ResultName); if (receiptPresent) names.Add(ReceiptName); Names(receipts,names.ToArray());
             var rootNames=new List<string>(new string[] {SetupHostProfile.HostExe,SetupHostProfile.HostExe+".config",SetupHostProfile.WatchdogExe,
                 SetupHostProfile.WatchdogExe+".config","policy.json","claims","receipts","scratch"});

@@ -7,6 +7,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using AiAgent.NativeValidator;
+using AiAgent.ValidatorDelivery;
 using AiAgent.ValidatorGuardian;
 namespace AiAgent.ValidatorSetup {
     internal interface ISetupSupervisorFilesFactory {
@@ -41,12 +42,27 @@ namespace AiAgent.ValidatorSetup {
                 ",\"result_valid\":"+(valid?"true":"false")+",\"scope\":\"local_setup_process_observations_not_acceptance\",\"version\":1}\n";
             return Encoding.ASCII.GetBytes(text);
         }
-        internal int Run(string[] args) {
+        // Historical internal model seam. Production Main MUST use RunDelivered.
+        internal int Run(string[] args) { return RunCore(args,null); }
+        internal int RunDelivered(string[] args,ISectionCounter counter) {
+            if (counter==null) return 126;
+            return RunCore(args,counter);
+        }
+        int RunCore(string[] args,ISectionCounter counter) {
             lock (sync) {
                 if (used) return 126; used=true; bool entered=false,returned=false; int code=125; double cap=0;
                 try {
-                    if (args==null || args.Length!=0) throw new SetupRefused("supervisor_frame");
-                    cap=clock.Start(profile.Host); role.Require(profile.Host,true); clock.Require(cap,profile.Host.ExpiresUnix);
+                    cap=clock.Start(profile.Host);
+                    if (counter==null) {
+                        if (args==null || args.Length!=0) throw new SetupRefused("supervisor_frame");
+                    } else {
+                        if (args==null || args.Length!=3) throw new SetupRefused("supervisor_frame");
+                        string[] frame=(string[])args.Clone();
+                        if (frame[0]!="--setup-supervise-qpc-v1") throw new SetupRefused("supervisor_frame");
+                        long limit=SetupHostFrame.N(frame[1],Int64.MaxValue),rate=SetupHostFrame.N(frame[2],1000000000L);
+                        cap=Math.Min(cap,SetupHostFrame.TranslateWindow(profile.Host,limit,rate,clock,counter));
+                    }
+                    role.Require(profile.Host,true); clock.Require(cap,profile.Host.ExpiresUnix);
                     files=factory.Create(profile,clock,cap); files.Acquire(); clock.Require(cap,profile.Host.ExpiresUnix);
                     var plan=new GuardianPlan(profile.Host.Location.Root,profile.Host.Parent.OperatorSid,profile.Host.AttemptId,
                         InstallBoundary.Sha(profile.Policy()),profile.Host.ExpiresUnix,profile.Host.Seconds);
@@ -80,7 +96,7 @@ namespace AiAgent.ValidatorSetup {
                 entry=new SetupSupervisorEntry(p,new GuardianClock(),role,new WindowsSupervisorFilesFactory(),
                     new WindowsSetupSupervisorKernel(p,role,new SetupCounter()));
             } catch { return 125; }
-            int code=entry.Run(args);
+            int code=entry.RunDelivered(args,new SetupCounter());
             if (entry.MustParkForSupervisor) for (;;) { Sleep(UInt32.MaxValue); GC.KeepAlive(entry); }
             return code;
         }

@@ -21,7 +21,8 @@ SCENARIOS = ('prepare', 'publish', 'binding', 'window_hook', 'deadline', 'missin
     'resume_fault', 'wait_fault', 'stop_fault', 'kernel_close_fault', 'receipt_fault', 'file_close_fault',
     'cap_nan', 'cap_infinite', 'cap_equal', 'cap_past', 'native_role_refusal',
     'accounting_empty', 'accounting_root', 'accounting_total_two', 'accounting_active_two',
-    'accounting_total_overflow', 'accounting_active_overflow')
+    'accounting_total_overflow', 'accounting_active_overflow', 'delivered', 'delivered_admission_cost',
+    'delivered_expired', 'delivered_frequency', 'delivered_frame', 'delivered_excess', 'outer_claim')
 HARNESS = r'''
 using System;
 using System.Collections.Generic;
@@ -138,6 +139,26 @@ namespace AiAgent.ValidatorSetup {
             s.Profile=new SetupSupervisorProfile(p,123,new string('a',64)); s.Packet=packet;
             var qpc=new ModelCounter(s.Time); var factory=new ModelFilesFactory(s); var role=new ModelRole(s);
             if (name=="binding") { Check(p.Digest==expectedDigest); SetupResult.Parse(p,SetupResult.Encode(p,s.Refs())); return; }
+            if (name=="outer_claim") {
+                string claim=Encoding.ASCII.GetString(s.Profile.OuterClaim());
+                Check(claim=="{\"policy_sha256\":\""+InstallBoundary.Sha(s.Profile.Policy())+"\",\"profile_sha256\":\""+p.Digest+
+                    "\",\"scope\":\"setup_outer_attempt_consumed_not_acceptance\",\"version\":1}\n"); return;
+            }
+            if (name.StartsWith("delivered",StringComparison.Ordinal)) {
+                string[] args={"--setup-supervise-qpc-v1","110000","1000"};
+                bool bad=name!="delivered" && name!="delivered_admission_cost";
+                if (name=="delivered_expired") args[1]="99000";
+                if (name=="delivered_frequency") args[2]="999";
+                if (name=="delivered_frame") args[0]="--injected";
+                if (name=="delivered_excess") args[1]="999999999";
+                if (name=="delivered_admission_cost") s.Hook=delegate(string e) { if (e=="acquire") s.Time.Time+=2; };
+                var deliveredKernel=new ModelKernel(s,qpc);
+                var delivered=new SetupSupervisorEntry(s.Profile,s.Time,role,factory,deliveredKernel);
+                Check(delivered.RunDelivered(args,qpc)==(bad?126:0) && !delivered.MustParkForSupervisor);
+                if (bad) Check(s.Files.Count==0 && deliveredKernel.Creates==0);
+                else Check(deliveredKernel.Window.Deadline<105 && deliveredKernel.Window.Deadline>104.9 && s.HostCap<1105);
+                int count=s.Events.Count; Check(delivered.RunDelivered(args,qpc)==126 && s.Events.Count==count); return;
+            }
             if (name.StartsWith("accounting_",StringComparison.Ordinal)) {
                 uint total=name=="accounting_empty"?0u:(name=="accounting_root" || name=="accounting_active_overflow"?1u:
                     (name=="accounting_total_overflow"?3u:2u));

@@ -142,7 +142,131 @@ controller closes are required before removing that exact random tree. The fixtu
 have inert setup bodies: no real protected approval, installation, provisioning,
 Hyper-V, disk mounting or VM operation. No security default/test bypass is shipped.
 
-### Validation at repair review
+## Fixed outer handoff checkpoint — proposed, not installed
+
+This batch REUSES the separately installed general command channel rather than
+adding another elevation tool or reusable grant. `runtime/native_setup_launch.py`
+is an explicit internal API, NOT a registered model tool. It accepts an existing
+head-turn command claim and independently reviewed profile, finished host/watchdog
+pins, complete handoff-template pin and original-window-capable helper pin. The
+existing pending screen reviews the ENTIRE frozen script/data; separate protected
+helper/deployment review and UAC remain mandatory. No checkout script path is
+invoked by the elevated process and no compiler runs in the handoff snapshot.
+
+The command helper records QPC frequency/absolute cap BEFORE its permanent request
+claim, approved snapshot and compiler setup. Its production native call is bounded
+by that same earlier cap before creation, before resume and at wait. Preparation
+cost is not renewed. Source application does not update any installed helper or
+its policy/hash; the fixed API requires its independent helper pin BEFORE pending
+or UAC, so a retained older deployment cannot silently acquire this route.
+
+The independently pinned handoff template verifies the protected original start
+record, operator, fixed private policy, path protection and initial inventories.
+It creates `claims/outer-attempt.claim` create-new, flushes/read-backs it, then
+holds and checks all independently pinned target binaries/configurations (and
+publication packet). The loaded watchdog and host require that exact fixed outer
+claim in addition to the existing host attempt claim. There is no overwrite,
+claim reset, alternate name, permission repair or rollback. A partial claim stays.
+The outer claim is consistency/collision data, not self-supplied approval.
+
+Production watchdog Main now REQUIRES `--setup-supervise-qpc-v1 <cap> <frequency>`.
+It translates that earlier cap conservatively before acquisition and can only
+shorten its local window; the existing inner five-second reserve stays inside it.
+The historical empty-argv Run seam remains INTERNAL for explicit fixtures only.
+The fixed child uses no shell, no breakaway request and a replacement environment;
+its existing atomic host JOB_LIST launch and native active-process limit ONE are
+unchanged. The snapshot must already be executing inside the independently
+reviewed command host's job. This source does not authenticate that prerequisite.
+
+After uncertain process creation/wait, the snapshot retains its actual process
+and held-input owners and parks for outer supervision. A checked root wait alone
+never establishes job emptiness or setup acceptance. On normal zero exit it
+transports only the bounded operation result and supervisor receipt through the
+protected command receipt. The Python reconciler requires the exact profile,
+phase, attempt, directory references, hash, root-exit/empty-job observations,
+untruncated outer output and matching helper/request. It returns
+`setup_observed_not_accepted`, ALWAYS `accepted=false`,
+`provisioning_authorized=false`, `retry_authorized=false`, `gate_a=unrun`.
+Malformed/partial/missing/failed/timeout records remain UNKNOWN. Reconciliation is
+read-only: it never starts a second attempt or performs cleanup.
+
+### Limits and validation
+
+This is an UNINSTALLED transport/composition candidate, not a reviewed production
+setup route. In particular, its managed path/stream/pre-load checks must not be
+promoted to evidence of the native exact-identity/checked-close acquisition
+contract. The general helper's existing create-then-assign outer job and failure
+handling are not strengthened into atomic whole-attempt native supervision by
+this batch. Authentic cancellation before/after loading, helper early death or a
+blocked OS/CLR call still needs independently reviewed outer-host/channel evidence;
+missing evidence remains UNKNOWN with NO retry. No process record proves VM/disk
+absence. The separate provisioning starter is still required. This checkpoint does
+not install/review its self, compiler, OS, CLR or loader closure or manufacture
+production profiles/pins. It cannot be called production-ready on modeled passes.
+
+Applied focused selection: **134 passed**, warnings as errors. This covers fixed
+snapshot/reconciliation models, native original-cap shortening and expired
+pre-create refusal, ordinary held-file sharing/private refusal and empty/occupied
+inventories, compiled delivered-window admission cost, native incoming-cap
+termination against a longer profile budget, and authorization failure handling.
+The stale evidence-policy test fixture now supplies the required 900-second cap
+and asserts that the exact pending approval and single collector call are reached;
+production admission is unchanged. Both prior baseline fixture failures are gone.
+
+Complete applied **63-module** related selection: **3,774 passed, five skipped**,
+warnings as errors, across four disjoint bounded shards. It includes all Night
+Shifts native modules, confinement/daemon/public-probe/KVP/maintenance/preparation/
+preflight modules and all runtime elevated/privileged modules plus setup launch.
+Both fixed setup products still build through the real unelevated transaction;
+production entries are exercised only for unelevated refusal. Native operational
+process tests use explicit ordinary/inert fixtures, never production setup.
+
+Repository Ruff passes. Windows-target Mypy passes across **116 source files**
+(Night Shifts plus the two runtime handoff/command modules). Python 3.12 grammar
+passes across the nine changed Python files, and Git whitespace checks pass.
+This is scoped typing, not a completed repository-wide or Linux-runtime check;
+the broad explicit-package typing attempt exceeded its bound, and Linux checking
+of Windows runtime imports finds existing Windows-only attribute errors.
+
+A full normal ordinary handoff was also executed from an in-memory test body and
+disposable source copies: actual outer native watchdog -> frozen snapshot ->
+setup watchdog -> inert host -> both result frames -> Python reconciliation.
+The controller waited on and checked close of an exact duplicate of the actual
+host process handle. Both fixed claims and native limit-one readback were checked.
+The exact successful owned fixture was removed only after these observations.
+Roles, path/private-descriptor admission, original start record and setup operation
+were explicit TEST adapters; observed fixture pins are not production review.
+This establishes composition behavior, NOT protected native setup provenance.
+
+Scope review found the handoff template hidden by `/scripts/*`. The applied
+packaging repair explicitly includes only that required template; its regression
+passes and the template now appears in ordinary Git status. The new native test
+file initially reports FOUR fixture errors before watchdog creation: its LF-only
+source seam does not match the CRLF checkout. Failed fixture trees remain; no
+watchdog/host creation, setup claim or production operation occurred in those runs.
+
+The proposed TEST-ONLY repair exercises independently pinned LF and CRLF template
+bytes and normalizes newlines only in the disposable adapted snapshot AFTER
+exact-byte validation. Production template bytes, helper/supervisor code, pin
+checks and all acceptance/refusal assertions are unchanged. All EIGHT proposed
+native cases pass when loaded in memory: normal composition and exact-cause
+bad-pin/missing-window/claim-collision refusals for BOTH newline forms. The normal
+cases check both permanent fixture claims, native limit ONE, exact duplicated host
+handle wait/close and bounded reconciliation; each negative case requires its exact
+intended refusal and zero watchdog-launch calls. Proposed fixture Ruff and Python
+3.12 grammar also pass. This is preview evidence, not applied-repair verification.
+
+The prior disjoint 63-module selection remains **3,774 passed, five skipped**;
+the additional applied packaging regression passes. Verify the EIGHT actual
+applied native cases after repair before declaring the complete checkpoint ready
+to commit. No production-source repair or separate documentation-only commit
+stage is needed for this newline defect.
+Keep all source/tests/packaging and this record in this same functional checkpoint.
+No roadmap edits, source staging, commit, elevation, protected installation,
+production setup/claim, provisioning or VM operation occurred. Do not elevate or
+deploy the candidate as a consequence of applying source edits. Gate A is unrun.
+
+### Historical setup-supervision repair evidence (preceding checkpoint)
 
 - Applied new selection: **74 passed, two failed**, warnings as errors. Both fixed
   setup products build through the real unelevated transaction; metadata checks,
