@@ -19,8 +19,8 @@ OPERATIONAL_DATA_DIR = PROJECT_ROOT / ".agent_runtime"
 OPERATIONAL_DATABASE = OPERATIONAL_DATA_DIR / "operations.sqlite3"
 
 # Agent operational limits
-MAX_AGENT_STEPS = 10
-MAX_BATCH_TOOL_CALLS = 10
+MAX_AGENT_STEPS = 32
+MAX_BATCH_TOOL_CALLS = 16
 
 # Debug logging controls
 # Toggle to True for verbose bootstrap diagnostics.

@@ -21,7 +21,7 @@ from typing import Literal
 # Response types
 # ---------------------------------------------------------------------------
 
-MAX_TOOL_CALLS_PER_TURN = 10
+MAX_TOOL_CALLS_PER_TURN = 16
 
 
 _OPENAI_TEXTUAL_TOOL_CALL_RE = re.compile(

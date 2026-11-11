@@ -7,7 +7,8 @@ Coverage for batched tool-call execution in core/agent.py.
 import json
 from dataclasses import dataclass
 
-from core.agent import Agent
+from config import MAX_AGENT_STEPS, MAX_BATCH_TOOL_CALLS
+from core.agent import Agent, MAX_STEPS
 from core.tool_registry import ToolRegistry, ToolSpec
 from editing.store import EditStore
 from llm.base import LLMResponse, NativeToolCall
@@ -146,7 +147,7 @@ class _FakeLLMResponsesOversizedBatch(_FakeLLMResponses):
             content=None,
             tool_calls=[
                 NativeToolCall(id=f"call_resp_{i}", name="t_ok_native", arguments={})
-                for i in range(11)
+                for i in range(MAX_BATCH_TOOL_CALLS + 1)
             ],
         )
 
@@ -181,6 +182,72 @@ def _register_tool(tool_registry: ToolRegistry, name: str, fn, requires_state: b
             example=None,
         )
     )
+
+
+def test_operational_limits_and_prompt_are_aligned():
+    from core.protocol import MAX_TOOL_CALLS_PER_TURN
+    from runtime.prompt import build_system_prompt
+
+    assert MAX_AGENT_STEPS == MAX_STEPS == 32
+    assert MAX_BATCH_TOOL_CALLS == MAX_TOOL_CALLS_PER_TURN == 16
+    for native in (False, True):
+        prompt = build_system_prompt(
+            use_native_tools=native, tool_registry=ToolRegistry()
+        )
+        assert "maximum of 32 steps per user message" in prompt
+        assert "up to 16 tool calls in a single batch response" in prompt
+
+
+def test_agent_can_finish_on_step_32():
+    reg = ToolRegistry()
+    executed = []
+    _register_tool(reg, "t_count", lambda: executed.append(True) or "ok")
+    agent = _make_agent(
+        ['{"action": "t_count", "input": {}}'] * 31 + ["finished-at-32"],
+        tool_registry=reg,
+    )
+
+    assert agent.step("go") == "finished-at-32"
+    assert agent.llm._idx == 32
+    assert len(executed) == 31
+
+
+def test_agent_stops_after_32_steps():
+    reg = ToolRegistry()
+    executed = []
+    _register_tool(reg, "t_count", lambda: executed.append(True) or "ok")
+    agent = _make_agent(
+        ['{"action": "t_count", "input": {}}'] * 32 + ["unreachable-final"],
+        tool_registry=reg,
+    )
+
+    assert agent.step("go") != "unreachable-final"
+    assert agent.llm._idx == 32
+    assert len(executed) == 32
+
+
+def test_full_16_call_batch_executes_in_json_and_native_modes():
+    for native in (False, True):
+        reg = ToolRegistry()
+        executed = []
+        _register_tool(reg, "t_count", lambda: executed.append(True) or "ok")
+        if native:
+            reply = LLMResponse(
+                content="",
+                tool_calls=[
+                    NativeToolCall(id=f"call_{i}", name="t_count", arguments={})
+                    for i in range(16)
+                ],
+            )
+            agent = _make_native_agent([reply, "done"], tool_registry=reg)
+        else:
+            reply = json.dumps({
+                "tool_calls": [{"action": "t_count", "input": {}}] * 16
+            })
+            agent = _make_agent([reply, "done"], tool_registry=reg)
+
+        assert agent.step("go") == "done"
+        assert len(executed) == 16
 
 
 def test_single_tool_call_keeps_legacy_tool_result_shape():
@@ -569,14 +636,18 @@ def test_oversized_native_responses_batch_executes_limit_and_reports_excess_call
     out = agent.step("go")
 
     assert out == "final-after-submit"
-    assert executed == 10
+    assert executed == MAX_BATCH_TOOL_CALLS
     assert llm.submit_calls == 1
     assert len(llm.submitted_tool_outputs) == 1
     submitted = llm.submitted_tool_outputs[0]
-    assert [item.call_id for item in submitted] == [f"call_resp_{i}" for i in range(11)]
-    assert [item.output for item in submitted[:10]] == ["ok-native"] * 10
-    assert "batch limit exceeded" in submitted[10].output
-    assert "do not assume it ran" in submitted[10].output
+    assert [item.call_id for item in submitted] == [
+        f"call_resp_{i}" for i in range(MAX_BATCH_TOOL_CALLS + 1)
+    ]
+    assert [item.output for item in submitted[:MAX_BATCH_TOOL_CALLS]] == [
+        "ok-native"
+    ] * MAX_BATCH_TOOL_CALLS
+    assert "batch limit exceeded" in submitted[MAX_BATCH_TOOL_CALLS].output
+    assert "do not assume it ran" in submitted[MAX_BATCH_TOOL_CALLS].output
     assert agent._pending_native_tool_calls is None
 
 

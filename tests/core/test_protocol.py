@@ -82,6 +82,27 @@ def test_invalid_batch_mixed_root_shapes():
     assert "either {'action','input'} or 'tool_calls'" in (r.error or "")
 
 
+@pytest.mark.parametrize("count, expected_kind", [(16, "tool"), (17, "invalid")])
+@pytest.mark.parametrize("textual", [False, True])
+def test_tool_call_limit_boundary(count, expected_kind, textual):
+    assert MAX_TOOL_CALLS_PER_TURN == 16
+    if textual:
+        text = (
+            '<tool_call>{"recipient_name":"functions.pwd","parameters":{}}</tool_call>'
+            * count
+        )
+    else:
+        calls = ", ".join('{"action": "pwd", "input": {}}' for _ in range(count))
+        text = '{"tool_calls": [' + calls + ']}'
+
+    result = parse(text)
+    assert result.kind == expected_kind
+    if expected_kind == "tool":
+        assert len(result.tool_calls) == count
+    else:
+        assert "Too many" in (result.error or "")
+
+
 def test_invalid_batch_too_many_tool_calls():
     calls = ", ".join('{"action": "pwd", "input": {}}' for _ in range(MAX_TOOL_CALLS_PER_TURN + 1))
     r = parse('{"tool_calls": [' + calls + ']}')
