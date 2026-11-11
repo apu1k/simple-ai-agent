@@ -317,7 +317,8 @@ class _WindowsBuildKernel:
 
     def new_job(self) -> object:
         api = self._api()
-        _require(self.prepared and len(self.jobs) < 2 and all(job.closed for job in self.jobs), 'native_build_job_order')
+        _require(self.prepared and self.recipe is not None and len(self.jobs) < len(self.recipe.commands)
+                 and all(job.closed for job in self.jobs), 'native_build_job_order')
         self.window.check()
         descriptor = api.descriptor(self.sid, False, kernel_object=True)
         raw = 0
@@ -359,7 +360,7 @@ class _WindowsBuildKernel:
                          environment: tuple[tuple[str, str], ...]) -> owner._CompilerChild:
         api, state = self._api(), self._job(job)
         recipe = self.recipe
-        _require(recipe is not None and not state.attempted and self.created < 2, 'native_build_create_order')
+        _require(recipe is not None and not state.attempted and self.created < len(recipe.commands), 'native_build_create_order')
         assert recipe is not None
         _require(command == recipe.commands[self.created] and cwd == recipe.working_directory
                  and environment == recipe.environment, 'native_build_fixed_command')

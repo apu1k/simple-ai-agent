@@ -38,3 +38,37 @@ def build_validation_candidate(
         kernel=kernel, clock=window.seconds, deadline=deadline,
     )
     return transaction.run()
+
+
+def _setup_build(
+    review: object, *, source_files: object, toolchain_files: object,
+    deadline: float, cancelled: Callable[[], bool], phase: str,
+) -> owner.LocalBuildObservation:
+    if not callable(cancelled):
+        raise owner.ValidatorBuildOwnerRefused('build_cancellation_context')
+    window = _Window(deadline, cancelled)
+    kernel = _WindowsBuildKernel(window)
+    return owner._ValidatorBuildOwner(review, source_files=source_files, toolchain_files=toolchain_files,
+        kernel=kernel, clock=window.seconds, deadline=deadline, setup_phase=phase).run()
+
+
+def build_setup_host_candidate(
+    review: object, *, source_files: object, toolchain_files: object,
+    deadline: float, cancelled: Callable[[], bool] = lambda: False,
+) -> owner.LocalBuildObservation:
+    """ONE fixed host compile, unelevated. Output is NOT independently approved."""
+    return _setup_build(review, source_files=source_files, toolchain_files=toolchain_files,
+                        deadline=deadline, cancelled=cancelled, phase='host')
+
+
+def build_setup_watchdog_candidate(
+    review: object, *, source_files: object, toolchain_files: object,
+    deadline: float, cancelled: Callable[[], bool] = lambda: False,
+) -> owner.LocalBuildObservation:
+    """Separate fixed watchdog compile; requires independently reviewed HOST pin.
+
+    Never discover/promote the preceding host build's observed hash to approval.
+    No profile/pin defaults, protected installation, executable launch or retry.
+    """
+    return _setup_build(review, source_files=source_files, toolchain_files=toolchain_files,
+                        deadline=deadline, cancelled=cancelled, phase='watchdog')

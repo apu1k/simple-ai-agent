@@ -70,6 +70,10 @@ Caddyfile
 !/scripts/native_validator_guardian_entry.cs
 !/scripts/native_validator_setup.cs
 !/scripts/native_validator_setup_windows.cs
+!/scripts/native_validator_setup_entry.cs
+!/scripts/native_validator_setup_host_files.cs
+!/scripts/native_validator_setup_supervisor.cs
+!/scripts/native_validator_setup_supervisor_windows.cs
 logs
 
 # temporary logs

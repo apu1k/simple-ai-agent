@@ -245,8 +245,8 @@ class _BuildStage:
     def _collect(self) -> None:
         assert self.out is not None
         finished = self.completed()
-        _require(type(finished) is int and 0 <= finished <= 2, 'build_stage_completion')
-        names = [name for name, _ in build.ENTRY_POINTS[:finished]]
+        _require(type(finished) is int and 0 <= finished <= len(self.recipe.entry_points), 'build_stage_completion')
+        names = [name for name, _ in self.recipe.entry_points[:finished]]
         self._names(self.out, {name[4:] for name in self.inputs if name.startswith('out/')} | set(names))
         for name in names:
             if name in self.produced:
@@ -288,7 +288,7 @@ class _BuildStage:
         self.window.check()
 
     def outputs(self) -> object:
-        _require(self.completed() == 2 and self.quiescent(), 'build_stage_outputs_before_absence')
+        _require(self.completed() == len(self.recipe.entry_points) and self.quiescent(), 'build_stage_outputs_before_absence')
         self.reverify()
         result = {}
         for name in self.recipe.expected_outputs:

@@ -128,8 +128,16 @@ class _ValidatorBuildOwner:
     """
 
     def __init__(self, review: object, *, source_files: object, toolchain_files: object,
-                 kernel: _BuildKernel, clock: Callable[[], float], deadline: float) -> None:
-        self._recipe = build.plan_validation_build(review, source_files=source_files, toolchain_files=toolchain_files)
+                 kernel: _BuildKernel, clock: Callable[[], float], deadline: float,
+                 setup_phase: str | None = None) -> None:
+        if setup_phase is None:
+            self._recipe = build.plan_validation_build(review, source_files=source_files, toolchain_files=toolchain_files)
+        else:
+            from night_shifts import bootstrap_native_setup_build as setup_build
+            if setup_phase not in ('host', 'watchdog'):
+                raise ValidatorBuildOwnerRefused('build_purpose')
+            plan = setup_build.plan_setup_host_build if setup_phase == 'host' else setup_build.plan_setup_watchdog_build
+            self._recipe = plan(review, source_files=source_files, toolchain_files=toolchain_files)
         self._api, self._clock = kernel, clock
         self._lock = threading.Lock()
         self._used = False

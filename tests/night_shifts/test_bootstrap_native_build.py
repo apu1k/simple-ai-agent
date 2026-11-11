@@ -295,7 +295,9 @@ def test_build_recipe_remains_host_only_and_has_no_runner_or_production_profile(
     assert not any(isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                    and node.func.id in ('open', 'eval', 'exec', 'compile', '__import__') for node in ast.walk(tree))
     assert 'bootstrap_native_build.py' not in request.CODE_NAMES
-    setup_only = {'native_validator_setup.cs', 'native_validator_setup_windows.cs'}
+    setup_only = {'native_validator_setup.cs', 'native_validator_setup_windows.cs',
+                  'native_validator_setup_entry.cs', 'native_validator_setup_host_files.cs',
+                  'native_validator_setup_supervisor.cs', 'native_validator_setup_supervisor_windows.cs'}
     assert len(build.SOURCE_NAMES) == 16 and not setup_only.intersection(build.SOURCE_NAMES)
     assert {p.name for p in (ROOT / 'scripts').glob('native_validator_*.cs')} == set(build.SOURCE_NAMES) | setup_only
     assert not (ROOT / 'scripts' / build.PROFILE_NAME).exists()

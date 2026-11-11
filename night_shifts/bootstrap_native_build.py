@@ -45,6 +45,10 @@ ENTRY_POINTS = (
     ('validator-install-guardian.exe', 'AiAgent.ValidatorEntry.ValidatorGuardianProgram'),
     ('validator-provision-worker.exe', 'AiAgent.ValidatorWorker.ValidatorWorkerProgram'),
 )
+SETUP_ENTRY_POINTS = (
+    ('validator-setup-host.exe', 'AiAgent.ValidatorSetup.ValidatorSetupHostProgram'),
+    ('validator-setup-watchdog.exe', 'AiAgent.ValidatorSetup.ValidatorSetupWatchdogProgram'),
+)
 # No elevation request. A separately trusted starter supplies the elevated role;
 # the produced assemblies cannot authenticate their own pre-load provenance.
 MANIFEST_BYTES = (
@@ -81,6 +85,8 @@ class ValidatorBuildRecipe:
     # Independent COMPLETE alias inventories for the selected OS tool files.
     # They select verification targets only, never additional code to execute.
     toolchain_aliases: tuple[tuple[str, tuple[str, ...]], ...]
+    # Closed constructors only: original pair, setup host alone, watchdog alone.
+    entry_points: tuple[tuple[str, str], ...] = ENTRY_POINTS
 
 
 def _fields(value: object, names: tuple[str, ...]) -> dict[str, object]:

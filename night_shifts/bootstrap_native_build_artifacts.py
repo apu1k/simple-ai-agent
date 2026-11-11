@@ -226,7 +226,7 @@ class _Metadata:
 def inspect_fixed_executable(name: str, raw: bytes) -> LocalExecutableMetadata:
     """Inspect bytes only. Forgeable return data cannot authorize installation."""
     try:
-        expected = dict(build.ENTRY_POINTS)
+        expected = dict((*build.ENTRY_POINTS, *build.SETUP_ENTRY_POINTS))
         _need(type(name) is str and name in expected)
         pe = _PE(raw)
         clr = pe.directory(14)

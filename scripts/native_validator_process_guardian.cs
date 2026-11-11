@@ -89,9 +89,11 @@ namespace AiAgent.ValidatorGuardian {
     // no native/file/process operation or callback into caller-selected code.
     // BindWindow supplies THIS core's actual clock and stopAt AFTER its held
     // pre-create gate, not a cap guessed earlier by request admission.
-    internal interface IGuardianRequestKernel : IGuardianKernel {
-        void BindRequest(GuardianRequest request);
+    internal interface IGuardianWindowKernel {
         void BindWindow(GuardianPlan plan,IGuardianClock clock,double runDeadline);
+    }
+    internal interface IGuardianRequestKernel : IGuardianKernel,IGuardianWindowKernel {
+        void BindRequest(GuardianRequest request);
     }
     public sealed class ProvisionProcessGuardian {
         internal const string GuardianExe="validator-install-guardian.exe";
@@ -215,7 +217,7 @@ namespace AiAgent.ValidatorGuardian {
                 object created=api.NewJob();
                 if (!Own(created)) throw new GuardianUnknown("job_handle_unknown"); job=created;
                 BeforeStart(); if (launchGate!=null) launchGate.BeforeCreate(); BeforeStart();
-                var delivery=api as IGuardianRequestKernel;
+                var delivery=api as IGuardianWindowKernel;
                 if (delivery!=null) {
                     delivery.BindWindow(plan,clock,stopAt);
                     BeforeStart();

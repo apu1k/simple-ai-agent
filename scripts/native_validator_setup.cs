@@ -148,9 +148,16 @@ namespace AiAgent.ValidatorSetup {
         readonly HashSet<string> identities=new HashSet<string>(StringComparer.Ordinal);
         bool used,closed;
         public SetupTransaction(SetupParent value,int seconds) : this(value,seconds,new WindowsSetupFiles(),new BoundaryClock()) { }
-        internal SetupTransaction(SetupParent value,int seconds,ISetupFiles files,IBoundaryClock time) {
+        internal SetupTransaction(SetupParent value,int seconds,ISetupFiles files,IBoundaryClock time)
+            : this(value,seconds,files,time,null) { }
+        internal SetupTransaction(SetupParent value,int seconds,ISetupFiles files,IBoundaryClock time,double? originalDeadline) {
             if (value==null || seconds<6 || seconds>300 || files==null || time==null) throw new SetupRefused("plan");
-            plan=value; api=files; clock=time; deadline=Now()+seconds;
+            plan=value; api=files; clock=time; double now=Now(); deadline=now+seconds;
+            if (originalDeadline.HasValue) {
+                double cap=originalDeadline.Value;
+                if (Double.IsNaN(cap) || Double.IsInfinity(cap) || cap<=now) throw new SetupRefused("shared_deadline");
+                deadline=Math.Min(deadline,cap);
+            }
         }
         double Now() {
             double n=clock.Seconds;
