@@ -99,6 +99,20 @@ namespace AiAgent.ValidatorRequest {
             foreach (IdentityData id in ids)
                 if (id.Volume==volume && id.Index==index) throw new InstallRequestRefused("approval_anchor_alias");
         }
+        // Setup-only shape isolation, BEFORE any native publication. The same
+        // already-bound concrete request supplies both paths and identities;
+        // setup must not reparse untrusted JSON with a second decoder.
+        internal void RequireSeparateSetupTree(string root,uint volume,ulong[] reserved) {
+            foreach (PlaceData place in new PlaceData[] {data.Provision.Source,data.Provision.Parent}) {
+                if (String.Equals(root,place.Path,StringComparison.OrdinalIgnoreCase) ||
+                    root.StartsWith(place.Path+"\\",StringComparison.OrdinalIgnoreCase) ||
+                    place.Path.StartsWith(root+"\\",StringComparison.OrdinalIgnoreCase))
+                    throw new InstallRequestRefused("setup_overlap");
+                if (place.Identity.Volume==volume)
+                    foreach (ulong index in reserved)
+                        if (place.Identity.Index==index) throw new InstallRequestRefused("setup_alias");
+            }
+        }
         public LaunchPlan CreateLaunchPlan() {
             var files=new Dictionary<string,LaunchFilePin>(StringComparer.Ordinal);
             foreach (MemberData m in data.Launch.Files) files.Add(m.Name,new LaunchFilePin(m.Bytes,m.Sha));
