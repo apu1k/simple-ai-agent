@@ -44,6 +44,26 @@ def test_unknown_execution_and_timeout_remain_unverified():
         validate_receipt(broken, claim, 'b' * 64, 'c' * 64)
 
 
+@pytest.mark.parametrize('status,executed,code', [
+    ('completed', True, 0), ('failed', True, 7), ('timeout_outcome_unknown', True, 124),
+    ('outcome_unknown', None, None),
+])
+@pytest.mark.parametrize('observed', ['absent', True, False, None, 1, 'true'])
+def test_new_tree_observation_is_strict_and_legacy_data_never_implies_it(status, executed, code, observed):
+    claim = PrivilegedClaim(ID, 1000, ELEVATED_OPERATION)
+    data = receipt()
+    data.update(status=status, executed=executed, exit_code=code)
+    if observed != 'absent':
+        data['process_tree_observed'] = observed
+    valid = observed == 'absent' or (observed is False if status == 'outcome_unknown' else observed is True)
+    if valid:
+        validate_receipt(data, claim, 'b' * 64, 'c' * 64)
+        assert ('process_tree_observed' in data) == (observed != 'absent')
+    else:
+        with pytest.raises(PrivilegedHostError, match='observation|receipt'):
+            validate_receipt(data, claim, 'b' * 64, 'c' * 64)
+
+
 def test_accepted_request_expires_and_changed_review_cannot_execute():
     now = [0.0]
     permit = PrivilegedTurn(clock=lambda: now[0], wall_clock=lambda: 1000.0)

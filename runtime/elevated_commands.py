@@ -91,12 +91,19 @@ def validate_receipt(receipt: dict[str, Any], claim: PrivilegedClaim, digest: st
             or receipt.get('status') not in ('completed', 'failed', 'timeout_outcome_unknown', 'outcome_unknown')
             or (receipt.get('executed') is not None and type(receipt['executed']) is not bool)
             or receipt.get('effects_verified') is not False
+            or ('process_tree_observed' in receipt and type(receipt['process_tree_observed']) is not bool)
             or not isinstance(receipt.get('stdout'), str) or not isinstance(receipt.get('stderr'), str)
             or len(receipt['stdout'].encode('utf-8')) + len(receipt['stderr'].encode('utf-8')) > 150000
             or receipt.get('retry_authorized') is not False
             or type(receipt.get('output_truncated')) is not bool
             or (receipt.get('exit_code') is not None and type(receipt['exit_code']) is not int)):
         raise PrivilegedHostError('Invalid elevated execution receipt; outcome unknown')
+    # Legacy general receipts remain readable, but never acquire the new tree
+    # observation implicitly. Fixed setup reconciliation REQUIRES positive data.
+    if ('process_tree_observed' in receipt
+            and ((receipt['status'] != 'outcome_unknown' and receipt['process_tree_observed'] is not True)
+                 or (receipt['status'] == 'outcome_unknown' and receipt['process_tree_observed'] is not False))):
+        raise PrivilegedHostError('Inconsistent process-tree observation')
     if receipt['status'] != 'outcome_unknown' and receipt.get('executed') is not True:
         raise PrivilegedHostError('Missing positive execution observation')
     if receipt['status'] == 'failed' and (receipt['exit_code'] is None or receipt['exit_code'] == 0):

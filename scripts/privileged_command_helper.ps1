@@ -168,7 +168,7 @@ function Command-Arguments([string]$ScriptPath) {
     return '-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -EncodedCommand ' + $encoded
 }
 $result = @{version=1; request_id=$RequestId; operation='elevated_commands'; request_sha256=$digest;
-    helper_sha256=$helperHash; status='outcome_unknown'; executed=$false; effects_verified=$false;
+    helper_sha256=$helperHash; status='outcome_unknown'; executed=$false; effects_verified=$false; process_tree_observed=$false;
     exit_code=$null; stdout=''; stderr=''; output_truncated=$false; retry_authorized=$false}
 try {
     # Kill-on-close process containment. External services/VMs/tasks are NOT contained.
@@ -193,22 +193,32 @@ public static class CommandWatchdog {
         public uint Size; public string Reserved,Desktop,Title; public uint X,Y,XS,YS,XC,YC,Fill,Flags;
         public ushort Show,ReservedSize; public IntPtr ReservedPtr,In,Out,Error;
     }
+    [StructLayout(LayoutKind.Sequential)] struct StartupEx { public Startup Startup; public IntPtr Attributes; }
     [StructLayout(LayoutKind.Sequential)] struct ProcessInfo { public IntPtr Process,Thread; public uint Id,ThreadId; }
+    [StructLayout(LayoutKind.Sequential)] struct Accounting {
+        public long User,Kernel,PeriodUser,PeriodKernel; public uint Faults,Total,Active,Terminated;
+    }
     [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr a,string n);
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetInformationJobObject(IntPtr j,int k,ref Limits l,uint n);
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool CreatePipe(out IntPtr r,out IntPtr w,ref Security s,uint n);
     [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetHandleInformation(IntPtr h,uint m,uint f);
     [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateFile(string n,uint a,uint s,ref Security sa,uint c,uint f,IntPtr t);
-    [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcess(string a,StringBuilder c,IntPtr pa,IntPtr ta,bool inherit,uint flags,IntPtr env,string cwd,ref Startup s,out ProcessInfo p);
-    [DllImport("kernel32.dll",SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr j,IntPtr p);
+    [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcess(string a,StringBuilder c,IntPtr pa,IntPtr ta,bool inherit,uint flags,IntPtr env,string cwd,ref StartupEx s,out ProcessInfo p);
+    [DllImport("kernel32.dll",SetLastError=true)] static extern bool InitializeProcThreadAttributeList(IntPtr a,int count,uint flags,ref UIntPtr bytes);
+    [DllImport("kernel32.dll",SetLastError=true)] static extern bool UpdateProcThreadAttribute(IntPtr a,uint flags,UIntPtr key,IntPtr value,UIntPtr bytes,IntPtr previous,IntPtr returned);
+    [DllImport("kernel32.dll")] static extern void DeleteProcThreadAttributeList(IntPtr a);
+    [DllImport("kernel32.dll")] static extern bool IsProcessInJob(IntPtr p,IntPtr j,out bool member);
+    [DllImport("kernel32.dll")] static extern bool GetHandleInformation(IntPtr h,out uint flags);
+    [DllImport("kernel32.dll",EntryPoint="QueryInformationJobObject")] static extern bool QueryLimits(IntPtr j,int kind,out Limits info,uint bytes,IntPtr returned);
+    [DllImport("kernel32.dll",EntryPoint="QueryInformationJobObject")] static extern bool QueryAccounting(IntPtr j,int kind,out Accounting info,uint bytes,IntPtr returned);
     [DllImport("kernel32.dll",SetLastError=true)] static extern uint ResumeThread(IntPtr t);
     [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr p,uint ms);
     [DllImport("kernel32.dll")] static extern bool GetExitCodeProcess(IntPtr p,out uint c);
-    [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr p,uint c);
     [DllImport("kernel32.dll")] static extern bool TerminateJobObject(IntPtr j,uint c);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
     public sealed class Dump { public string Text; public bool Truncated; }
-    public sealed class Answer { public int Code; public bool Timeout; public bool Truncated; public string Stdout,Stderr; }
+    // Process observations only; never external-service/VM/effect verification.
+    public sealed class Answer { public int Code; public bool Timeout,Truncated,ProcessTreeObserved; public string Stdout,Stderr; }
     static Task<Dump> Drain(IntPtr h) {
         return Task.Run(() => {
             using (var file = new FileStream(new SafeFileHandle(h,true),FileAccess.Read))
@@ -229,7 +239,6 @@ public static class CommandWatchdog {
         return RunCore(exe,args,cwd,ms,0,0); // historical ordinary characterization API
     }
     static uint Remaining(uint maximum,long limit,long frequency) {
-        if (limit==0 && frequency==0) return maximum; // inaccessible through RunWithin
         if (limit<1 || frequency<1 || frequency>1000000000L || frequency!=System.Diagnostics.Stopwatch.Frequency)
             throw new ArgumentOutOfRangeException("originalWindow");
         long now=System.Diagnostics.Stopwatch.GetTimestamp();
@@ -242,46 +251,101 @@ public static class CommandWatchdog {
         if (limit<1 || frequency<1) throw new ArgumentOutOfRangeException("originalWindow");
         return RunCore(exe,args,cwd,ms,limit,frequency);
     }
+    static void Close(ref IntPtr h) {
+        IntPtr old=h; h=IntPtr.Zero;
+        if (old!=IntPtr.Zero && !CloseHandle(old)) throw new Exception("Handle close unknown");
+    }
+    static bool Release(ref IntPtr h) { try { Close(ref h); return true; } catch { return false; } }
+    static void Free(ref IntPtr h) { IntPtr old=h; h=IntPtr.Zero; if (old!=IntPtr.Zero) Marshal.FreeHGlobal(old); }
+    static void Empty(IntPtr job,IntPtr process,uint code) {
+        // A bounded OBSERVATION allowance, never more executable lifetime.
+        var grace=System.Diagnostics.Stopwatch.StartNew();
+        if (!TerminateJobObject(job,code) || WaitForSingleObject(process,5000)!=0) throw new Exception("Termination unknown");
+        for (;;) {
+            Accounting info;
+            if (!QueryAccounting(job,1,out info,(uint)Marshal.SizeOf(typeof(Accounting)),IntPtr.Zero) || info.Active>info.Total)
+                throw new Exception("Job accounting unknown");
+            if (info.Active==0) return;
+            if (grace.ElapsedMilliseconds>=5000) throw new Exception("Job emptiness unknown");
+            System.Threading.Thread.Sleep(10);
+        }
+    }
     static Answer RunCore(string exe,string args,string cwd,uint ms,long limit,long frequency) {
-        // Native boundary: callers cannot exceed the reviewed 15-minute cap.
+        // ONE monotonic execution window includes native preparation even for Run.
         if (ms == 0 || ms > 900000) throw new ArgumentOutOfRangeException("ms");
+        long now=System.Diagnostics.Stopwatch.GetTimestamp(),rate=System.Diagnostics.Stopwatch.Frequency;
+        long own=checked(now+(long)Decimal.Floor((decimal)ms*rate/1000));
+        if (limit==0 && frequency==0) { limit=own; frequency=rate; }
+        else { Remaining(ms,limit,frequency); limit=Math.Min(limit,own); }
         IntPtr job=IntPtr.Zero,or=IntPtr.Zero,ow=IntPtr.Zero,er=IntPtr.Zero,ew=IntPtr.Zero,input=IntPtr.Zero;
+        IntPtr attrs=IntPtr.Zero,jobs=IntPtr.Zero,handles=IntPtr.Zero; bool ready=false;
         ProcessInfo p=new ProcessInfo(); Task<Dump> stdout=null,stderr=null;
         try {
             job=CreateJobObject(IntPtr.Zero,null);
             if (job==IntPtr.Zero) throw new Exception("Cannot create watchdog");
             Limits l=new Limits(); l.Basic.Flags=0x2000;
             if (!SetInformationJobObject(job,9,ref l,(uint)Marshal.SizeOf(l))) throw new Exception("Cannot contain process");
+            Limits actual; uint flags;
+            if (!QueryLimits(job,9,out actual,(uint)Marshal.SizeOf(typeof(Limits)),IntPtr.Zero) || actual.Basic.Flags!=0x2000 ||
+                actual.Basic.Active!=0 || !GetHandleInformation(job,out flags) || flags!=0) throw new Exception("Job readback unknown");
             Security sa=new Security(); sa.Size=Marshal.SizeOf(sa); sa.Inherit=1;
             if (!CreatePipe(out or,out ow,ref sa,0) || !CreatePipe(out er,out ew,ref sa,0) ||
                 !SetHandleInformation(or,1,0) || !SetHandleInformation(er,1,0)) throw new Exception("Cannot create output pipes");
             input=CreateFile("NUL",0x80000000,3,ref sa,3,0,IntPtr.Zero);
-            if (input==new IntPtr(-1)) { input=IntPtr.Zero; throw new Exception("Cannot disable input"); }
-            Startup s=new Startup(); s.Size=(uint)Marshal.SizeOf(s); s.Flags=0x100; s.In=input; s.Out=ow; s.Error=ew;
+            if (input==IntPtr.Zero || input==new IntPtr(-1)) { input=IntPtr.Zero; throw new Exception("Cannot disable input"); }
+            UIntPtr size=UIntPtr.Zero;
+            if (InitializeProcThreadAttributeList(IntPtr.Zero,2,0,ref size) || Marshal.GetLastWin32Error()!=122 || size.ToUInt64()<1 || size.ToUInt64()>4096)
+                throw new Exception("Cannot size atomic attributes");
+            attrs=Marshal.AllocHGlobal((int)size.ToUInt64());
+            if (!InitializeProcThreadAttributeList(attrs,2,0,ref size)) throw new Exception("Cannot initialize atomic attributes"); ready=true;
+            jobs=Marshal.AllocHGlobal(IntPtr.Size); Marshal.WriteIntPtr(jobs,job);
+            handles=Marshal.AllocHGlobal(3*IntPtr.Size);
+            Marshal.WriteIntPtr(handles,0,input); Marshal.WriteIntPtr(handles,IntPtr.Size,ow); Marshal.WriteIntPtr(handles,2*IntPtr.Size,ew);
+            // JOB_LIST closes the owner-death gap BEFORE CreateProcess returns.
+            // HANDLE_LIST excludes every unrelated inheritable parent handle.
+            if (!UpdateProcThreadAttribute(attrs,0,new UIntPtr(0x2000d),jobs,new UIntPtr((uint)IntPtr.Size),IntPtr.Zero,IntPtr.Zero))
+                throw new Exception("Atomic job attribute refused");
+            if (!UpdateProcThreadAttribute(attrs,0,new UIntPtr(0x20002),handles,new UIntPtr((uint)(3*IntPtr.Size)),IntPtr.Zero,IntPtr.Zero))
+                throw new Exception("Explicit handle attribute refused");
+            StartupEx s=new StartupEx(); s.Startup.Size=(uint)Marshal.SizeOf(s); s.Startup.Flags=0x100;
+            s.Startup.In=input; s.Startup.Out=ow; s.Startup.Error=ew; s.Attributes=attrs;
             if (Remaining(ms,limit,frequency)==0) throw new Exception("Original window expired before creation");
-            if (!CreateProcess(exe,new StringBuilder("\""+exe+"\" "+args),IntPtr.Zero,IntPtr.Zero,true,0x08000004,IntPtr.Zero,cwd,ref s,out p))
-                throw new Exception("Cannot create suspended command");
-            CloseHandle(ow); ow=IntPtr.Zero; CloseHandle(ew); ew=IntPtr.Zero;
+            if (!CreateProcess(exe,new StringBuilder("\""+exe+"\" "+args),IntPtr.Zero,IntPtr.Zero,true,0x08080004,IntPtr.Zero,cwd,ref s,out p))
+                throw new Exception("Cannot create atomically contained command");
+            bool member;
+            if (p.Process==IntPtr.Zero || p.Thread==IntPtr.Zero || p.Id==0 || p.ThreadId==0 ||
+                !IsProcessInJob(p.Process,job,out member) || !member ||
+                !GetHandleInformation(p.Process,out flags) || flags!=0 || !GetHandleInformation(p.Thread,out flags) || flags!=0)
+                throw new Exception("Atomic child membership unknown");
+            Close(ref ow); Close(ref ew); Close(ref input);
             stdout=Drain(or); or=IntPtr.Zero; stderr=Drain(er); er=IntPtr.Zero;
-            if (!AssignProcessToJobObject(job,p.Process)) { TerminateProcess(p.Process,2); throw new Exception("Cannot assign watchdog"); }
+            ready=false; DeleteProcThreadAttributeList(attrs); Free(ref attrs); Free(ref jobs); Free(ref handles);
             if (Remaining(ms,limit,frequency)==0) throw new Exception("Original window expired before resume");
-            if (ResumeThread(p.Thread)==0xffffffff) throw new Exception("Cannot resume command");
+            if (ResumeThread(p.Thread)!=1) throw new Exception("Cannot resume command exactly once");
+            Close(ref p.Thread);
             uint wait=WaitForSingleObject(p.Process,Remaining(ms,limit,frequency));
-            bool timeout=wait==258 || (wait==0 && limit!=0 && Remaining(ms,limit,frequency)==0); uint code=0;
-            if (timeout) {
-                if (!TerminateJobObject(job,124) || WaitForSingleObject(p.Process,5000)!=0) throw new Exception("Termination unknown");
-                code=124;
-            } else if (wait!=0 || !GetExitCodeProcess(p.Process,out code)) throw new Exception("Completion unknown");
-            CloseHandle(job); job=IntPtr.Zero;
+            bool timeout=wait==258 || (wait==0 && Remaining(ms,limit,frequency)==0); uint code=0;
+            if (timeout) code=124;
+            else if (wait!=0 || !GetExitCodeProcess(p.Process,out code)) throw new Exception("Completion unknown");
+            // Also stop descendants after normal root exit; root exit alone is
+            // NOT tree completion. Observe zero active entries BEFORE job close.
+            Empty(job,p.Process,timeout?124u:2u);
             if (!Task.WaitAll(new Task[]{stdout,stderr},5000)) throw new Exception("Output completion unknown");
-            return new Answer { Code=unchecked((int)code),Timeout=timeout,
+            var answer=new Answer { Code=unchecked((int)code),Timeout=timeout,
                 Stdout=stdout.Result.Text,Stderr=stderr.Result.Text,
-                Truncated=stdout.Result.Truncated || stderr.Result.Truncated };
+                Truncated=stdout.Result.Truncated || stderr.Result.Truncated,ProcessTreeObserved=true };
+            Close(ref p.Process); Close(ref job); return answer;
         } finally {
-            if (job!=IntPtr.Zero) CloseHandle(job);
-            if (p.Thread!=IntPtr.Zero) CloseHandle(p.Thread);
-            if (p.Process!=IntPtr.Zero) { TerminateProcess(p.Process,2); CloseHandle(p.Process); }
-            foreach (IntPtr h in new IntPtr[]{or,ow,er,ew,input}) if (h!=IntPtr.Zero) CloseHandle(h);
+            // Attempt EVERY owned release even if one close fails. No successful
+            // Answer may escape an uncertain close. Atomic job close also covers
+            // creation/pre-resume exceptions; failure remains UNKNOWN.
+            bool released=true;
+            released=Release(ref job)&released; released=Release(ref p.Thread)&released; released=Release(ref p.Process)&released;
+            released=Release(ref or)&released; released=Release(ref ow)&released; released=Release(ref er)&released;
+            released=Release(ref ew)&released; released=Release(ref input)&released;
+            if (ready) { ready=false; DeleteProcThreadAttributeList(attrs); }
+            Free(ref attrs); Free(ref jobs); Free(ref handles);
+            if (!released) throw new Exception("Handle close unknown");
         }
     }
 }
@@ -296,6 +360,7 @@ public static class CommandWatchdog {
     $result.executed = $true
     $result.exit_code = $answer.Code; $result.stdout = $answer.Stdout; $result.stderr = $answer.Stderr
     $result.output_truncated = $answer.Truncated
+    $result.process_tree_observed = $answer.ProcessTreeObserved
     $result.status = if ($answer.Timeout) { 'timeout_outcome_unknown' } elseif ($answer.Code -eq 0) { 'completed' } else { 'failed' }
 } catch {
     $result.status = 'outcome_unknown'

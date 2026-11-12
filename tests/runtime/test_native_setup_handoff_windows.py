@@ -159,6 +159,7 @@ $a | ConvertTo-Json -Compress
     assert result.returncode == 0, (str(workspace), result.stdout, result.stderr)
     answer = json.loads(result.stdout)
     assert answer['Timeout'] is answer['Truncated'] is False, str(workspace)
+    assert answer['ProcessTreeObserved'] is True, str(workspace)
     install_claim = target / 'claims/install-attempt.claim'
     if mode == 'normal':
         assert answer['Code'] == 0 and not answer['Stderr'], (str(workspace), answer)
@@ -168,7 +169,8 @@ $a | ConvertTo-Json -Compress
         finally:
             assert k.CloseHandle(handle), str(workspace)
         outer = dict(version=1, operation='elevated_commands', request_id=identity_id, helper_sha256='d' * 64, status='completed',
-            executed=True, effects_verified=False, retry_authorized=False, output_truncated=False, exit_code=0, stderr='', stdout=answer['Stdout'])
+            executed=True, effects_verified=False, retry_authorized=False, output_truncated=False, exit_code=0, stderr='',
+            stdout=answer['Stdout'], process_tree_observed=answer['ProcessTreeObserved'])
         observed = launch.reconcile_setup_handoff(review, request_id=identity_id, outer=outer)
         assert observed['status'] == 'setup_observed_not_accepted'
         assert observed['accepted'] is observed['provisioning_authorized'] is observed['retry_authorized'] is False
