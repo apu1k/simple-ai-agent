@@ -37,7 +37,7 @@ def observation(p):
         result_sha256=hashlib.sha256(raw).hexdigest(), result_valid=True)
     outer = dict(version=1, operation='elevated_commands', request_id=ID, helper_sha256=p['outer_helper_sha256'],
         status='completed', executed=True, effects_verified=False, retry_authorized=False, output_truncated=False,
-        exit_code=0, stderr='', process_tree_observed=True)
+        exit_code=0, stderr='', process_tree_observed=True, lifetime_observed=True)
     return outer, raw, receipt
 
 
@@ -112,7 +112,8 @@ def test_success_is_only_a_bound_observation_never_acceptance_or_provisioning(pu
     ('helper_sha256', 'e' * 64), ('status', 'timeout_outcome_unknown'), ('status', 'outcome_unknown'),
     ('executed', None), ('executed', False), ('effects_verified', True), ('retry_authorized', True),
     ('output_truncated', True), ('exit_code', True), ('exit_code', 124), ('stderr', 'diagnostic'),
-    ('process_tree_observed', False), ('process_tree_observed', 1), ('process_tree_observed', None)])
+    ('process_tree_observed', False), ('process_tree_observed', 1), ('process_tree_observed', None),
+    ('lifetime_observed', False), ('lifetime_observed', 1), ('lifetime_observed', None), ('status', 'cancelled_outcome_unknown')])
 def test_outer_faults_cannot_promote_even_a_complete_inner_receipt(field, bad):
     p, _ = review()
     outer, raw, receipt = observation(p)
@@ -169,6 +170,14 @@ def test_legacy_outer_completion_has_no_implicit_process_tree_evidence():
     p, _ = review()
     outer, raw, receipt = observation(p)
     del outer['process_tree_observed']
+    with pytest.raises(launch.SetupLaunchRefused, match='handoff_outer'):
+        launch.reconcile_setup_handoff(p, request_id=ID, outer=frame(outer, raw, receipt))
+
+
+def test_tree_completion_without_caller_lifetime_cannot_promote_setup():
+    p, _ = review()
+    outer, raw, receipt = observation(p)
+    del outer['lifetime_observed']
     with pytest.raises(launch.SetupLaunchRefused, match='handoff_outer'):
         launch.reconcile_setup_handoff(p, request_id=ID, outer=frame(outer, raw, receipt))
 

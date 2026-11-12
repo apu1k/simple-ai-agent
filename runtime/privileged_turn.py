@@ -167,6 +167,16 @@ class PrivilegedTurn:
         return (self._turn is not None and self._clock() < self._deadline
                 and self._claims.get(claim.request_id) == claim)
 
+    def execution_cancelled(self, claim: PrivilegedClaim) -> bool:
+        """Read-only revocation check for a cancellation monitor, not authority.
+
+        Deliberately usable without the head ContextVar: the observer can only
+        close its cancellation endpoint. It cannot submit, approve or hand off.
+        """
+        with self._lock:
+            return (not self._live(claim)
+                    or self._decisions.get('E' + claim.request_id) in ('expired', 'rejected'))
+
     def submit(self, claim: PrivilegedClaim, details: dict) -> PendingPrivilege:
         review = json.dumps(details, sort_keys=True, ensure_ascii=True, indent=2, allow_nan=False)
         if len(review.encode('utf-8')) > 65536:

@@ -70,7 +70,7 @@ foreach ($path in @($root,$receipts,$PSCommandPath,([IO.Path]::Combine($root,'po
 }
 $policy = [IO.File]::ReadAllText([IO.Path]::Combine($root,'policy.json')) | ConvertFrom-Json
 $helperHash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($policy.version -ne 1 -or $policy.max_timeout -ne 900 -or
+if ($policy.version -ne 1 -or $policy.max_timeout -ne 900 -or $policy.lifetime_protocol -ne 1 -or
     $policy.helper_sha256 -cne $helperHash -or $policy.operator_sid -cne $identity.User.Value) {
     throw 'Installed policy/code/operator mismatch'
 }
@@ -96,7 +96,7 @@ finally { $sha.Dispose() }
 if ($digest -cne $RequestSha256) { throw 'Approved request changed' }
 $utf8 = New-Object Text.UTF8Encoding($false,$true)
 $request = $utf8.GetString($bytes) | ConvertFrom-Json
-$fields = @('version','request_id','operation','deadline_unix','timeout','script','cwd','reason','operator_sid','helper_sha256')
+$fields = @('version','request_id','operation','deadline_unix','timeout','script','cwd','reason','operator_sid','helper_sha256','lifetime')
 if (@(Compare-Object $fields @($request.PSObject.Properties.Name)).Count -ne 0 -or
     $request.version -ne 1 -or $request.request_id -cne $RequestId -or
     $request.operation -cne 'elevated_commands' -or $request.deadline_unix -ne $DeadlineUnix -or
@@ -106,6 +106,12 @@ if (@(Compare-Object $fields @($request.PSObject.Properties.Name)).Count -ne 0 -
     $request.script.Contains([string][char]0) -or $utf8.GetByteCount($request.script) -gt 32768 -or
     $request.reason -isnot [string] -or [string]::IsNullOrWhiteSpace($request.reason) -or
     $request.reason.Length -gt 2000 -or $request.cwd -isnot [string]) { throw 'Invalid approved request schema' }
+$lifetimeFields = @('version','pipe','owner_pid','owner_created')
+if ($null -eq $request.lifetime -or @(Compare-Object $lifetimeFields @($request.lifetime.PSObject.Properties.Name)).Count -ne 0 -or
+    $request.lifetime.version -ne 1 -or $request.lifetime.pipe -isnot [string] -or
+    ($request.lifetime.owner_pid -isnot [int] -and $request.lifetime.owner_pid -isnot [long]) -or
+    $request.lifetime.owner_pid -lt 1 -or $request.lifetime.owner_pid -gt [uint32]::MaxValue -or
+    $request.lifetime.owner_created -isnot [string]) { throw 'Caller lifetime binding required' }
 Check-Local $request.cwd
 if (-not [IO.Directory]::Exists($request.cwd)) { throw 'Working directory missing' }
 function New-ProtectedFileSecurity([string]$OperatorSid) {
@@ -152,7 +158,7 @@ Write-Receipt ($RequestId + '.start.json') @{
     version=1; request_id=$RequestId; operation='elevated_commands'; status='started';
     request_sha256=$digest; helper_sha256=$helperHash; operator_sid=$identity.User.Value;
     started_at_utc=[DateTime]::UtcNow.ToString('o'); timeout=$request.timeout; deadline_unix=$DeadlineUnix;
-    execution_qpc_limit=$qpcLimit; execution_qpc_frequency=$qpcFrequency
+    execution_qpc_limit=$qpcLimit; execution_qpc_frequency=$qpcFrequency; lifetime=$request.lifetime
 }
 Write-New ($RequestId + '.approved.json') $bytes
 $scriptPath = [IO.Path]::Combine($receipts,($RequestId + '.payload.ps1'))
@@ -168,7 +174,7 @@ function Command-Arguments([string]$ScriptPath) {
     return '-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -EncodedCommand ' + $encoded
 }
 $result = @{version=1; request_id=$RequestId; operation='elevated_commands'; request_sha256=$digest;
-    helper_sha256=$helperHash; status='outcome_unknown'; executed=$false; effects_verified=$false; process_tree_observed=$false;
+    helper_sha256=$helperHash; status='outcome_unknown'; executed=$false; effects_verified=$false; process_tree_observed=$false; lifetime_observed=$false;
     exit_code=$null; stdout=''; stderr=''; output_truncated=$false; retry_authorized=$false}
 try {
     # Kill-on-close process containment. External services/VMs/tasks are NOT contained.
@@ -218,7 +224,58 @@ public static class CommandWatchdog {
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
     public sealed class Dump { public string Text; public bool Truncated; }
     // Process observations only; never external-service/VM/effect verification.
-    public sealed class Answer { public int Code; public bool Timeout,Truncated,ProcessTreeObserved; public string Stdout,Stderr; }
+    public sealed class Answer { public int Code; public bool Timeout,Truncated,ProcessTreeObserved,LifetimeObserved,Cancelled; public string Stdout,Stderr; }
+    [DllImport("kernel32.dll",ExactSpelling=true,SetLastError=true)] static extern bool PeekNamedPipe(IntPtr pipe,IntPtr buffer,uint bytes,IntPtr read,out uint available,IntPtr left);
+    [DllImport("kernel32.dll",ExactSpelling=true)] static extern bool GetNamedPipeServerProcessId(IntPtr pipe,out uint pid);
+    [DllImport("kernel32.dll",ExactSpelling=true)] static extern IntPtr OpenProcess(uint access,bool inherit,uint pid);
+    [DllImport("kernel32.dll",ExactSpelling=true)] static extern bool GetProcessTimes(IntPtr process,out ulong created,out ulong exited,out ulong kernel,out ulong user);
+    [DllImport("kernel32.dll",ExactSpelling=true)] static extern uint GetFileType(IntPtr file);
+    // Caller-controlled channel can ONLY subtract lifetime. It carries NO code,
+    // output, approval, deadline extension or acceptance. Authenticate the native
+    // server process identity, not the pipe spelling or a PID alone. Anonymous
+    // SQOS prevents the unelevated server impersonating this elevated client.
+    sealed class Lifetime : IDisposable {
+        IntPtr pipe,owner;
+        internal Lifetime(string name,uint pid,string created,string requestId) {
+            try {
+                string prefix=@"\\.\pipe\AiAgentCommandLease-v1-"+requestId+"-";
+                ulong expected;
+                if (pid==0 || requestId==null || !System.Text.RegularExpressions.Regex.IsMatch(requestId,@"\A[0-9a-f]{32}\z") ||
+                    name==null || !name.StartsWith(prefix,StringComparison.Ordinal) ||
+                    !System.Text.RegularExpressions.Regex.IsMatch(name.Substring(prefix.Length),@"\A[0-9a-f]{32}\z") ||
+                    !UInt64.TryParse(created,System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out expected) ||
+                    expected==0 || expected.ToString(System.Globalization.CultureInfo.InvariantCulture)!=created) throw new Exception("Caller lifetime binding refused");
+                Security sa=new Security(); sa.Size=Marshal.SizeOf(sa);
+                pipe=CreateFile(name,0x80000000,0,ref sa,3,0x00100000,IntPtr.Zero); // SECURITY_SQOS_PRESENT | SECURITY_ANONYMOUS
+                if (pipe==IntPtr.Zero || pipe==new IntPtr(-1)) { pipe=IntPtr.Zero; throw new Exception("Caller lifetime pipe unavailable"); }
+                uint actual,flags;
+                if (GetFileType(pipe)!=3 || !GetNamedPipeServerProcessId(pipe,out actual) || actual!=pid ||
+                    !GetHandleInformation(pipe,out flags) || flags!=0) throw new Exception("Caller lifetime server differs");
+                owner=OpenProcess(0x101000,false,pid); ulong born,exit,kernel,user;
+                if (owner==IntPtr.Zero || !GetProcessTimes(owner,out born,out exit,out kernel,out user) || born!=expected ||
+                    !GetHandleInformation(owner,out flags) || flags!=0) throw new Exception("Caller lifetime owner differs");
+                if (!Alive()) throw new Exception("Caller lifetime unavailable before creation");
+            } catch { Dispose(); throw; }
+        }
+        internal bool Alive() {
+            uint wait=WaitForSingleObject(owner,0);
+            if (wait==0) return false;
+            if (wait!=258) throw new Exception("Caller lifetime wait unknown");
+            uint available;
+            if (!PeekNamedPipe(pipe,IntPtr.Zero,0,IntPtr.Zero,out available,IntPtr.Zero)) {
+                int error=Marshal.GetLastWin32Error();
+                if (error==109 || error==232 || error==233) return false;
+                throw new Exception("Caller lifetime pipe observation unknown");
+            }
+            if (available!=0) throw new Exception("Caller lifetime data refused");
+            return true;
+        }
+        internal void Require() { if (!Alive()) throw new Exception("Caller lifetime unavailable before creation"); }
+        public void Dispose() {
+            bool closed=Release(ref pipe); closed=Release(ref owner)&closed;
+            if (!closed) throw new Exception("Caller lifetime close unknown");
+        }
+    }
     static Task<Dump> Drain(IntPtr h) {
         return Task.Run(() => {
             using (var file = new FileStream(new SafeFileHandle(h,true),FileAccess.Read))
@@ -236,7 +293,7 @@ public static class CommandWatchdog {
         });
     }
     public static Answer Run(string exe,string args,string cwd,uint ms) {
-        return RunCore(exe,args,cwd,ms,0,0); // historical ordinary characterization API
+        return RunCore(exe,args,cwd,ms,0,0,null); // historical ordinary characterization API
     }
     static uint Remaining(uint maximum,long limit,long frequency) {
         if (limit<1 || frequency<1 || frequency>1000000000L || frequency!=System.Diagnostics.Stopwatch.Frequency)
@@ -249,7 +306,26 @@ public static class CommandWatchdog {
     }
     public static Answer RunWithin(string exe,string args,string cwd,uint ms,long limit,long frequency) {
         if (limit<1 || frequency<1) throw new ArgumentOutOfRangeException("originalWindow");
-        return RunCore(exe,args,cwd,ms,limit,frequency);
+        return RunCore(exe,args,cwd,ms,limit,frequency,null);
+    }
+    public static Answer RunOwned(string exe,string args,string cwd,uint ms,long limit,long frequency,string pipe,uint ownerPid,string created,string requestId) {
+        if (limit<1 || frequency<1) throw new ArgumentOutOfRangeException("originalWindow");
+        // Bind BEFORE native child preparation; no inherited lifetime handles.
+        using (var lifetime=new Lifetime(pipe,ownerPid,created,requestId)) {
+            return RunCore(exe,args,cwd,ms,limit,frequency,lifetime);
+        }
+    }
+    static uint WaitRoot(ProcessInfo p,uint ms,long limit,long frequency,Lifetime lifetime,out bool cancelled) {
+        cancelled=false;
+        if (lifetime==null) return WaitForSingleObject(p.Process,Remaining(ms,limit,frequency));
+        for (;;) {
+            if (!lifetime.Alive()) { cancelled=true; return 258; }
+            uint remaining=Remaining(ms,limit,frequency);
+            if (remaining==0) return 258;
+            uint wait=WaitForSingleObject(p.Process,Math.Min(100u,remaining));
+            if (wait==0) { cancelled=!lifetime.Alive(); return wait; }
+            if (wait!=258) return wait;
+        }
     }
     static void Close(ref IntPtr h) {
         IntPtr old=h; h=IntPtr.Zero;
@@ -270,7 +346,7 @@ public static class CommandWatchdog {
             System.Threading.Thread.Sleep(10);
         }
     }
-    static Answer RunCore(string exe,string args,string cwd,uint ms,long limit,long frequency) {
+    static Answer RunCore(string exe,string args,string cwd,uint ms,long limit,long frequency,Lifetime lifetime) {
         // ONE monotonic execution window includes native preparation even for Run.
         if (ms == 0 || ms > 900000) throw new ArgumentOutOfRangeException("ms");
         long now=System.Diagnostics.Stopwatch.GetTimestamp(),rate=System.Diagnostics.Stopwatch.Frequency;
@@ -309,6 +385,7 @@ public static class CommandWatchdog {
                 throw new Exception("Explicit handle attribute refused");
             StartupEx s=new StartupEx(); s.Startup.Size=(uint)Marshal.SizeOf(s); s.Startup.Flags=0x100;
             s.Startup.In=input; s.Startup.Out=ow; s.Startup.Error=ew; s.Attributes=attrs;
+            if (lifetime!=null) lifetime.Require();
             if (Remaining(ms,limit,frequency)==0) throw new Exception("Original window expired before creation");
             if (!CreateProcess(exe,new StringBuilder("\""+exe+"\" "+args),IntPtr.Zero,IntPtr.Zero,true,0x08080004,IntPtr.Zero,cwd,ref s,out p))
                 throw new Exception("Cannot create atomically contained command");
@@ -320,18 +397,21 @@ public static class CommandWatchdog {
             Close(ref ow); Close(ref ew); Close(ref input);
             stdout=Drain(or); or=IntPtr.Zero; stderr=Drain(er); er=IntPtr.Zero;
             ready=false; DeleteProcThreadAttributeList(attrs); Free(ref attrs); Free(ref jobs); Free(ref handles);
+            if (lifetime!=null) lifetime.Require();
             if (Remaining(ms,limit,frequency)==0) throw new Exception("Original window expired before resume");
             if (ResumeThread(p.Thread)!=1) throw new Exception("Cannot resume command exactly once");
             Close(ref p.Thread);
-            uint wait=WaitForSingleObject(p.Process,Remaining(ms,limit,frequency));
-            bool timeout=wait==258 || (wait==0 && Remaining(ms,limit,frequency)==0); uint code=0;
-            if (timeout) code=124;
+            bool cancelled; uint wait=WaitRoot(p,ms,limit,frequency,lifetime,out cancelled);
+            bool timeout=!cancelled && (wait==258 || (wait==0 && Remaining(ms,limit,frequency)==0)); uint code=0;
+            if (cancelled) code=125;
+            else if (timeout) code=124;
             else if (wait!=0 || !GetExitCodeProcess(p.Process,out code)) throw new Exception("Completion unknown");
             // Also stop descendants after normal root exit; root exit alone is
             // NOT tree completion. Observe zero active entries BEFORE job close.
-            Empty(job,p.Process,timeout?124u:2u);
+            Empty(job,p.Process,cancelled?125u:(timeout?124u:2u));
             if (!Task.WaitAll(new Task[]{stdout,stderr},5000)) throw new Exception("Output completion unknown");
-            var answer=new Answer { Code=unchecked((int)code),Timeout=timeout,
+            if (lifetime!=null && !lifetime.Alive()) { cancelled=true; timeout=false; code=125; }
+            var answer=new Answer { Code=unchecked((int)code),Timeout=timeout,Cancelled=cancelled,LifetimeObserved=lifetime!=null,
                 Stdout=stdout.Result.Text,Stderr=stderr.Result.Text,
                 Truncated=stdout.Result.Truncated || stderr.Result.Truncated,ProcessTreeObserved=true };
             Close(ref p.Process); Close(ref job); return answer;
@@ -355,13 +435,14 @@ public static class CommandWatchdog {
     $ms = [uint32]([Math]::Min($remaining,[Math]::Min([int]$request.timeout,900)) * 1000)
     # Mark launch uncertainty before the native call; only a returned answer proves completion.
     $result.executed = $null
-    $answer = [CommandWatchdog]::RunWithin($exe,
-        (Command-Arguments $scriptPath),$request.cwd,$ms,$qpcLimit,$qpcFrequency)
+    $answer = [CommandWatchdog]::RunOwned($exe,
+        (Command-Arguments $scriptPath),$request.cwd,$ms,$qpcLimit,$qpcFrequency,
+        $request.lifetime.pipe,[uint32]$request.lifetime.owner_pid,$request.lifetime.owner_created,$RequestId)
     $result.executed = $true
     $result.exit_code = $answer.Code; $result.stdout = $answer.Stdout; $result.stderr = $answer.Stderr
     $result.output_truncated = $answer.Truncated
-    $result.process_tree_observed = $answer.ProcessTreeObserved
-    $result.status = if ($answer.Timeout) { 'timeout_outcome_unknown' } elseif ($answer.Code -eq 0) { 'completed' } else { 'failed' }
+    $result.process_tree_observed = $answer.ProcessTreeObserved; $result.lifetime_observed = $answer.LifetimeObserved
+    $result.status = if ($answer.Cancelled) { 'cancelled_outcome_unknown' } elseif ($answer.Timeout) { 'timeout_outcome_unknown' } elseif ($answer.Code -eq 0) { 'completed' } else { 'failed' }
 } catch {
     $result.status = 'outcome_unknown'
 } finally {

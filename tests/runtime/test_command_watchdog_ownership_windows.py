@@ -132,7 +132,7 @@ def source(mode):
                              'if (CommandFixture.Refuse() || !UpdateProcThreadAttribute(attrs,0,new UIntPtr(0x20002)'),
         'membership': ('|| !member ||', '|| !member || CommandFixture.Refuse() ||'),
         'close': ('old!=IntPtr.Zero && !CloseHandle(old)', 'old!=IntPtr.Zero && (!CloseHandle(old) || CommandFixture.CloseFault())'),
-        'wait': ('uint wait=WaitForSingleObject(p.Process,Remaining(ms,limit,frequency));', 'uint wait=0xffffffff;'),
+        'wait': ('bool cancelled; uint wait=WaitRoot(p,ms,limit,frequency,lifetime,out cancelled);', 'bool cancelled=false; uint wait=0xffffffff;'),
         'stop': ('!TerminateJobObject(job,code)', '(CommandFixture.Refuse() || !TerminateJobObject(job,code))'),
         'accounting': ('if (!QueryAccounting(job,1,', 'if (CommandFixture.Refuse() || !QueryAccounting(job,1,'),
         'drain': ('if (!Task.WaitAll(new Task[]{stdout,stderr},5000))',
@@ -264,5 +264,5 @@ def test_outer_helper_has_no_post_create_assignment_or_implicit_handle_inheritan
     assert 'AssignProcessToJobObject' not in text and 'TerminateProcess(' not in text
     assert 'new UIntPtr(0x2000d)' in text and 'new UIntPtr(0x20002)' in text
     assert '0x08080004' in text and 'ResumeThread(p.Thread)!=1' in text
-    assert text.index('Empty(job,p.Process,timeout?124u:2u)') < text.index('Close(ref p.Process); Close(ref job); return answer;')
+    assert text.index('Empty(job,p.Process,cancelled?125u:(timeout?124u:2u))') < text.index('Close(ref p.Process); Close(ref job); return answer;')
     assert '$result.process_tree_observed = $answer.ProcessTreeObserved' in text

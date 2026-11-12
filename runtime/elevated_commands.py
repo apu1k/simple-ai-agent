@@ -11,6 +11,7 @@ import os
 import re
 import time
 from pathlib import Path
+from contextlib import nullcontext
 from typing import Any
 
 from core.tool_progress import approval_progress
@@ -18,6 +19,7 @@ from runtime.privileged_host import (
     PrivilegedHostError, _assert_protected, _bounded_json, _elevate, _windows_paths,
 )
 from runtime.privileged_turn import PendingPrivilege, PrivilegedClaim, PrivilegedTurn
+from runtime.command_lifetime import CommandLifetime
 from night_shifts.ubuntu_preparation_control import _current_user_sid
 # Independent Administrator execution ceiling, not derived from the shell tool.
 MAX_TIMEOUT = 15 * 60
@@ -55,7 +57,9 @@ def load_launcher() -> tuple[Path, Path, dict[str, Any]]:
         _assert_protected(path)
     _assert_protected(powershell, system_binary=True)
     policy = _bounded_json(root / 'policy.json')
-    if (set(policy) != {'version', 'operator_sid', 'helper_sha256', 'max_timeout'}
+    if (set(policy) not in ({'version', 'operator_sid', 'helper_sha256', 'max_timeout'},
+                           {'version', 'operator_sid', 'helper_sha256', 'max_timeout', 'lifetime_protocol'})
+            or ('lifetime_protocol' in policy and (type(policy['lifetime_protocol']) is not int or policy['lifetime_protocol'] != 1))
             or type(policy['version']) is not int or policy['version'] != 1
             or policy['operator_sid'] != _current_user_sid()
             or type(policy['max_timeout']) is not int
@@ -88,10 +92,11 @@ def validate_receipt(receipt: dict[str, Any], claim: PrivilegedClaim, digest: st
             or receipt.get('request_sha256') != digest
             or receipt.get('helper_sha256') != helper_digest
             or receipt.get('operation') != 'elevated_commands'
-            or receipt.get('status') not in ('completed', 'failed', 'timeout_outcome_unknown', 'outcome_unknown')
+            or receipt.get('status') not in ('completed', 'failed', 'timeout_outcome_unknown', 'cancelled_outcome_unknown', 'outcome_unknown')
             or (receipt.get('executed') is not None and type(receipt['executed']) is not bool)
             or receipt.get('effects_verified') is not False
             or ('process_tree_observed' in receipt and type(receipt['process_tree_observed']) is not bool)
+            or ('lifetime_observed' in receipt and type(receipt['lifetime_observed']) is not bool)
             or not isinstance(receipt.get('stdout'), str) or not isinstance(receipt.get('stderr'), str)
             or len(receipt['stdout'].encode('utf-8')) + len(receipt['stderr'].encode('utf-8')) > 150000
             or receipt.get('retry_authorized') is not False
@@ -110,13 +115,20 @@ def validate_receipt(receipt: dict[str, Any], claim: PrivilegedClaim, digest: st
         raise PrivilegedHostError('Inconsistent failure receipt')
     if receipt['status'] == 'timeout_outcome_unknown' and receipt['exit_code'] != 124:
         raise PrivilegedHostError('Inconsistent timeout receipt')
+    if receipt['status'] == 'cancelled_outcome_unknown' and (receipt['exit_code'] != 125
+            or receipt.get('process_tree_observed') is not True or receipt.get('lifetime_observed') is not True):
+        raise PrivilegedHostError('Inconsistent cancellation receipt')
+    if ('lifetime_observed' in receipt and receipt['status'] != 'outcome_unknown'
+            and receipt['lifetime_observed'] is not True):
+        raise PrivilegedHostError('Missing lifetime observation')
     if receipt['status'] == 'completed' and (not receipt['executed'] or receipt['exit_code'] != 0):
         raise PrivilegedHostError('Inconsistent completion receipt')
 
 
 def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: str,
                         timeout: int, reason: str, cwd: str, *,
-                        required_helper_sha256: str | None = None) -> dict[str, Any]:
+                        required_helper_sha256: str | None = None,
+                        require_lifetime: bool = False) -> dict[str, Any]:
     if os.name != 'nt' or claim.operation != 'elevated_commands':
         raise PrivilegedHostError('Windows elevated-command grant required')
     validate_script(script, timeout, reason)
@@ -129,35 +141,47 @@ def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: st
     # Retained 60-second installations stay usable but never inherit wider authority.
     if timeout > policy['max_timeout']:
         raise PrivilegedHostError('Requested timeout exceeds installed launcher policy; reviewed deployment required')
-    payload = dict(version=1, request_id=claim.request_id, operation=claim.operation,
-                   deadline_unix=int(claim.deadline_unix), timeout=timeout, script=script,
-                   cwd=cwd, reason=reason, operator_sid=policy['operator_sid'],
-                   helper_sha256=policy['helper_sha256'])
-    request, decision = await_approval(gate, claim, payload)
-    base = dict(request_id=claim.request_id, approval=decision, review_sha256=request.review_sha256)
-    if decision != 'accepted':
-        return dict(base, status=decision, executed=False)
-    # Revalidate the protected installation after the UI wait; no changed policy
-    # or code may inherit an approval. The launcher hashes the exact same bytes.
-    if load_launcher() != (root, powershell, policy):
-        raise PrivilegedHostError('Installed launcher changed after review')
-    if time.time() >= claim.deadline_unix:
-        return dict(base, status='expired', executed=False)
-    local_path(cwd, directory=True)
-    gate.require_accepted(request)
-    inbox = root / 'requests' / (claim.request_id + '.json')
-    with inbox.open('xb') as stream:
-        stream.write(request.review_json.encode('utf-8'))
-        stream.flush()
-        os.fsync(stream.fileno())
-    state = _elevate(powershell, root / 'helper.ps1', claim,
-                     request_sha256=request.review_sha256)
-    if state == 'uac_cancelled':
-        return dict(base, status=state, executed=False)
-    if state not in ('completed', 'helper_failed'):
-        return dict(base, status='outcome_unknown', execution_state=state, effects_verified=False)
-    receipt_path = root / 'receipts' / (claim.request_id + '.result.json')
-    receipt = _bounded_json(receipt_path)
-    validate_receipt(receipt, claim, request.review_sha256, policy['helper_sha256'])
-    return dict(receipt, approval='accepted', review_sha256=request.review_sha256,
-                receipt=str(receipt_path))
+    capable = type(policy.get('lifetime_protocol')) is int and policy['lifetime_protocol'] == 1
+    if require_lifetime and not capable:
+        raise PrivilegedHostError('Reviewed caller-lifetime deployment required before approval')
+    # Explicit old installations retain their old general-command behavior. Fixed
+    # setup refuses them; neither receipt defaults nor source edits upgrade them.
+    context = CommandLifetime(gate, claim, policy['operator_sid']) if capable else nullcontext(None)
+    with context as lifetime:
+        payload = dict(version=1, request_id=claim.request_id, operation=claim.operation,
+                       deadline_unix=int(claim.deadline_unix), timeout=timeout, script=script,
+                       cwd=cwd, reason=reason, operator_sid=policy['operator_sid'],
+                       helper_sha256=policy['helper_sha256'])
+        if lifetime is not None:
+            payload['lifetime'] = lifetime.binding
+        request, decision = await_approval(gate, claim, payload)
+        base = dict(request_id=claim.request_id, approval=decision, review_sha256=request.review_sha256)
+        if decision != 'accepted':
+            return dict(base, status=decision, executed=False)
+        if load_launcher() != (root, powershell, policy):
+            raise PrivilegedHostError('Installed launcher changed after review')
+        if time.time() >= claim.deadline_unix:
+            return dict(base, status='expired', executed=False)
+        local_path(cwd, directory=True)
+        gate.require_accepted(request)
+        inbox = root / 'requests' / (claim.request_id + '.json')
+        with inbox.open('xb') as stream:
+            stream.write(request.review_json.encode('utf-8'))
+            stream.flush()
+            os.fsync(stream.fileno())
+        state = _elevate(powershell, root / 'helper.ps1', claim,
+                         request_sha256=request.review_sha256)
+        if state == 'uac_cancelled':
+            return dict(base, status=state, executed=False)
+        if state not in ('completed', 'helper_failed'):
+            return dict(base, status='outcome_unknown', execution_state=state, effects_verified=False)
+        receipt_path = root / 'receipts' / (claim.request_id + '.result.json')
+        receipt = _bounded_json(receipt_path)
+        validate_receipt(receipt, claim, request.review_sha256, policy['helper_sha256'])
+        if capable and receipt.get('status') != 'outcome_unknown' and receipt.get('lifetime_observed') is not True:
+            raise PrivilegedHostError('Missing protected lifetime observation; outcome unknown')
+        if capable and gate.execution_cancelled(claim):
+            return dict(base, status='cancelled_outcome_unknown', effects_verified=False,
+                        retry_authorized=False, receipt=str(receipt_path))
+        return dict(receipt, approval='accepted', review_sha256=request.review_sha256,
+                    receipt=str(receipt_path))

@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +25,8 @@ from night_shifts import bootstrap_native_build as build
 from night_shifts import bootstrap_native_setup_build as sb
 from night_shifts import bootstrap_native_setup_launch as launch
 from runtime.privileged_host import _windows_paths
+from runtime.command_lifetime import CommandLifetime
+from runtime.privileged_turn import PrivilegedClaim
 from tests.night_shifts.test_bootstrap_native_setup_build import profile
 from tests.night_shifts.test_native_validator_setup import powershell
 from tests.night_shifts.test_native_validator_setup_supervision_windows import FIXTURE, _compile
@@ -146,20 +149,25 @@ def test_complete_ordinary_handoff_snapshot_and_nested_watchdogs(mode, newlines)
     _, exe = _windows_paths()
     helper = ROOT / 'scripts/privileged_command_helper.ps1'
     args = '-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "' + str(snapshot_path) + '"'
+    # Explicit ordinary lease/admission fixture, not a privileged grant. The
+    # real pipe, server identity and native cancellation checks remain intact.
+    lease = CommandLifetime(SimpleNamespace(execution_cancelled=lambda claim: False), PrivilegedClaim(identity_id, until), sid)
+    binding = lease.binding
     controller = f"""
 $ErrorActionPreference='Stop'
 $text=[IO.File]::ReadAllText({quote(helper)})
 $start=$text.IndexOf('using System;'); $end=$text.IndexOf("'@",$start)
 Add-Type -TypeDefinition $text.Substring($start,$end-$start)
-$a=[CommandWatchdog]::RunWithin({quote(exe)},{quote(args)},{quote(workspace)},20000,{cap}L,{rate.value}L)
+$a=[CommandWatchdog]::RunOwned({quote(exe)},{quote(args)},{quote(workspace)},20000,{cap}L,{rate.value}L,{quote(binding['pipe'])},[uint32]{binding['owner_pid']},{quote(binding['owner_created'])},{quote(identity_id)})
 $a | ConvertTo-Json -Compress
 """
-    result = subprocess.run([str(exe), '-NoProfile', '-NonInteractive', '-Command', controller],
-        capture_output=True, text=True, timeout=23, check=False)
+    with lease:
+        result = subprocess.run([str(exe), '-NoProfile', '-NonInteractive', '-Command', controller],
+            capture_output=True, text=True, timeout=23, check=False)
     assert result.returncode == 0, (str(workspace), result.stdout, result.stderr)
     answer = json.loads(result.stdout)
     assert answer['Timeout'] is answer['Truncated'] is False, str(workspace)
-    assert answer['ProcessTreeObserved'] is True, str(workspace)
+    assert answer['ProcessTreeObserved'] is answer['LifetimeObserved'] is True and answer['Cancelled'] is False, str(workspace)
     install_claim = target / 'claims/install-attempt.claim'
     if mode == 'normal':
         assert answer['Code'] == 0 and not answer['Stderr'], (str(workspace), answer)
@@ -170,7 +178,7 @@ $a | ConvertTo-Json -Compress
             assert k.CloseHandle(handle), str(workspace)
         outer = dict(version=1, operation='elevated_commands', request_id=identity_id, helper_sha256='d' * 64, status='completed',
             executed=True, effects_verified=False, retry_authorized=False, output_truncated=False, exit_code=0, stderr='',
-            stdout=answer['Stdout'], process_tree_observed=answer['ProcessTreeObserved'])
+            stdout=answer['Stdout'], process_tree_observed=answer['ProcessTreeObserved'], lifetime_observed=answer['LifetimeObserved'])
         observed = launch.reconcile_setup_handoff(review, request_id=identity_id, outer=outer)
         assert observed['status'] == 'setup_observed_not_accepted'
         assert observed['accepted'] is observed['provisioning_authorized'] is observed['retry_authorized'] is False

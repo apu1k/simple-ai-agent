@@ -25,9 +25,9 @@ def test_fixed_integration_uses_existing_approval_and_never_retries(monkeypatch,
     if status in ('rejected', 'expired', 'uac_cancelled'):
         data['executed'] = False
     calls = []
-    def run(gate, claim, script, seconds, reason, cwd, *, required_helper_sha256):
+    def run(gate, claim, script, seconds, reason, cwd, *, required_helper_sha256, require_lifetime):
         calls.append(claim)
-        assert required_helper_sha256 == p['outer_helper_sha256']
+        assert required_helper_sha256 == p['outer_helper_sha256'] and require_lifetime is True
         assert seconds == 20 and cwd == r'C:\SetupHost'
         encoded = script.split("FromBase64String('", 1)[1].split("')", 1)[0]
         assert 'NVSO0001' in script and ID in base64.b64decode(encoded).decode('ascii')
@@ -167,4 +167,5 @@ def test_protected_original_record_precedes_claim_and_native_invocation_has_no_r
     assert helper.index('$qpcFirst =') < helper.index("Write-Receipt ($RequestId + '.start.json')")
     assert 'execution_qpc_limit=$qpcLimit; execution_qpc_frequency=$qpcFrequency' in helper
     assert 'WaitForSingleObject(p.Process,Remaining(ms,limit,frequency))' in helper
-    assert '(Command-Arguments $scriptPath),$request.cwd,$ms,$qpcLimit,$qpcFrequency)' in helper
+    assert '(Command-Arguments $scriptPath),$request.cwd,$ms,$qpcLimit,$qpcFrequency,' in helper
+    assert '$answer = [CommandWatchdog]::RunOwned' in helper
