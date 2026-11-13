@@ -90,10 +90,13 @@ def test_endpoint_is_closed_on_every_exit_without_retry_or_refund(monkeypatch, e
 
 
 @pytest.mark.parametrize('accept,state', [(False, 'unused'), (True, 'uac_cancelled'), (True, 'completed'), (True, 'revoke')])
-def test_new_client_hashes_lifetime_before_approval_and_preserves_it_until_reconciliation(monkeypatch, tmp_path, accept, state):
+@pytest.mark.parametrize('preparation', [False, True])
+def test_new_client_hashes_lifetime_before_approval_and_preserves_it_until_reconciliation(monkeypatch, tmp_path, accept, state, preparation):
     (tmp_path / 'requests').mkdir()
     (tmp_path / 'receipts').mkdir()
     policy = dict(operator_sid='fixture', helper_sha256='c' * 64, max_timeout=900, lifetime_protocol=1)
+    if preparation:
+        policy['preparation_protocol'] = 1
     events = []
     binding = dict(version=1, pipe=lease.PREFIX + 'a' * 32 + '-' + 'b' * 32, owner_pid=123, owner_created='456')
     class Lease:
@@ -119,12 +122,14 @@ def test_new_client_hashes_lifetime_before_approval_and_preserves_it_until_recon
             gate.revoke()
         data = receipt()
         data.update(request_id=claim.request_id, request_sha256=request_sha256, process_tree_observed=True, lifetime_observed=True)
+        if preparation:
+            data['preparation_observed'] = True
         (tmp_path / 'receipts' / (claim.request_id + '.result.json')).write_text(json.dumps(data))
         return 'completed'
     monkeypatch.setattr(client, '_elevate', elevate)
     monkeypatch.setattr(client, '_bounded_json', lambda path: json.loads(path.read_text()))
     with gate.turn('head'), approval_ui_context(), tool_progress_listener(approve(gate, accept)):
-        result = client.run_approved_script(gate, gate.claim(ELEVATED_OPERATION), 'exit 0', 20, 'inert fixture', str(tmp_path), require_lifetime=True)
+        result = client.run_approved_script(gate, gate.claim(ELEVATED_OPERATION), 'exit 0', 20, 'inert fixture', str(tmp_path), require_lifetime=True, require_preparation=preparation)
     assert events == (['open', 'elevate', 'close'] if accept else ['open', 'close'])
     expected = 'rejected' if not accept else ('cancelled_outcome_unknown' if state == 'revoke' else state)
     assert result['status'] == expected and result.get('effects_verified', False) is False
@@ -150,6 +155,28 @@ def test_cancellation_receipt_cannot_claim_more_than_observed(field, value):
     data[field] = value
     with pytest.raises(PrivilegedHostError):
         client.validate_receipt(data, claim, 'b' * 64, 'c' * 64)
+
+
+@pytest.mark.parametrize('preparation,valid', [('absent', True), (1, True), (True, False), (2, False), (None, False)])
+def test_installed_preparation_policy_is_strict_and_keeps_older_general_installations(monkeypatch, tmp_path, preparation, valid):
+    root = tmp_path / client.HELPER_DIRECTORY
+    root.mkdir()
+    helper = b'reviewed fixture helper'
+    (root / 'helper.ps1').write_bytes(helper)
+    policy = dict(version=1, operator_sid='fixture', helper_sha256=hashlib.sha256(helper).hexdigest(),
+        max_timeout=900, lifetime_protocol=1)
+    if preparation != 'absent':
+        policy['preparation_protocol'] = preparation
+    monkeypatch.setattr(client, '_windows_paths', lambda: (tmp_path / 'other', tmp_path / 'powershell.exe'))
+    monkeypatch.setattr(client, '_assert_protected', lambda *args, **kwargs: None)
+    monkeypatch.setattr(client, '_bounded_json', lambda *args: policy)
+    monkeypatch.setattr(client, '_current_user_sid', lambda: 'fixture')
+    monkeypatch.setattr(client, 'local_path', lambda *args, **kwargs: root)
+    if valid:
+        assert client.load_launcher()[2] == policy
+    else:
+        with pytest.raises(PrivilegedHostError, match='policy'):
+            client.load_launcher()
 
 
 OWNER = '''

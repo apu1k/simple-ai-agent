@@ -101,7 +101,7 @@ try {
     # Bounded protected transport data, never executable text or a renewed cap.
     $reader = New-Object IO.StreamReader($startFile,(New-Object Text.UTF8Encoding($false,$true)),$false,4096,$true)
     try { $start = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
-    if ($start.version -ne 1 -or $start.operation -cne 'elevated_commands' -or $start.status -cne 'started' -or
+    if ($start.version -ne 1 -or $start.preparation_protocol -ne 1 -or $start.operation -cne 'elevated_commands' -or $start.status -cne 'started' -or
         $start.request_id -cne $review.request_id -or $start.operator_sid -cne $review.operator_sid -or
         $start.helper_sha256 -cne $review.outer_helper_sha256 -or $start.timeout -ne $review.seconds -or
         $start.deadline_unix -ne $review.deadline_unix -or $start.execution_qpc_frequency -ne $frequency -or

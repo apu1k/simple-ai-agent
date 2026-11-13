@@ -58,8 +58,10 @@ def load_launcher() -> tuple[Path, Path, dict[str, Any]]:
     _assert_protected(powershell, system_binary=True)
     policy = _bounded_json(root / 'policy.json')
     if (set(policy) not in ({'version', 'operator_sid', 'helper_sha256', 'max_timeout'},
-                           {'version', 'operator_sid', 'helper_sha256', 'max_timeout', 'lifetime_protocol'})
+                           {'version', 'operator_sid', 'helper_sha256', 'max_timeout', 'lifetime_protocol'},
+                           {'version', 'operator_sid', 'helper_sha256', 'max_timeout', 'lifetime_protocol', 'preparation_protocol'})
             or ('lifetime_protocol' in policy and (type(policy['lifetime_protocol']) is not int or policy['lifetime_protocol'] != 1))
+            or ('preparation_protocol' in policy and (type(policy['preparation_protocol']) is not int or policy['preparation_protocol'] != 1))
             or type(policy['version']) is not int or policy['version'] != 1
             or policy['operator_sid'] != _current_user_sid()
             or type(policy['max_timeout']) is not int
@@ -97,6 +99,7 @@ def validate_receipt(receipt: dict[str, Any], claim: PrivilegedClaim, digest: st
             or receipt.get('effects_verified') is not False
             or ('process_tree_observed' in receipt and type(receipt['process_tree_observed']) is not bool)
             or ('lifetime_observed' in receipt and type(receipt['lifetime_observed']) is not bool)
+            or ('preparation_observed' in receipt and type(receipt['preparation_observed']) is not bool)
             or not isinstance(receipt.get('stdout'), str) or not isinstance(receipt.get('stderr'), str)
             or len(receipt['stdout'].encode('utf-8')) + len(receipt['stderr'].encode('utf-8')) > 150000
             or receipt.get('retry_authorized') is not False
@@ -121,6 +124,11 @@ def validate_receipt(receipt: dict[str, Any], claim: PrivilegedClaim, digest: st
     if ('lifetime_observed' in receipt and receipt['status'] != 'outcome_unknown'
             and receipt['lifetime_observed'] is not True):
         raise PrivilegedHostError('Missing lifetime observation')
+    if ('preparation_observed' in receipt and
+            (receipt['preparation_observed'] is not (receipt['status'] != 'outcome_unknown')
+             or (receipt['preparation_observed'] and
+                 (receipt.get('lifetime_observed') is not True or receipt.get('process_tree_observed') is not True)))):
+        raise PrivilegedHostError('Inconsistent preparation observation')
     if receipt['status'] == 'completed' and (not receipt['executed'] or receipt['exit_code'] != 0):
         raise PrivilegedHostError('Inconsistent completion receipt')
 
@@ -128,7 +136,8 @@ def validate_receipt(receipt: dict[str, Any], claim: PrivilegedClaim, digest: st
 def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: str,
                         timeout: int, reason: str, cwd: str, *,
                         required_helper_sha256: str | None = None,
-                        require_lifetime: bool = False) -> dict[str, Any]:
+                        require_lifetime: bool = False,
+                        require_preparation: bool = False) -> dict[str, Any]:
     if os.name != 'nt' or claim.operation != 'elevated_commands':
         raise PrivilegedHostError('Windows elevated-command grant required')
     validate_script(script, timeout, reason)
@@ -142,6 +151,9 @@ def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: st
     if timeout > policy['max_timeout']:
         raise PrivilegedHostError('Requested timeout exceeds installed launcher policy; reviewed deployment required')
     capable = type(policy.get('lifetime_protocol')) is int and policy['lifetime_protocol'] == 1
+    prepared = type(policy.get('preparation_protocol')) is int and policy['preparation_protocol'] == 1
+    if require_preparation and (not capable or not prepared):
+        raise PrivilegedHostError('Reviewed preparation-lifetime deployment required before approval')
     if require_lifetime and not capable:
         raise PrivilegedHostError('Reviewed caller-lifetime deployment required before approval')
     # Explicit old installations retain their old general-command behavior. Fixed
@@ -180,6 +192,8 @@ def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: st
         validate_receipt(receipt, claim, request.review_sha256, policy['helper_sha256'])
         if capable and receipt.get('status') != 'outcome_unknown' and receipt.get('lifetime_observed') is not True:
             raise PrivilegedHostError('Missing protected lifetime observation; outcome unknown')
+        if prepared and receipt.get('status') != 'outcome_unknown' and receipt.get('preparation_observed') is not True:
+            raise PrivilegedHostError('Missing protected preparation observation; outcome unknown')
         if capable and gate.execution_cancelled(claim):
             return dict(base, status='cancelled_outcome_unknown', effects_verified=False,
                         retry_authorized=False, receipt=str(receipt_path))

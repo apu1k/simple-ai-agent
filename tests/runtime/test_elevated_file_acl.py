@@ -3,7 +3,9 @@
 The native fixture extracts only two function definitions. It checks the exact
 production descriptor in memory, then substitutes the current user as owner/group
 for disposable files so no Administrator token is needed. The production DACL is
-unchanged. This does not establish real Administrator ownership or UAC behavior.
+unchanged. The ACL-only helper fixture supplies a counting preparation double;
+native lease/write composition is covered separately in test_native_setup_launch.
+This does not establish real Administrator ownership or UAC behavior.
 """
 import os
 import re
@@ -98,6 +100,11 @@ $fileSecurity.SetOwner($identity.User)
 $fileSecurity.SetGroup($identity.User)
 $root = {quote(tmp_path)}
 $receipts = $root
+# Explicit ACL-only dependency double. Do NOT disable the default production
+# guard or confuse these calls with evidence of actual native caller lifetime.
+$script:preparationChecks = 0
+$preparation = New-Object PSObject
+$preparation | Add-Member -MemberType ScriptMethod -Name Check -Value {{ $script:preparationChecks++ }}
 [byte[]]$data = [Text.Encoding]::UTF8.GetBytes('fixture content')
 foreach ($name in @({file_names})) {{
     Write-New $name $data
@@ -113,6 +120,9 @@ foreach ($name in @({file_names})) {{
         throw 'Create-new protection was lost'
     }}
 }}
+# Four checks bracket each successful write; one precedes each collision.
+$expectedChecks = if ({quote(script_name)} -ceq {quote(HELPER)}) {{ 5 * @({file_names}).Count }} else {{ 0 }}
+if ($script:preparationChecks -ne $expectedChecks) {{ throw 'Preparation guard was bypassed or collision was not attempted' }}
 Write-Output 'FILE_ACL_FIXTURES_PASSED'
 """
     result = subprocess.run(

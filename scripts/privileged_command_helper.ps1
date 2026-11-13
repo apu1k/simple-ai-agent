@@ -70,7 +70,7 @@ foreach ($path in @($root,$receipts,$PSCommandPath,([IO.Path]::Combine($root,'po
 }
 $policy = [IO.File]::ReadAllText([IO.Path]::Combine($root,'policy.json')) | ConvertFrom-Json
 $helperHash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($policy.version -ne 1 -or $policy.max_timeout -ne 900 -or $policy.lifetime_protocol -ne 1 -or
+if ($policy.version -ne 1 -or $policy.max_timeout -ne 900 -or $policy.lifetime_protocol -ne 1 -or $policy.preparation_protocol -ne 1 -or
     $policy.helper_sha256 -cne $helperHash -or $policy.operator_sid -cne $identity.User.Value) {
     throw 'Installed policy/code/operator mismatch'
 }
@@ -124,23 +124,28 @@ function New-ProtectedFileSecurity([string]$OperatorSid) {
 }
 $fileSecurity = New-ProtectedFileSecurity $identity.User.Value
 # Give every claim, snapshot, payload and result its explicit protected file DACL.
-function Write-New([string]$Name,[byte[]]$Data) {
+function Write-New([string]$Name,[byte[]]$Data,[bool]$GuardPreparation=$true) {
+    if ($GuardPreparation) { $preparation.Check() }
     $path = [IO.Path]::Combine($receipts,$Name)
     $out = New-Object IO.FileStream($path,[IO.FileMode]::CreateNew,
         [Security.AccessControl.FileSystemRights]::Write,[IO.FileShare]::Read,4096,[IO.FileOptions]::None,$fileSecurity)
-    try { $out.Write($Data,0,$Data.Length); $out.Flush($true) }
-    finally { $out.Dispose() }
+    try {
+        if ($GuardPreparation) { $preparation.Check() }
+        $out.Write($Data,0,$Data.Length); $out.Flush($true)
+        if ($GuardPreparation) { $preparation.Check() }
+    } finally { $out.Dispose() }
     $sections = [Security.AccessControl.AccessControlSections]'Owner,Group,Access'
     $actual = Get-Acl -LiteralPath $path -ErrorAction Stop
     if ($actual.GetSecurityDescriptorSddlForm($sections) -cne
         $fileSecurity.GetSecurityDescriptorSddlForm($sections)) {
         throw 'Created file security differs from the protected descriptor; retain for review'
     }
+    if ($GuardPreparation) { $preparation.Check() }
 }
-function Write-Receipt([string]$Name,[object]$Value) {
+function Write-Receipt([string]$Name,[object]$Value,[bool]$GuardPreparation=$true) {
     $data = $utf8.GetBytes(($Value | ConvertTo-Json -Depth 8 -Compress))
     if ($data.Length -gt 65536) { throw 'Oversized receipt' }
-    Write-New $Name $data
+    Write-New $Name $data $GuardPreparation
 }
 # Capture the ORIGINAL execution window BEFORE claims, snapshots or compilation.
 # This protected monotonic record may only shorten the later native worker wait.
@@ -153,17 +158,10 @@ if ($qpcFrequency -lt 1 -or $qpcFrequency -gt 1000000000 -or $qpcFirst -lt 1 -or
 }
 $qpcLimit = [long]([decimal]$qpcFirst + [Math]::Floor([decimal]$executionSeconds * $qpcFrequency))
 if ($qpcLimit -le $qpcFirst) { throw 'Original execution window expired' }
-# Atomic request claim and durable exact approved bytes BEFORE executing anything.
-Write-Receipt ($RequestId + '.start.json') @{
-    version=1; request_id=$RequestId; operation='elevated_commands'; status='started';
-    request_sha256=$digest; helper_sha256=$helperHash; operator_sid=$identity.User.Value;
-    started_at_utc=[DateTime]::UtcNow.ToString('o'); timeout=$request.timeout; deadline_unix=$DeadlineUnix;
-    execution_qpc_limit=$qpcLimit; execution_qpc_frequency=$qpcFrequency; lifetime=$request.lifetime
-}
-Write-New ($RequestId + '.approved.json') $bytes
+# No durable preparation or payload before the SAME native lifetime is acquired.
+# Compilation below is charged to this cap, but is NOT independently supervised.
+$preparation = $null
 $scriptPath = [IO.Path]::Combine($receipts,($RequestId + '.payload.ps1'))
-$bomUtf8 = New-Object Text.UTF8Encoding($true)
-Write-New ($RequestId + '.payload.ps1') ([byte[]]($bomUtf8.GetPreamble() + $bomUtf8.GetBytes($request.script)))
 function Command-Arguments([string]$ScriptPath) {
     $quoted = "'" + $ScriptPath.Replace("'","''") + "'"
     $bootstrap = '[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false); ' +
@@ -174,7 +172,7 @@ function Command-Arguments([string]$ScriptPath) {
     return '-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -EncodedCommand ' + $encoded
 }
 $result = @{version=1; request_id=$RequestId; operation='elevated_commands'; request_sha256=$digest;
-    helper_sha256=$helperHash; status='outcome_unknown'; executed=$false; effects_verified=$false; process_tree_observed=$false; lifetime_observed=$false;
+    helper_sha256=$helperHash; status='outcome_unknown'; executed=$false; effects_verified=$false; process_tree_observed=$false; lifetime_observed=$false; preparation_observed=$false;
     exit_code=$null; stdout=''; stderr=''; output_truncated=$false; retry_authorized=$false}
 try {
     # Kill-on-close process containment. External services/VMs/tasks are NOT contained.
@@ -224,7 +222,7 @@ public static class CommandWatchdog {
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
     public sealed class Dump { public string Text; public bool Truncated; }
     // Process observations only; never external-service/VM/effect verification.
-    public sealed class Answer { public int Code; public bool Timeout,Truncated,ProcessTreeObserved,LifetimeObserved,Cancelled; public string Stdout,Stderr; }
+    public sealed class Answer { public int Code; public bool Timeout,Truncated,ProcessTreeObserved,LifetimeObserved,Cancelled,PreparationObserved; public string Stdout,Stderr; }
     [DllImport("kernel32.dll",ExactSpelling=true,SetLastError=true)] static extern bool PeekNamedPipe(IntPtr pipe,IntPtr buffer,uint bytes,IntPtr read,out uint available,IntPtr left);
     [DllImport("kernel32.dll",ExactSpelling=true)] static extern bool GetNamedPipeServerProcessId(IntPtr pipe,out uint pid);
     [DllImport("kernel32.dll",ExactSpelling=true)] static extern IntPtr OpenProcess(uint access,bool inherit,uint pid);
@@ -314,6 +312,65 @@ public static class CommandWatchdog {
         using (var lifetime=new Lifetime(pipe,ownerPid,created,requestId)) {
             return RunCore(exe,args,cwd,ms,limit,frequency,lifetime);
         }
+    }
+    // A single-use native owner bridges durable preparation and launch. There
+    // is no reconnect, deadline renewal or second executable attempt on failure.
+    public sealed class Preparation : IDisposable {
+        Lifetime lifetime;
+        readonly uint ms;
+        readonly long limit,frequency,deadline;
+        long lastQpc,lastWall;
+        bool spent,disposed,failed;
+        internal Preparation(uint maximum,long cap,long rate,long deadlineUnix,string pipe,uint pid,string created,string id) {
+            if (maximum==0 || maximum>900000 || deadlineUnix<1 || deadlineUnix>253402300799L)
+                throw new ArgumentOutOfRangeException("preparationWindow");
+            ms=maximum; frequency=rate; deadline=deadlineUnix;
+            lastQpc=System.Diagnostics.Stopwatch.GetTimestamp();
+            lastWall=DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            // Validate the incoming clock domain, then only SHORTEN its cap.
+            Remaining(ms,cap,frequency);
+            limit=Math.Min(cap,checked(lastQpc+(long)Decimal.Floor((decimal)ms*frequency/1000)));
+            if (Remaining(ms,limit,frequency)==0 || (decimal)lastWall>=(decimal)deadline*1000)
+                throw new Exception("Preparation window unavailable");
+            lifetime=new Lifetime(pipe,pid,created,id);
+            try { Observe(); } catch { Dispose(); throw; }
+        }
+        void Observe() {
+            if (disposed || failed) throw new Exception("Preparation owner unavailable");
+            try {
+                long now=System.Diagnostics.Stopwatch.GetTimestamp(),wall=DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                if (now<lastQpc || wall<lastWall || Remaining(ms,limit,frequency)==0 || (decimal)wall>=(decimal)deadline*1000)
+                    throw new Exception("Preparation window unavailable");
+                lastQpc=now; lastWall=wall; lifetime.Require();
+            } catch { failed=true; throw; }
+        }
+        public void Check() {
+            if (spent) throw new Exception("Preparation already consumed");
+            Observe();
+        }
+        internal Answer Run(string exe,string args,string cwd) {
+            if (spent) throw new Exception("Preparation already consumed");
+            spent=true; // uncertainty BEFORE observation or native entry
+            Observe();
+            Answer answer=RunCore(exe,args,cwd,ms,limit,frequency,lifetime);
+            // RunCore already observes cancellation/deadline termination. A
+            // later loss cannot promote normal completion into acceptance.
+            if (!answer.Cancelled && !answer.Timeout) Observe();
+            answer.PreparationObserved=true; return answer;
+        }
+        public void Dispose() {
+            if (disposed) return;
+            disposed=true;
+            Lifetime old=lifetime; lifetime=null;
+            if (old!=null) old.Dispose(); // checked; never retry uncertain closes
+        }
+    }
+    public static Preparation Prepare(uint ms,long limit,long frequency,long deadlineUnix,string pipe,uint pid,string created,string requestId) {
+        return new Preparation(ms,limit,frequency,deadlineUnix,pipe,pid,created,requestId);
+    }
+    public static Answer RunPrepared(Preparation preparation,string exe,string args,string cwd) {
+        if (preparation==null) throw new ArgumentNullException("preparation");
+        return preparation.Run(exe,args,cwd);
     }
     static uint WaitRoot(ProcessInfo p,uint ms,long limit,long frequency,Lifetime lifetime,out bool cancelled) {
         cancelled=false;
@@ -430,15 +487,29 @@ public static class CommandWatchdog {
     }
 }
 '@
+    $preparation = [CommandWatchdog]::Prepare([uint32]($request.timeout*1000),$qpcLimit,$qpcFrequency,$DeadlineUnix,
+        $request.lifetime.pipe,[uint32]$request.lifetime.owner_pid,$request.lifetime.owner_created,$RequestId)
+    # Permanent collision barrier, exact snapshot and payload, all under ONE
+    # held caller capability. A partial write stays; failures never reset it.
+    Write-Receipt ($RequestId + '.start.json') @{
+        version=1; request_id=$RequestId; operation='elevated_commands'; status='started';
+        request_sha256=$digest; helper_sha256=$helperHash; operator_sid=$identity.User.Value;
+        started_at_utc=[DateTime]::UtcNow.ToString('o'); timeout=$request.timeout; deadline_unix=$DeadlineUnix;
+        execution_qpc_limit=$qpcLimit; execution_qpc_frequency=$qpcFrequency; lifetime=$request.lifetime;
+        preparation_protocol=1
+    }
+    Write-New ($RequestId + '.approved.json') $bytes
+    $bomUtf8 = New-Object Text.UTF8Encoding($true)
+    Write-New ($RequestId + '.payload.ps1') ([byte[]]($bomUtf8.GetPreamble() + $bomUtf8.GetBytes($request.script)))
+    $preparation.Check()
     $remaining = $DeadlineUnix - [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     if ($remaining -le 0) { throw 'Approval expired before command launch' }
-    $ms = [uint32]([Math]::Min($remaining,[Math]::Min([int]$request.timeout,900)) * 1000)
     # Mark launch uncertainty before the native call; only a returned answer proves completion.
     $result.executed = $null
-    $answer = [CommandWatchdog]::RunOwned($exe,
-        (Command-Arguments $scriptPath),$request.cwd,$ms,$qpcLimit,$qpcFrequency,
-        $request.lifetime.pipe,[uint32]$request.lifetime.owner_pid,$request.lifetime.owner_created,$RequestId)
+    $answer = [CommandWatchdog]::RunPrepared($preparation,$exe,(Command-Arguments $scriptPath),$request.cwd)
+    $preparation.Dispose(); $preparation = $null
     $result.executed = $true
+    $result.preparation_observed = $answer.PreparationObserved
     $result.exit_code = $answer.Code; $result.stdout = $answer.Stdout; $result.stderr = $answer.Stderr
     $result.output_truncated = $answer.Truncated
     $result.process_tree_observed = $answer.ProcessTreeObserved; $result.lifetime_observed = $answer.LifetimeObserved
@@ -446,8 +517,16 @@ public static class CommandWatchdog {
 } catch {
     $result.status = 'outcome_unknown'
 } finally {
+    if ($null -ne $preparation) {
+        try { $preparation.Dispose() } catch {
+            $result.status = 'outcome_unknown'
+            $result.preparation_observed = $false
+        }
+    }
     $result.finished_at_utc = [DateTime]::UtcNow.ToString('o')
-    Write-Receipt ($RequestId + '.result.json') $result
+    # Failure evidence must remain writable AFTER lease/deadline loss. It cannot
+    # launch anything, clear the permanent claim or authorize a second attempt.
+    Write-Receipt ($RequestId + '.result.json') $result $false
 }
 if ($result.status -eq 'completed') { exit 0 }
 exit 2

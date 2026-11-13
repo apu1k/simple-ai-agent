@@ -140,7 +140,7 @@ def test_complete_ordinary_handoff_snapshot_and_nested_watchdogs(mode, newlines)
     count, rate = c.c_int64(), c.c_int64()
     assert k.QueryPerformanceFrequency(c.byref(rate)) and k.QueryPerformanceCounter(c.byref(count))
     cap = count.value + 20 * rate.value
-    record = dict(version=1, operation='elevated_commands', status='started', request_id=identity_id,
+    record = dict(version=1, operation='elevated_commands', status='started', preparation_protocol=1, request_id=identity_id,
         operator_sid=sid, helper_sha256='d' * 64, timeout=20, deadline_unix=until,
         execution_qpc_limit=cap, execution_qpc_frequency=rate.value)
     if mode == 'missing_window':
@@ -158,7 +158,8 @@ $ErrorActionPreference='Stop'
 $text=[IO.File]::ReadAllText({quote(helper)})
 $start=$text.IndexOf('using System;'); $end=$text.IndexOf("'@",$start)
 Add-Type -TypeDefinition $text.Substring($start,$end-$start)
-$a=[CommandWatchdog]::RunOwned({quote(exe)},{quote(args)},{quote(workspace)},20000,{cap}L,{rate.value}L,{quote(binding['pipe'])},[uint32]{binding['owner_pid']},{quote(binding['owner_created'])},{quote(identity_id)})
+$p=[CommandWatchdog]::Prepare(20000,{cap}L,{rate.value}L,{until}L,{quote(binding['pipe'])},[uint32]{binding['owner_pid']},{quote(binding['owner_created'])},{quote(identity_id)})
+try {{ $p.Check(); $a=[CommandWatchdog]::RunPrepared($p,{quote(exe)},{quote(args)},{quote(workspace)}) }} finally {{ $p.Dispose() }}
 $a | ConvertTo-Json -Compress
 """
     with lease:
@@ -167,10 +168,10 @@ $a | ConvertTo-Json -Compress
     assert result.returncode == 0, (str(workspace), result.stdout, result.stderr)
     answer = json.loads(result.stdout)
     assert answer['Timeout'] is answer['Truncated'] is False, str(workspace)
-    assert answer['ProcessTreeObserved'] is answer['LifetimeObserved'] is True and answer['Cancelled'] is False, str(workspace)
+    assert answer['ProcessTreeObserved'] is answer['LifetimeObserved'] is answer['PreparationObserved'] is True and answer['Cancelled'] is False, str(workspace)
     install_claim = target / 'claims/install-attempt.claim'
     if mode == 'normal':
-        assert answer['Code'] == 0 and not answer['Stderr'], (str(workspace), answer)
+        assert answer['Code'] == 0 and not answer['Stderr'], (str(workspace), json.dumps(answer, sort_keys=True))
         handle = int((target / 'child-handle.txt').read_text(encoding='ascii'))
         try:
             assert k.WaitForSingleObject(handle, 1000) == 0, str(workspace)
@@ -178,7 +179,8 @@ $a | ConvertTo-Json -Compress
             assert k.CloseHandle(handle), str(workspace)
         outer = dict(version=1, operation='elevated_commands', request_id=identity_id, helper_sha256='d' * 64, status='completed',
             executed=True, effects_verified=False, retry_authorized=False, output_truncated=False, exit_code=0, stderr='',
-            stdout=answer['Stdout'], process_tree_observed=answer['ProcessTreeObserved'], lifetime_observed=answer['LifetimeObserved'])
+            stdout=answer['Stdout'], process_tree_observed=answer['ProcessTreeObserved'], lifetime_observed=answer['LifetimeObserved'],
+            preparation_observed=answer['PreparationObserved'])
         observed = launch.reconcile_setup_handoff(review, request_id=identity_id, outer=outer)
         assert observed['status'] == 'setup_observed_not_accepted'
         assert observed['accepted'] is observed['provisioning_authorized'] is observed['retry_authorized'] is False

@@ -36,7 +36,7 @@ def run_reviewed_setup_handoff(
     frozen = prepare_setup_handoff(p, template=template, request_id=claim.request_id,
         deadline_unix=int(claim.deadline_unix))
     result = run_approved_script(gate, claim, frozen.script, frozen.seconds, REASON, frozen.working_directory,
-        required_helper_sha256=str(p['outer_helper_sha256']), require_lifetime=True)
+        required_helper_sha256=str(p['outer_helper_sha256']), require_lifetime=True, require_preparation=True)
     base = dict(request_id=claim.request_id, accepted=False, provisioning_authorized=False,
         retry_authorized=False, gate_a='unrun', effects_verified=False)
     if result.get('status') in ('rejected', 'expired', 'uac_cancelled') and result.get('executed') is False:

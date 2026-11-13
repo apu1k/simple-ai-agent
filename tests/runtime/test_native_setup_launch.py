@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -25,9 +26,9 @@ def test_fixed_integration_uses_existing_approval_and_never_retries(monkeypatch,
     if status in ('rejected', 'expired', 'uac_cancelled'):
         data['executed'] = False
     calls = []
-    def run(gate, claim, script, seconds, reason, cwd, *, required_helper_sha256, require_lifetime):
+    def run(gate, claim, script, seconds, reason, cwd, *, required_helper_sha256, require_lifetime, require_preparation):
         calls.append(claim)
-        assert required_helper_sha256 == p['outer_helper_sha256'] and require_lifetime is True
+        assert required_helper_sha256 == p['outer_helper_sha256'] and require_lifetime is require_preparation is True
         assert seconds == 20 and cwd == r'C:\SetupHost'
         encoded = script.split("FromBase64String('", 1)[1].split("')", 1)[0]
         assert 'NVSO0001' in script and ID in base64.b64decode(encoded).decode('ascii')
@@ -59,6 +60,66 @@ def test_independent_helper_pin_refuses_before_pending_or_uac(monkeypatch, tmp_p
     with pytest.raises(PrivilegedHostError, match='Independently reviewed'):
         client.run_approved_script(PrivilegedTurn(), PrivilegedClaim(ID, 1500, ELEVATED_OPERATION),
             'exit 0', 20, 'inert fixture', str(tmp_path), required_helper_sha256='b' * 64)
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='ordinary native preparation fault fixture')
+@pytest.mark.parametrize('fault', ['qpc_rollback', 'utc_rollback', 'close'])
+def test_preparation_clock_and_close_faults_remain_sticky_unknown(tmp_path, fault):
+    import time
+    from types import SimpleNamespace
+
+    from night_shifts.ubuntu_preparation_control import _current_user_sid
+    from runtime.command_lifetime import CommandLifetime
+    from runtime.privileged_host import _windows_paths
+
+    sid = _current_user_sid()
+    lifetime = CommandLifetime(SimpleNamespace(execution_cancelled=lambda claim: False), PrivilegedClaim(ID, time.time() + 30), sid)
+    binding = lifetime.binding
+    helper = Path(__file__).resolve().parents[2] / 'scripts/privileged_command_helper.ps1'
+    code = f"""
+$ErrorActionPreference='Stop'
+$i=[Security.Principal.WindowsIdentity]::GetCurrent()
+if ((New-Object Security.Principal.WindowsPrincipal($i)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {{ throw 'UNELEVATED fixture required' }}
+$i.Dispose()
+$text=[IO.File]::ReadAllText({quote(helper)}); $start=$text.IndexOf('using System;'); $end=$text.IndexOf("'@",$start)
+$source=$text.Substring($start,$end-$start)
+if ({quote(fault)} -eq 'close') {{
+    $old='if (!closed) throw new Exception("Caller lifetime close unknown");'
+    if (($source.Length-$source.Replace($old,'').Length)/$old.Length -ne 1) {{ throw 'Fixture seam changed' }}
+    # Both real native closes STILL execute. Inject only uncertain observation.
+    $source=$source.Replace($old,'if (!closed || PreparationFixture.Fault) throw new Exception("Caller lifetime close unknown");')
+    $source+=' public static class PreparationFixture {{ public static bool Fault=true; }}'
+}}
+Add-Type -TypeDefinition $source
+$rate=[Diagnostics.Stopwatch]::Frequency; $limit=[Diagnostics.Stopwatch]::GetTimestamp()+10*$rate
+$p=[CommandWatchdog]::Prepare(10000,$limit,$rate,([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()+20),{quote(binding['pipe'])},[uint32]{binding['owner_pid']},{quote(binding['owner_created'])},{quote(ID)})
+try {{
+    $expected='Preparation window unavailable'
+    if ({quote(fault)} -eq 'close') {{
+        $expected='Caller lifetime close unknown'
+    }} else {{
+        $field=if ({quote(fault)} -eq 'qpc_rollback') {{ 'lastQpc' }} else {{ 'lastWall' }}
+        $value=if ($field -eq 'lastQpc') {{ [Diagnostics.Stopwatch]::GetTimestamp()+$rate }} else {{ [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+10000 }}
+        # Test-only corruption of private observation state, not a production seam.
+        $p.GetType().GetField($field,[Reflection.BindingFlags]'Instance,NonPublic').SetValue($p,[long]$value)
+    }}
+    $cause=$null
+    try {{ if ({quote(fault)} -eq 'close') {{ $p.Dispose() }} else {{ $p.Check() }} }} catch {{
+        $e=$_.Exception; while ($e.InnerException) {{ $e=$e.InnerException }}; $cause=$e.Message
+    }}
+    if ($cause -cne $expected) {{ throw ('Unexpected first cause: '+$cause) }}
+    $cause=$null
+    try {{ $p.Check() }} catch {{ $e=$_.Exception; while ($e.InnerException) {{ $e=$e.InnerException }}; $cause=$e.Message }}
+    if ($cause -cne 'Preparation owner unavailable') {{ throw 'Fault recovered its owner' }}
+}} finally {{ $p.Dispose() }}
+Write-Output 'PREPARATION_FAULTS_PASSED'
+"""
+    _, exe = _windows_paths()
+    with lifetime:
+        result = subprocess.run([str(exe), '-NoProfile', '-NonInteractive', '-Command', code],
+            capture_output=True, text=True, timeout=12, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'PREPARATION_FAULTS_PASSED' in result.stdout
 
 
 @pytest.mark.skipif(os.name != 'nt', reason='ordinary native QPC fixture; never protected helper execution')
@@ -162,10 +223,101 @@ Write-Output 'HANDOFF_FUNCTION_FIXTURES_PASSED'
     assert 'HANDOFF_FUNCTION_FIXTURES_PASSED' in result.stdout
 
 
+@pytest.mark.skipif(os.name != 'nt', reason='ordinary native preparation/file/receipt fixture')
+@pytest.mark.parametrize('phase', [0, 1, 2], ids=['claim', 'approved', 'payload'])
+def test_preparation_revocation_blocks_next_write_but_retains_failure_record(tmp_path, phase):
+    import time
+    from threading import Event
+    from types import SimpleNamespace
+
+    from night_shifts.ubuntu_preparation_control import _current_user_sid
+    from runtime.command_lifetime import CommandLifetime
+    from runtime.privileged_host import _windows_paths
+
+    sid = _current_user_sid()
+    helper = Path(__file__).resolve().parents[2] / 'scripts/privileged_command_helper.ps1'
+    revoked = Event()
+    lifetime = CommandLifetime(SimpleNamespace(execution_cancelled=lambda claim: revoked.is_set()),
+        PrivilegedClaim(ID, time.time() + 30), sid)
+    binding = lifetime.binding
+    code = f"""
+$ErrorActionPreference='Stop'
+$i=[Security.Principal.WindowsIdentity]::GetCurrent()
+if ((New-Object Security.Principal.WindowsPrincipal($i)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {{ throw 'UNELEVATED fixture required' }}
+$i.Dispose()
+$text=[IO.File]::ReadAllText({quote(helper)}); $start=$text.IndexOf('using System;'); $end=$text.IndexOf("'@",$start)
+Add-Type -TypeDefinition $text.Substring($start,$end-$start)
+$tokens=$null; $errors=$null
+$ast=[Management.Automation.Language.Parser]::ParseFile({quote(helper)},[ref]$tokens,[ref]$errors)
+if ($errors.Count) {{ throw ($errors | Out-String) }}
+foreach ($name in @('Write-New','Write-Receipt')) {{
+    $node=$ast.Find({{param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name}},$true)
+    Invoke-Expression $node.Extent.Text
+}}
+$receipts={quote(tmp_path)}; $utf8=New-Object Text.UTF8Encoding($false,$true)
+# Ordinary TEST descriptor only; the production Write-New body is unchanged.
+$fileSecurity=New-Object Security.AccessControl.FileSecurity
+$fileSecurity.SetSecurityDescriptorSddlForm({quote('O:' + sid + 'G:' + sid + 'D:P(A;;FA;;;' + sid + ')')})
+$rate=[Diagnostics.Stopwatch]::Frequency; $limit=[Diagnostics.Stopwatch]::GetTimestamp()+10*$rate
+$preparation=[CommandWatchdog]::Prepare(10000,$limit,$rate,([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()+20),{quote(binding['pipe'])},[uint32]{binding['owner_pid']},{quote(binding['owner_created'])},{quote(ID)})
+try {{
+    $names=@('start.json','approved.json','payload.ps1')
+    for ($j=0;$j -le {phase};$j++) {{ Write-New $names[$j] ($utf8.GetBytes('inert preparation bytes')) }}
+    [IO.File]::WriteAllText({quote(tmp_path / 'prepared.marker')},'ready')
+    $wait=[Diagnostics.Stopwatch]::StartNew()
+    while (-not [IO.File]::Exists({quote(tmp_path / 'continue.marker')})) {{
+        if ($wait.ElapsedMilliseconds -gt 5000) {{ throw 'FIXTURE_COORDINATION_TIMEOUT' }}
+        [Threading.Thread]::Sleep(10)
+    }}
+    $refused=$false
+    try {{ Write-New 'blocked.ps1' ($utf8.GetBytes('must not be written')) }} catch {{
+        $e=$_.Exception; while ($e.InnerException) {{ $e=$e.InnerException }}
+        if ($e.Message -cne 'Caller lifetime unavailable before creation') {{ throw }}
+        $refused=$true
+    }}
+    if (-not $refused) {{ throw 'Revoked preparation wrote next file' }}
+}} finally {{ $preparation.Dispose() }}
+# Loss never prevents conservative failure DATA, and never bypasses executable preparation.
+Write-Receipt 'result.json' @{{status='outcome_unknown';executed=$false;preparation_observed=$false;retry_authorized=$false}} $false
+Write-Output 'PREPARATION_WRITE_REFUSAL_PASSED'
+"""
+    path = tmp_path / 'controller.ps1'
+    path.write_text(code, encoding='utf-8-sig')
+    _, exe = _windows_paths()
+    with lifetime:
+        proc = subprocess.Popen([str(exe), '-NoProfile', '-NonInteractive', '-File', str(path)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            until = time.monotonic() + 8
+            while not (tmp_path / 'prepared.marker').exists():
+                assert proc.poll() is None and time.monotonic() < until, str(tmp_path)
+                time.sleep(0.01)
+            revoked.set()
+            lifetime._thread.join(2)
+            assert not lifetime._thread.is_alive()
+            (tmp_path / 'continue.marker').write_text('test coordination', encoding='ascii')
+            out, err = proc.communicate(timeout=8)
+            assert proc.returncode == 0 and not err, (out, err)
+            assert b'PREPARATION_WRITE_REFUSAL_PASSED' in out
+        finally:
+            if proc.poll() is None:
+                proc.kill()  # only the original exact-owned ordinary controller
+            proc.communicate(timeout=5)
+    assert not (tmp_path / 'blocked.ps1').exists()
+    for i, name in enumerate(('start.json', 'approved.json', 'payload.ps1')):
+        assert (tmp_path / name).exists() == (i <= phase)
+        if i <= phase:
+            assert (tmp_path / name).read_bytes() == b'inert preparation bytes'
+    assert json.loads((tmp_path / 'result.json').read_bytes()) == dict(status='outcome_unknown', executed=False,
+        preparation_observed=False, retry_authorized=False)
+
+
 def test_protected_original_record_precedes_claim_and_native_invocation_has_no_renewal():
     helper = (Path(__file__).resolve().parents[2] / 'scripts/privileged_command_helper.ps1').read_text(encoding='utf-8')
     assert helper.index('$qpcFirst =') < helper.index("Write-Receipt ($RequestId + '.start.json')")
     assert 'execution_qpc_limit=$qpcLimit; execution_qpc_frequency=$qpcFrequency' in helper
     assert 'WaitForSingleObject(p.Process,Remaining(ms,limit,frequency))' in helper
-    assert '(Command-Arguments $scriptPath),$request.cwd,$ms,$qpcLimit,$qpcFrequency,' in helper
-    assert '$answer = [CommandWatchdog]::RunOwned' in helper
+    assert '$preparation = [CommandWatchdog]::Prepare' in helper
+    assert helper.index('$preparation = [CommandWatchdog]::Prepare') < helper.index("Write-Receipt ($RequestId + '.start.json')")
+    assert '$answer = [CommandWatchdog]::RunPrepared($preparation,$exe,(Command-Arguments $scriptPath),$request.cwd)' in helper
+    assert helper.index('$preparation.Dispose(); $preparation = $null') < helper.index('$result.executed = $true')

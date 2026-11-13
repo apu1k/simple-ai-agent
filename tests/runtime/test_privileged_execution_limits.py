@@ -109,6 +109,19 @@ foreach($ms in @(0,900001)) {{
         if($exception -is [ArgumentOutOfRangeException]) {{ $refused=$true }} else {{ throw }}
     }}
     if(-not $refused) {{ throw 'native execution cap not enforced' }}
+    if ({'$true' if general else '$false'}) {{
+        $refused=$false
+        try {{
+            $rate=[Diagnostics.Stopwatch]::Frequency
+            [CommandWatchdog]::Prepare([uint32]$ms,([Diagnostics.Stopwatch]::GetTimestamp()+$rate),$rate,
+                ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()+10),'UNUSED_FIXTURE',[uint32]0,'0','0') | Out-Null
+        }} catch {{
+            $exception=$_.Exception
+            while($exception.InnerException) {{ $exception=$exception.InnerException }}
+            if($exception -is [ArgumentOutOfRangeException]) {{ $refused=$true }} else {{ throw }}
+        }}
+        if(-not $refused) {{ throw 'native preparation cap not enforced before caller acquisition' }}
+    }}
 }}
 $clock=[Diagnostics.Stopwatch]::StartNew()
 $answer=[{watchdog}]::Run($exe,{quote('-I -S -B "' + str(worker) + '"')},$cwd,1500)
@@ -137,7 +150,14 @@ def test_all_launch_sites_clamp_execution_separately_from_turn_deadline():
     command = (ROOT / 'scripts/privileged_command_helper.ps1').read_text()
     evidence_text = (ROOT / 'scripts/privileged_host_helper.ps1').read_text()
     inspection_text = (ROOT / 'scripts/privileged_inspection_helper.ps1').read_text()
-    assert '[Math]::Min([int]$request.timeout,900)' in command
+    # The command route now captures/clamps its ORIGINAL window before
+    # preparation, not a renewed local millisecond allowance at launch.
+    assert '$policy.max_timeout -ne 900' in command
+    assert '$request.timeout -gt $policy.max_timeout' in command
+    assert '$executionSeconds = [Math]::Min([int]$request.timeout, ($DeadlineUnix - $qpcWall / 1000.0))' in command
+    assert 'maximum==0 || maximum>900000' in command
+    assert command.index('$qpcLimit =') < command.index('$preparation = [CommandWatchdog]::Prepare')
+    assert '$answer = [CommandWatchdog]::RunPrepared($preparation,$exe,(Command-Arguments $scriptPath),$request.cwd)' in command
     assert '[Math]::Min($remaining, 900)' in evidence_text
     assert '[Math]::Min($remaining,900)' in inspection_text
     assert inspection_text.index('if ($workerExit -eq 124)') < inspection_text.index('$factsPath =')
