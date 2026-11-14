@@ -100,7 +100,8 @@ def test_complete_ordinary_handoff_snapshot_and_nested_watchdogs(mode, newlines)
     template = (ROOT / 'scripts/native_validator_setup_handoff.ps1').read_bytes().replace(b'\r\n', b'\n').replace(b'\n', newlines)
     review = {'version': 1, 'scope': launch.SCOPE, 'host_profile': hp, 'host_pin': host_pin,
         'watchdog_pin': {'bytes': watchdog.stat().st_size, 'sha256': hashlib.sha256(watchdog.read_bytes()).hexdigest()},
-        'template_pin': {'bytes': len(template), 'sha256': hashlib.sha256(template).hexdigest()}, 'outer_helper_sha256': 'd' * 64}
+        'template_pin': {'bytes': len(template), 'sha256': hashlib.sha256(template).hexdigest()},
+        'outer_helper_sha256': 'd' * 64, 'outer_bootstrap_sha256': 'f' * 64}
     if mode == 'bad_watchdog_pin':
         review['watchdog_pin']['sha256'] = '0' * 64
     (target / 'policy.json').write_bytes(launch._policy(review)[0])
@@ -200,7 +201,8 @@ $a | ConvertTo-Json -Compress
             executed=True, effects_verified=False, retry_authorized=False, output_truncated=False, exit_code=0, stderr='',
             stdout=answer['Stdout'], process_tree_observed=answer['ProcessTreeObserved'], lifetime_observed=answer['LifetimeObserved'],
             preparation_observed=answer['PreparationObserved'], setup_preload_observed=answer['SetupPreloadObserved'],
-            preparation_supervision_observed=True, bootstrap_supervision_observed=True)  # Synthetic transport; real outer supervision is tested separately.
+            preparation_supervision_observed=True, bootstrap_supervision_observed=True,
+            bootstrap_sha256='f' * 64)  # Synthetic transport; real outer supervision is tested separately.
         observed = launch.reconcile_setup_handoff(review, request_id=identity_id, outer=outer)
         assert observed['status'] == 'setup_observed_not_accepted'
         assert observed['accepted'] is observed['provisioning_authorized'] is observed['retry_authorized'] is False

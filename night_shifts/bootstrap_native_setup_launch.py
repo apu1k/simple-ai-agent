@@ -45,16 +45,18 @@ def _pin(raw: bytes) -> dict[str, object]:
 def _review(value: object) -> dict[str, object]:
     try:
         p = request._fields(value, ('version', 'scope', 'host_profile', 'host_pin', 'watchdog_pin',
-            'template_pin', 'outer_helper_sha256'))
+            'template_pin', 'outer_helper_sha256', 'outer_bootstrap_sha256'))
         request._number(p['version'], 1, 1)
         if type(p['scope']) is not str or p['scope'] != SCOPE:
             raise SetupLaunchRefused('handoff_scope')
         build.setup_host_binding(p['host_profile'])
         for name, maximum in (('host_pin', 16 * 1024**2), ('watchdog_pin', 16 * 1024**2), ('template_pin', 24000)):
             request._pin(p[name], maximum)
-        digest = p['outer_helper_sha256']
-        if type(digest) is not str or len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
-            raise SetupLaunchRefused('handoff_helper_pin')
+        for name, label in (('outer_helper_sha256', 'handoff_helper_pin'),
+                            ('outer_bootstrap_sha256', 'handoff_bootstrap_pin')):
+            digest = p[name]
+            if type(digest) is not str or len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
+                raise SetupLaunchRefused(label)
         return p
     except (request.InstallRequestRefused, build.SetupBuildRefused, setup.SetupRefused):
         raise SetupLaunchRefused('handoff_review') from None
@@ -153,6 +155,7 @@ def reconcile_setup_handoff(value: object, *, request_id: str, outer: object) ->
                 or o.get('preparation_observed') is not True or o.get('setup_preload_observed') is not True
                 or o.get('preparation_supervision_observed') is not True
                 or o.get('bootstrap_supervision_observed') is not True
+                or o.get('bootstrap_sha256') != p['outer_bootstrap_sha256']
                 or type(o.get('exit_code')) is not int or o['exit_code'] != 0 or o.get('stderr') != ''):
             raise SetupLaunchRefused('handoff_outer')
         stdout = o.get('stdout')

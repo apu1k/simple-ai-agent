@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import base64
+import copy
+import hashlib
 import json
 import os
 import subprocess
@@ -9,12 +11,13 @@ from pathlib import Path
 
 import pytest
 
+from core.tool_progress import approval_ui_context, tool_progress_listener
 from runtime import elevated_commands as client
 from runtime import native_setup_launch as integration
 from runtime.privileged_host import PrivilegedHostError
 from runtime.privileged_turn import ELEVATED_OPERATION, PrivilegedClaim, PrivilegedTurn
 from tests.night_shifts.test_bootstrap_native_setup_launch import ID, frame, observation, review
-from tests.runtime.test_elevated_commands import quote
+from tests.runtime.test_elevated_commands import approve, gate, quote
 
 
 @pytest.mark.parametrize('status', ['completed', 'rejected', 'expired', 'uac_cancelled', 'timeout_outcome_unknown', 'helper_failed', 'missing'])
@@ -26,9 +29,10 @@ def test_fixed_integration_uses_existing_approval_and_never_retries(monkeypatch,
     if status in ('rejected', 'expired', 'uac_cancelled'):
         data['executed'] = False
     calls = []
-    def run(gate, claim, script, seconds, reason, cwd, *, required_helper_sha256, require_lifetime, require_preparation, require_preparation_supervision, require_bootstrap_supervision, setup_preload):
+    def run(gate, claim, script, seconds, reason, cwd, *, required_helper_sha256, required_bootstrap_sha256, require_lifetime, require_preparation, require_preparation_supervision, require_bootstrap_supervision, setup_preload):
         calls.append(claim)
         assert required_helper_sha256 == p['outer_helper_sha256'] and require_lifetime is require_preparation is require_preparation_supervision is require_bootstrap_supervision is True
+        assert required_bootstrap_sha256 == p['outer_bootstrap_sha256']
         assert seconds == 20 and cwd == r'C:\SetupHost'
         assert json.loads(setup_preload)['indices'] == [10, 11, 12, 13]
         assert json.loads(setup_preload)['files'][3] == dict(name='validator-setup-watchdog.exe', **p['watchdog_pin'])
@@ -50,6 +54,90 @@ def test_fixed_integration_has_no_other_operation_or_unpinned_template_fallback(
         integration.run_reviewed_setup_handoff(PrivilegedTurn(), PrivilegedClaim(ID, 1500, 'inspect_image_copy'), p, template=template)
     with pytest.raises(integration.SetupLaunchRefused, match='template_pin'):
         integration.run_reviewed_setup_handoff(PrivilegedTurn(), PrivilegedClaim(ID, 1500, ELEVATED_OPERATION), p, template=template + b'changed')
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='synthetic approved Windows channel; no native launch')
+@pytest.mark.parametrize('mode', ['normal', 'policy_mismatch', 'legacy', 'changed_after_approval',
+    'receipt_mismatch', 'receipt_missing_pin', 'parent_failed', 'rejected'])
+def test_fixed_review_pin_flows_through_real_client_approval_and_reconciliation(monkeypatch, tmp_path, mode):
+    p, template = review()
+    outer, raw, inner = observation(p)
+    protected = frame(outer, raw, inner)
+    protected['bootstrap_frame_observed'] = True
+    policy = dict(version=1, operator_sid='fixture', helper_sha256=p['outer_helper_sha256'], max_timeout=900,
+        lifetime_protocol=1, preparation_protocol=1, setup_preload_protocol=1,
+        preparation_supervision_protocol=1, bootstrap_supervision_protocol=1,
+        bootstrap_sha256=p['outer_bootstrap_sha256'])
+    if mode == 'policy_mismatch':
+        policy['bootstrap_sha256'] = 'e' * 64
+    elif mode == 'legacy':
+        del policy['bootstrap_supervision_protocol'], policy['bootstrap_sha256']
+    (tmp_path / 'requests').mkdir()
+    calls = dict(load=0, pending=0, launch=0)
+    class Lease:
+        binding = dict(version=1, pipe='INERT_TEST_LEASE', owner_pid=1, owner_created='1')
+        def __init__(self, *args):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+    def load():
+        calls['load'] += 1
+        current = copy.deepcopy(policy)
+        if mode == 'changed_after_approval' and calls['load'] > 1:
+            current['bootstrap_sha256'] = 'e' * 64
+        return tmp_path, tmp_path / 'powershell.exe', current
+    original_approval = client.await_approval
+    def pending(permit, claim, details):
+        calls['pending'] += 1
+        assert details['bootstrap_sha256'] == p['outer_bootstrap_sha256']
+        return original_approval(permit, claim, details)
+    def elevate(exe, helper, claim, *, request_sha256, command_bootstrap):
+        calls['launch'] += 1
+        data = (tmp_path / 'requests' / (claim.request_id + '.json')).read_bytes()
+        assert hashlib.sha256(data).hexdigest() == request_sha256
+        assert json.loads(data)['bootstrap_sha256'] == p['outer_bootstrap_sha256']
+        assert command_bootstrap == (20, 'INERT_TEST_LEASE', 1, '1')
+        protected.update(request_id=claim.request_id, request_sha256=request_sha256)
+        if mode == 'receipt_mismatch':
+            protected['bootstrap_sha256'] = 'e' * 64
+        elif mode == 'receipt_missing_pin':
+            del protected['bootstrap_sha256']
+            protected['bootstrap_frame_observed'] = False
+        return 'helper_failed' if mode == 'parent_failed' else 'completed'
+    monkeypatch.setattr(client, 'CommandLifetime', Lease)
+    monkeypatch.setattr(client, 'local_path', lambda *args, **kwargs: tmp_path)
+    monkeypatch.setattr(client, 'load_launcher', load)
+    monkeypatch.setattr(client, 'await_approval', pending)
+    monkeypatch.setattr(client, '_elevate', elevate)
+    monkeypatch.setattr(client, '_bounded_json', lambda path: protected)
+    permit = gate()
+    with permit.turn('head'), approval_ui_context(), tool_progress_listener(approve(permit, mode != 'rejected')):
+        claim = permit.claim(ELEVATED_OPERATION)
+        if mode in ('policy_mismatch', 'legacy', 'changed_after_approval'):
+            cause = 'changed after review' if mode == 'changed_after_approval' else 'Independently reviewed command bootstrap'
+            with pytest.raises(PrivilegedHostError, match=cause):
+                integration.run_reviewed_setup_handoff(permit, claim, p, template=template)
+        else:
+            result = integration.run_reviewed_setup_handoff(permit, claim, p, template=template)
+            assert result['status'] == ('setup_observed_not_accepted' if mode == 'normal' else
+                ('rejected' if mode == 'rejected' else 'setup_outcome_unknown'))
+            assert result['accepted'] is result['retry_authorized'] is result['effects_verified'] is False
+    assert calls['pending'] == (0 if mode in ('policy_mismatch', 'legacy') else 1)
+    assert calls['launch'] == (1 if mode in ('normal', 'receipt_mismatch', 'receipt_missing_pin', 'parent_failed') else 0)
+    assert len(list((tmp_path / 'requests').iterdir())) == calls['launch']
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='client preflight only; no native launch')
+@pytest.mark.parametrize('value', [True, False, 1, '', 'f' * 63, 'f' * 65, 'F' * 64, 'g' * 64, 'f' * 64 + '\n'])
+def test_malformed_independent_bootstrap_pin_refuses_before_launcher_or_pending(monkeypatch, tmp_path, value):
+    monkeypatch.setattr(client, 'load_launcher', lambda: pytest.fail('must validate before launcher access'))
+    monkeypatch.setattr(client, 'await_approval', lambda *a: pytest.fail('must not request approval'))
+    monkeypatch.setattr(client, '_elevate', lambda *a, **k: pytest.fail('must not request UAC'))
+    with pytest.raises(ValueError, match='Independent command bootstrap pin'):
+        client.run_approved_script(PrivilegedTurn(), PrivilegedClaim(ID, 1500, ELEVATED_OPERATION),
+            'exit 0', 20, 'inert fixture', str(tmp_path), required_bootstrap_sha256=value)
 
 
 @pytest.mark.skipif(os.name != 'nt', reason='ordinary Windows path guard fixture')

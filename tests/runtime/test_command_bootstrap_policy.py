@@ -51,6 +51,29 @@ def test_installed_bootstrap_and_runtime_bytes_are_checked_before_approval(monke
             client.load_launcher()
 
 
+@pytest.mark.skipif(os.name != 'nt', reason='client preflight only; no native launch')
+@pytest.mark.parametrize('fault', ['pin', 'missing_pin', 'legacy', 'lifetime', 'preparation', 'worker', 'bootstrap'])
+def test_independent_bootstrap_pin_cannot_fall_back_even_without_requirement_flags(monkeypatch, tmp_path, fault):
+    p = policy()
+    if fault == 'pin':
+        p['bootstrap_sha256'] = 'e' * 64
+    elif fault == 'missing_pin':
+        del p['bootstrap_sha256']
+    elif fault == 'legacy':
+        del p['bootstrap_supervision_protocol'], p['bootstrap_sha256']
+    else:
+        field = dict(lifetime='lifetime_protocol', preparation='preparation_protocol',
+            worker='preparation_supervision_protocol', bootstrap='bootstrap_supervision_protocol')[fault]
+        p[field] = True  # bool is not protocol version 1
+    monkeypatch.setattr(client, 'local_path', lambda *a, **k: tmp_path)
+    monkeypatch.setattr(client, 'load_launcher', lambda: (tmp_path, tmp_path / 'powershell.exe', p))
+    monkeypatch.setattr(client, 'await_approval', lambda *a: pytest.fail('must refuse before pending'))
+    monkeypatch.setattr(client, '_elevate', lambda *a, **k: pytest.fail('must not request UAC'))
+    with pytest.raises(host.PrivilegedHostError, match='Independently reviewed command bootstrap'):
+        client.run_approved_script(client.PrivilegedTurn(), PrivilegedClaim('a' * 32, time.time() + 30, ELEVATED_OPERATION),
+            'exit 0', 20, 'inert fixture', str(tmp_path), required_bootstrap_sha256='d' * 64)
+
+
 class Function:
     def __init__(self, call):
         self.call = call

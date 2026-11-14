@@ -170,6 +170,7 @@ def validate_receipt(receipt: dict[str, Any], claim: PrivilegedClaim, digest: st
 def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: str,
                         timeout: int, reason: str, cwd: str, *,
                         required_helper_sha256: str | None = None,
+                        required_bootstrap_sha256: str | None = None,
                         require_lifetime: bool = False,
                         require_preparation: bool = False,
                         require_preparation_supervision: bool = False,
@@ -178,6 +179,9 @@ def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: st
     if os.name != 'nt' or claim.operation != 'elevated_commands':
         raise PrivilegedHostError('Windows elevated-command grant required')
     validate_script(script, timeout, reason)
+    if required_bootstrap_sha256 is not None and (
+            type(required_bootstrap_sha256) is not str or not re.fullmatch('[0-9a-f]{64}', required_bootstrap_sha256)):
+        raise ValueError('Independent command bootstrap pin must be a lowercase SHA-256 digest')
     local_path(cwd, directory=True)
     root, powershell, policy = load_launcher()
     # Optional independent caller pin only NARROWS the installed authority.
@@ -192,6 +196,10 @@ def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: st
     preload_capable = type(policy.get('setup_preload_protocol')) is int and policy['setup_preload_protocol'] == 1
     supervised = type(policy.get('preparation_supervision_protocol')) is int and policy['preparation_supervision_protocol'] == 1
     bootstrap = type(policy.get('bootstrap_supervision_protocol')) is int and policy['bootstrap_supervision_protocol'] == 1
+    if required_bootstrap_sha256 is not None and (
+            not capable or not prepared or not supervised or not bootstrap
+            or policy.get('bootstrap_sha256') != required_bootstrap_sha256):
+        raise PrivilegedHostError('Independently reviewed command bootstrap deployment required before approval')
     if require_bootstrap_supervision and (not capable or not prepared or not supervised or not bootstrap):
         raise PrivilegedHostError('Reviewed complete-helper bootstrap supervision deployment required before approval')
     if require_preparation_supervision and (not capable or not prepared or not supervised):

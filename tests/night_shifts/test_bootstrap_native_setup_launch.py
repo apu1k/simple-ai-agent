@@ -24,7 +24,7 @@ def review(*, publish=False):
     return {'version': 1, 'scope': launch.SCOPE, 'host_profile': profile(publish=publish),
         'host_pin': {'bytes': 123, 'sha256': 'a' * 64}, 'watchdog_pin': {'bytes': 456, 'sha256': 'b' * 64},
         'template_pin': {'bytes': len(template), 'sha256': hashlib.sha256(template).hexdigest()},
-        'outer_helper_sha256': 'd' * 64}, template
+        'outer_helper_sha256': 'd' * 64, 'outer_bootstrap_sha256': 'f' * 64}, template
 
 
 def observation(p):
@@ -36,6 +36,7 @@ def observation(p):
         empty_job_observed=True, end='RootExited', exit_code=0, process_id=7,
         result_sha256=hashlib.sha256(raw).hexdigest(), result_valid=True)
     outer = dict(version=1, operation='elevated_commands', request_id=ID, helper_sha256=p['outer_helper_sha256'],
+        bootstrap_sha256=p['outer_bootstrap_sha256'],
         status='completed', executed=True, effects_verified=False, retry_authorized=False, output_truncated=False,
         exit_code=0, stderr='', process_tree_observed=True, lifetime_observed=True, preparation_observed=True, setup_preload_observed=True, preparation_supervision_observed=True, bootstrap_supervision_observed=True)
     return outer, raw, receipt
@@ -116,7 +117,8 @@ def test_success_is_only_a_bound_observation_never_acceptance_or_provisioning(pu
 
 
 @pytest.mark.parametrize('field,bad', [('version', True), ('request_id', 'e' * 32), ('operation', 'inspect_image_copy'),
-    ('helper_sha256', 'e' * 64), ('status', 'timeout_outcome_unknown'), ('status', 'outcome_unknown'),
+    ('helper_sha256', 'e' * 64), ('bootstrap_sha256', 'e' * 64), ('bootstrap_sha256', None),
+    ('bootstrap_sha256', True), ('bootstrap_sha256', 'F' * 64), ('status', 'timeout_outcome_unknown'), ('status', 'outcome_unknown'),
     ('executed', None), ('executed', False), ('effects_verified', True), ('retry_authorized', True),
     ('output_truncated', True), ('exit_code', True), ('exit_code', 124), ('stderr', 'diagnostic'),
     ('process_tree_observed', False), ('process_tree_observed', 1), ('process_tree_observed', None),
@@ -214,6 +216,25 @@ def test_template_keeps_preload_claim_and_uncertain_owner_and_has_no_compile_or_
     assert 'UseShellExecute = $false' in text and '$info.EnvironmentVariables.Clear()' in text
     for forbidden in ('Add-Type', 'Invoke-Expression', 'Start-Process', 'Remove-Item', 'Set-Acl', 'TerminateProcess', '.Kill('):
         assert forbidden not in text
+
+
+@pytest.mark.parametrize('value', [None, True, False, 1, '', 'f' * 63, 'f' * 65, 'F' * 64, 'g' * 64, 'f' * 64 + '\n'])
+def test_independent_bootstrap_pin_is_mandatory_strict_review_data(value):
+    p, template = review()
+    p['outer_bootstrap_sha256'] = value
+    with pytest.raises(launch.SetupLaunchRefused, match='handoff_bootstrap_pin'):
+        launch.prepare_setup_handoff(p, template=template, request_id=ID, deadline_unix=1500)
+
+
+def test_old_review_and_old_receipt_cannot_implicitly_acquire_the_bootstrap_pin():
+    p, template = review()
+    outer, raw, receipt = observation(p)
+    del outer['bootstrap_sha256']
+    with pytest.raises(launch.SetupLaunchRefused, match='handoff_outer'):
+        launch.reconcile_setup_handoff(p, request_id=ID, outer=frame(outer, raw, receipt))
+    del p['outer_bootstrap_sha256']
+    with pytest.raises(launch.SetupLaunchRefused):
+        launch.prepare_setup_handoff(p, template=template, request_id=ID, deadline_unix=1500)
 
 
 def test_required_handoff_template_has_an_explicit_repository_include_rule():
