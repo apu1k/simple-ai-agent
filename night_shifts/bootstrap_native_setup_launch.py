@@ -151,6 +151,7 @@ def reconcile_setup_handoff(value: object, *, request_id: str, outer: object) ->
                 or o.get('retry_authorized') is not False or o.get('output_truncated') is not False
                 or o.get('process_tree_observed') is not True or o.get('lifetime_observed') is not True
                 or o.get('preparation_observed') is not True or o.get('setup_preload_observed') is not True
+                or o.get('preparation_supervision_observed') is not True
                 or type(o.get('exit_code')) is not int or o['exit_code'] != 0 or o.get('stderr') != ''):
             raise SetupLaunchRefused('handoff_outer')
         stdout = o.get('stdout')

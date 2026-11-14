@@ -26,9 +26,9 @@ def test_fixed_integration_uses_existing_approval_and_never_retries(monkeypatch,
     if status in ('rejected', 'expired', 'uac_cancelled'):
         data['executed'] = False
     calls = []
-    def run(gate, claim, script, seconds, reason, cwd, *, required_helper_sha256, require_lifetime, require_preparation, setup_preload):
+    def run(gate, claim, script, seconds, reason, cwd, *, required_helper_sha256, require_lifetime, require_preparation, require_preparation_supervision, setup_preload):
         calls.append(claim)
-        assert required_helper_sha256 == p['outer_helper_sha256'] and require_lifetime is require_preparation is True
+        assert required_helper_sha256 == p['outer_helper_sha256'] and require_lifetime is require_preparation is require_preparation_supervision is True
         assert seconds == 20 and cwd == r'C:\SetupHost'
         assert json.loads(setup_preload)['indices'] == [10, 11, 12, 13]
         assert json.loads(setup_preload)['files'][3] == dict(name='validator-setup-watchdog.exe', **p['watchdog_pin'])

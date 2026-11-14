@@ -72,15 +72,17 @@ def test_preparation_observation_cannot_substitute_for_execution_observations(mi
 
 def test_helper_guards_each_durable_preparation_and_preserves_failure_evidence():
     helper = (ROOT / 'scripts/privileged_command_helper.ps1').read_text(encoding='utf-8')
-    first = helper.index('$preparation = [CommandWatchdog]::Prepare')
+    first = helper.index('$preparation = [CommandWatchdog]::PrepareInherited')
     assert first < helper.index("Write-Receipt ($RequestId + '.start.json')")
     assert first < helper.index("Write-New ($RequestId + '.approved.json')")
     assert first < helper.index("Write-New ($RequestId + '.payload.ps1')")
     write = helper[helper.index('function Write-New('):helper.index('function Write-Receipt(')]
     assert write.count('$preparation.Check()') == 4
     assert write.index('$preparation.Check()') < write.index('New-Object IO.FileStream')
-    assert "Write-Receipt ($RequestId + '.result.json') $result $false" in helper
+    assert "$suffix = if ($preparationWorker) { '.worker-result.json' } else { '.result.json' }" in helper
+    assert 'Write-Receipt ($RequestId + $suffix) $result $false' in helper
     assert helper.count('$answer = [CommandWatchdog]::RunPrepared') == 1
+    assert helper.index('$whole = [CommandWatchdog]::RunPreparation') < first
     assert helper.index('$preparation.Dispose(); $preparation = $null') < helper.index('$result.preparation_observed =')
     assert len(helper.encode('utf-8')) < 65536
 

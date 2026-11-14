@@ -1,10 +1,20 @@
 param(
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{32}$')][string]$RequestId,
     [Parameter(Mandatory=$true)][long]$DeadlineUnix,
-    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$RequestSha256
+    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$RequestSha256,
+    [long]$PreparationPipe=0, [long]$PreparationOwner=0,
+    [long]$ExecutionQpcLimit=0, [long]$ExecutionQpcFrequency=0
 )
+# Internal inherited cancellation handles, NEVER code or approval authority.
+$preparationWorker = $PreparationPipe -ne 0 -or $PreparationOwner -ne 0
+if (($preparationWorker -and ($PreparationPipe -le 0 -or $PreparationOwner -le 0 -or
+    $PreparationPipe -eq $PreparationOwner -or $ExecutionQpcLimit -le 0 -or $ExecutionQpcFrequency -le 0)) -or
+    (-not $preparationWorker -and ($ExecutionQpcLimit -ne 0 -or $ExecutionQpcFrequency -ne 0))) {
+    throw 'Invalid inherited preparation frame'
+}
 # GENERAL ADMINISTRATOR EXECUTION. Protected installation only. Not a sandbox.
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $system = [Environment]::GetFolderPath('System')
 $root = [IO.Path]::Combine([Environment]::GetFolderPath('ProgramFiles'), 'AiAgentElevatedCommands')
 if ($PSScriptRoot -cne $root -or [IntPtr]::Size -ne 8 -or $PSVersionTable.PSEdition -ne 'Desktop') {
@@ -71,7 +81,7 @@ foreach ($path in @($root,$receipts,$PSCommandPath,([IO.Path]::Combine($root,'po
 $policy = [IO.File]::ReadAllText([IO.Path]::Combine($root,'policy.json')) | ConvertFrom-Json
 $helperHash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($policy.version -ne 1 -or $policy.max_timeout -ne 900 -or $policy.lifetime_protocol -ne 1 -or $policy.preparation_protocol -ne 1 -or
-    $policy.setup_preload_protocol -ne 1 -or
+    $policy.setup_preload_protocol -ne 1 -or $policy.preparation_supervision_protocol -ne 1 -or
     $policy.helper_sha256 -cne $helperHash -or $policy.operator_sid -cne $identity.User.Value) {
     throw 'Installed policy/code/operator mismatch'
 }
@@ -159,14 +169,19 @@ if ($qpcFrequency -lt 1 -or $qpcFrequency -gt 1000000000 -or $qpcFirst -lt 1 -or
     throw 'Original execution window unavailable'
 }
 $qpcLimit = [long]([decimal]$qpcFirst + [Math]::Floor([decimal]$executionSeconds * $qpcFrequency))
+if ($preparationWorker) {
+    if ($ExecutionQpcFrequency -ne $qpcFrequency) { throw 'Inherited execution clock differs' }
+    $qpcLimit = [Math]::Min($qpcLimit,$ExecutionQpcLimit)
+}
 if ($qpcLimit -le $qpcFirst) { throw 'Original execution window expired' }
 # No durable preparation or payload before the SAME native lifetime is acquired.
-# Compilation below is charged to this cap, but is NOT independently supervised.
+# Outer bootstrap compilation is charged but still precedes supervision. ALL
+# preparation-worker loading/compilation/I/O is independently job-supervised.
 $preparation = $null
 $scriptPath = [IO.Path]::Combine($receipts,($RequestId + '.payload.ps1'))
 function Command-Arguments([string]$ScriptPath) {
     $quoted = "'" + $ScriptPath.Replace("'","''") + "'"
-    $bootstrap = '[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false); ' +
+    $bootstrap = '$ProgressPreference = ''SilentlyContinue''; [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false); ' +
         '$OutputEncoding = [Console]::OutputEncoding; & ' + $quoted +
         '; $ok = $?; if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; ' +
         'if (-not $ok) { exit 1 }; exit 0'
@@ -174,7 +189,7 @@ function Command-Arguments([string]$ScriptPath) {
     return '-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -EncodedCommand ' + $encoded
 }
 $result = @{version=1; request_id=$RequestId; operation='elevated_commands'; request_sha256=$digest;
-    helper_sha256=$helperHash; status='outcome_unknown'; executed=$false; effects_verified=$false; process_tree_observed=$false; lifetime_observed=$false; preparation_observed=$false; setup_preload_observed=$false;
+    helper_sha256=$helperHash; status='outcome_unknown'; executed=$false; effects_verified=$false; process_tree_observed=$false; lifetime_observed=$false; preparation_observed=$false; setup_preload_observed=$false; preparation_supervision_observed=$false;
     exit_code=$null; stdout=''; stderr=''; output_truncated=$false; retry_authorized=$false}
 try {
     # Kill-on-close process containment. External services/VMs/tasks are NOT contained.
@@ -234,7 +249,7 @@ public static class CommandWatchdog {
     // output, approval, deadline extension or acceptance. Authenticate the native
     // server process identity, not the pipe spelling or a PID alone. Anonymous
     // SQOS prevents the unelevated server impersonating this elevated client.
-    sealed class Lifetime : IDisposable {
+    internal sealed class Lifetime : IDisposable {
         IntPtr pipe,owner;
         internal Lifetime(string name,uint pid,string created,string requestId) {
             try {
@@ -257,6 +272,34 @@ public static class CommandWatchdog {
                 if (!Alive()) throw new Exception("Caller lifetime unavailable before creation");
             } catch { Dispose(); throw; }
         }
+        // Two explicit inherited read/observation capabilities; no reconnect,
+        // process lookup, owning-job handle, or reusable approval capability.
+        internal Lifetime(long inheritedPipe,long inheritedOwner,uint pid,string created) {
+            if (inheritedPipe<=0 || inheritedOwner<=0 || inheritedPipe==inheritedOwner)
+                throw new Exception("Inherited caller handles refused");
+            pipe=new IntPtr(inheritedPipe); owner=new IntPtr(inheritedOwner);
+            try {
+                ulong expected,born,exited,kernel,user; uint actual,flags;
+                if (pid==0 || !UInt64.TryParse(created,System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out expected) ||
+                    expected==0 || expected.ToString(System.Globalization.CultureInfo.InvariantCulture)!=created ||
+                    GetFileType(pipe)!=3 || !GetNamedPipeServerProcessId(pipe,out actual) || actual!=pid || GetProcessId(owner)!=pid ||
+                    !GetProcessTimes(owner,out born,out exited,out kernel,out user) || born!=expected)
+                    throw new Exception("Inherited caller identity differs");
+                foreach (IntPtr handle in new IntPtr[]{pipe,owner}) {
+                    if (!GetHandleInformation(handle,out flags) || flags!=1 || !SetHandleInformation(handle,1,0) ||
+                        !GetHandleInformation(handle,out flags) || flags!=0) throw new Exception("Inherited caller flags refused");
+                }
+                Require();
+            } catch { Dispose(); throw; }
+        }
+        internal void CopyForWorker(out IntPtr copyPipe,out IntPtr copyOwner) {
+            copyPipe=IntPtr.Zero; copyOwner=IntPtr.Zero; Require(); uint flags;
+            IntPtr self=GetCurrentProcess();
+            if (!DuplicateHandle(self,pipe,self,out copyPipe,0,true,2) ||
+                !DuplicateHandle(self,owner,self,out copyOwner,0,true,2) ||
+                !GetHandleInformation(copyPipe,out flags) || flags!=1 ||
+                !GetHandleInformation(copyOwner,out flags) || flags!=1) throw new Exception("Caller handle delivery unknown");
+        }
         internal bool Alive() {
             uint wait=WaitForSingleObject(owner,0);
             if (wait==0) return false;
@@ -276,6 +319,9 @@ public static class CommandWatchdog {
             if (!closed) throw new Exception("Caller lifetime close unknown");
         }
     }
+    [DllImport("kernel32.dll",ExactSpelling=true)] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll",ExactSpelling=true)] static extern uint GetProcessId(IntPtr process);
+    [DllImport("kernel32.dll",ExactSpelling=true)] static extern bool DuplicateHandle(IntPtr source,IntPtr handle,IntPtr target,out IntPtr copy,uint access,bool inherit,uint options);
     static Task<Dump> Drain(IntPtr h) {
         return Task.Run(() => {
             using (var file = new FileStream(new SafeFileHandle(h,true),FileAccess.Read))
@@ -498,7 +544,7 @@ public static class CommandWatchdog {
         readonly long limit,frequency,deadline;
         long lastQpc,lastWall;
         bool spent,disposed,failed;
-        internal Preparation(uint maximum,long cap,long rate,long deadlineUnix,string pipe,uint pid,string created,string id) {
+        internal Preparation(uint maximum,long cap,long rate,long deadlineUnix,string pipe,uint pid,string created,string id,Lifetime inherited=null) {
             if (maximum==0 || maximum>900000 || deadlineUnix<1 || deadlineUnix>253402300799L)
                 throw new ArgumentOutOfRangeException("preparationWindow");
             ms=maximum; frequency=rate; deadline=deadlineUnix;
@@ -509,7 +555,7 @@ public static class CommandWatchdog {
             limit=Math.Min(cap,checked(lastQpc+(long)Decimal.Floor((decimal)ms*frequency/1000)));
             if (Remaining(ms,limit,frequency)==0 || (decimal)lastWall>=(decimal)deadline*1000)
                 throw new Exception("Preparation window unavailable");
-            lifetime=new Lifetime(pipe,pid,created,id);
+            lifetime=inherited ?? new Lifetime(pipe,pid,created,id);
             try { Observe(); } catch { Dispose(); throw; }
         }
         void Observe() {
@@ -531,12 +577,12 @@ public static class CommandWatchdog {
             try { setup=new SetupLease(Observe,root,volume,indices,names,lengths,hashes); }
             catch { failed=true; throw; }
         }
-        internal Answer Run(string exe,string args,string cwd) {
+        internal Answer Run(string exe,string args,string cwd,bool deliver=false) {
             if (spent) throw new Exception("Preparation already consumed");
             spent=true; // uncertainty BEFORE observation or native entry
             Observe();
             if (setup!=null) setup.Verify();
-            Answer answer=RunCore(exe,args,cwd,ms,limit,frequency,lifetime);
+            Answer answer=RunCore(exe,args,cwd,ms,limit,frequency,lifetime,deliver);
             // RunCore already observes cancellation/deadline termination. A
             // later loss cannot promote normal completion into acceptance.
             if (!answer.Cancelled && !answer.Timeout) { Observe(); if (setup!=null) setup.Verify(); }
@@ -557,6 +603,15 @@ public static class CommandWatchdog {
     }
     public static Preparation Prepare(uint ms,long limit,long frequency,long deadlineUnix,string pipe,uint pid,string created,string requestId) {
         return new Preparation(ms,limit,frequency,deadlineUnix,pipe,pid,created,requestId);
+    }
+    public static Preparation PrepareInherited(uint ms,long limit,long frequency,long deadlineUnix,long pipe,long owner,uint pid,string created,string requestId) {
+        var inherited=new Lifetime(pipe,owner,pid,created);
+        try { return new Preparation(ms,limit,frequency,deadlineUnix,null,pid,created,requestId,inherited); }
+        catch { inherited.Dispose(); throw; }
+    }
+    public static Answer RunPreparation(Preparation preparation,string exe,string args,string cwd) {
+        if (preparation==null) throw new ArgumentNullException("preparation");
+        return preparation.Run(exe,args,cwd,true);
     }
     public static Answer RunPrepared(Preparation preparation,string exe,string args,string cwd) {
         if (preparation==null) throw new ArgumentNullException("preparation");
@@ -593,7 +648,7 @@ public static class CommandWatchdog {
             System.Threading.Thread.Sleep(10);
         }
     }
-    static Answer RunCore(string exe,string args,string cwd,uint ms,long limit,long frequency,Lifetime lifetime) {
+    static Answer RunCore(string exe,string args,string cwd,uint ms,long limit,long frequency,Lifetime lifetime,bool deliver=false) {
         // ONE monotonic execution window includes native preparation even for Run.
         if (ms == 0 || ms > 900000) throw new ArgumentOutOfRangeException("ms");
         long now=System.Diagnostics.Stopwatch.GetTimestamp(),rate=System.Diagnostics.Stopwatch.Frequency;
@@ -601,7 +656,7 @@ public static class CommandWatchdog {
         if (limit==0 && frequency==0) { limit=own; frequency=rate; }
         else { Remaining(ms,limit,frequency); limit=Math.Min(limit,own); }
         IntPtr job=IntPtr.Zero,or=IntPtr.Zero,ow=IntPtr.Zero,er=IntPtr.Zero,ew=IntPtr.Zero,input=IntPtr.Zero;
-        IntPtr attrs=IntPtr.Zero,jobs=IntPtr.Zero,handles=IntPtr.Zero; bool ready=false;
+        IntPtr attrs=IntPtr.Zero,jobs=IntPtr.Zero,handles=IntPtr.Zero,leasePipe=IntPtr.Zero,leaseOwner=IntPtr.Zero; bool ready=false;
         ProcessInfo p=new ProcessInfo(); Task<Dump> stdout=null,stderr=null;
         try {
             job=CreateJobObject(IntPtr.Zero,null);
@@ -622,13 +677,23 @@ public static class CommandWatchdog {
             attrs=Marshal.AllocHGlobal((int)size.ToUInt64());
             if (!InitializeProcThreadAttributeList(attrs,2,0,ref size)) throw new Exception("Cannot initialize atomic attributes"); ready=true;
             jobs=Marshal.AllocHGlobal(IntPtr.Size); Marshal.WriteIntPtr(jobs,job);
-            handles=Marshal.AllocHGlobal(3*IntPtr.Size);
+            int handleCount=deliver?5:3;
+            if (deliver) {
+                if (lifetime==null) throw new Exception("Preparation lifetime required");
+                lifetime.CopyForWorker(out leasePipe,out leaseOwner);
+                args+=" -PreparationPipe "+leasePipe.ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture)+
+                    " -PreparationOwner "+leaseOwner.ToInt64().ToString(System.Globalization.CultureInfo.InvariantCulture)+
+                    " -ExecutionQpcLimit "+limit.ToString(System.Globalization.CultureInfo.InvariantCulture)+
+                    " -ExecutionQpcFrequency "+frequency.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            }
+            handles=Marshal.AllocHGlobal(handleCount*IntPtr.Size);
             Marshal.WriteIntPtr(handles,0,input); Marshal.WriteIntPtr(handles,IntPtr.Size,ow); Marshal.WriteIntPtr(handles,2*IntPtr.Size,ew);
+            if (deliver) { Marshal.WriteIntPtr(handles,3*IntPtr.Size,leasePipe); Marshal.WriteIntPtr(handles,4*IntPtr.Size,leaseOwner); }
             // JOB_LIST closes the owner-death gap BEFORE CreateProcess returns.
             // HANDLE_LIST excludes every unrelated inheritable parent handle.
             if (!UpdateProcThreadAttribute(attrs,0,new UIntPtr(0x2000d),jobs,new UIntPtr((uint)IntPtr.Size),IntPtr.Zero,IntPtr.Zero))
                 throw new Exception("Atomic job attribute refused");
-            if (!UpdateProcThreadAttribute(attrs,0,new UIntPtr(0x20002),handles,new UIntPtr((uint)(3*IntPtr.Size)),IntPtr.Zero,IntPtr.Zero))
+            if (!UpdateProcThreadAttribute(attrs,0,new UIntPtr(0x20002),handles,new UIntPtr((uint)(handleCount*IntPtr.Size)),IntPtr.Zero,IntPtr.Zero))
                 throw new Exception("Explicit handle attribute refused");
             StartupEx s=new StartupEx(); s.Startup.Size=(uint)Marshal.SizeOf(s); s.Startup.Flags=0x100;
             s.Startup.In=input; s.Startup.Out=ow; s.Startup.Error=ew; s.Attributes=attrs;
@@ -641,7 +706,7 @@ public static class CommandWatchdog {
                 !IsProcessInJob(p.Process,job,out member) || !member ||
                 !GetHandleInformation(p.Process,out flags) || flags!=0 || !GetHandleInformation(p.Thread,out flags) || flags!=0)
                 throw new Exception("Atomic child membership unknown");
-            Close(ref ow); Close(ref ew); Close(ref input);
+            Close(ref ow); Close(ref ew); Close(ref input); Close(ref leasePipe); Close(ref leaseOwner);
             stdout=Drain(or); or=IntPtr.Zero; stderr=Drain(er); er=IntPtr.Zero;
             ready=false; DeleteProcThreadAttributeList(attrs); Free(ref attrs); Free(ref jobs); Free(ref handles);
             if (lifetime!=null) lifetime.Require();
@@ -670,6 +735,7 @@ public static class CommandWatchdog {
             released=Release(ref job)&released; released=Release(ref p.Thread)&released; released=Release(ref p.Process)&released;
             released=Release(ref or)&released; released=Release(ref ow)&released; released=Release(ref er)&released;
             released=Release(ref ew)&released; released=Release(ref input)&released;
+            released=Release(ref leasePipe)&released; released=Release(ref leaseOwner)&released;
             if (ready) { ready=false; DeleteProcThreadAttributeList(attrs); }
             Free(ref attrs); Free(ref jobs); Free(ref handles);
             if (!released) throw new Exception("Handle close unknown");
@@ -677,8 +743,48 @@ public static class CommandWatchdog {
     }
 }
 '@
-    $preparation = [CommandWatchdog]::Prepare([uint32]($request.timeout*1000),$qpcLimit,$qpcFrequency,$DeadlineUnix,
-        $request.lifetime.pipe,[uint32]$request.lifetime.owner_pid,$request.lifetime.owner_created,$RequestId)
+    if (-not $preparationWorker) {
+        # Own the worker BEFORE its code loading, compilation, pre-load I/O or
+        # durable preparation. The worker NEVER inherits this owning job handle.
+        $preparation = [CommandWatchdog]::Prepare([uint32]($request.timeout*1000),$qpcLimit,$qpcFrequency,$DeadlineUnix,
+            $request.lifetime.pipe,[uint32]$request.lifetime.owner_pid,$request.lifetime.owner_created,$RequestId)
+        $workerArgs = '-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "' + $PSCommandPath +
+            '" -RequestId ' + $RequestId + ' -DeadlineUnix ' + $DeadlineUnix + ' -RequestSha256 ' + $RequestSha256
+        Write-Receipt ($RequestId + '.supervision-start.json') @{
+            version=1; request_id=$RequestId; operation='elevated_commands'; request_sha256=$digest;
+            helper_sha256=$helperHash; execution_qpc_limit=$qpcLimit; execution_qpc_frequency=$qpcFrequency;
+            timeout=$request.timeout; deadline_unix=$DeadlineUnix; status='preparation_worker_claimed_not_acceptance'
+        }
+        $result.executed = $null
+        $whole = [CommandWatchdog]::RunPreparation($preparation,$exe,$workerArgs,$root)
+        $preparation.Dispose(); $preparation = $null
+        if ($whole.Code -ne 0 -or $whole.Timeout -or $whole.Cancelled -or $whole.Truncated -or
+            -not $whole.ProcessTreeObserved -or -not $whole.LifetimeObserved -or
+            $whole.Stdout -cne '' -or $whole.Stderr -cne '') { throw 'Preparation worker outcome unknown' }
+        $workerResult = [IO.Path]::Combine($receipts,($RequestId + '.worker-result.json'))
+        Check-Protected $workerResult
+        $held = [IO.File]::Open($workerResult,'Open','Read','Read')
+        try {
+            if ($held.Length -lt 1 -or $held.Length -gt 65536) { throw 'Preparation result bound' }
+            $reader = New-Object IO.StreamReader($held,$utf8,$false,4096,$true)
+            try { $inner = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+        } finally { $held.Dispose() }
+        if ($inner.version -ne 1 -or $inner.request_id -cne $RequestId -or
+            $inner.operation -cne 'elevated_commands' -or $inner.request_sha256 -cne $digest -or
+            $inner.helper_sha256 -cne $helperHash -or $inner.status -cne 'completed' -or
+            $inner.exit_code -ne 0 -or $inner.effects_verified -isnot [bool] -or $inner.effects_verified -or
+            $inner.retry_authorized -isnot [bool] -or $inner.retry_authorized) { throw 'Preparation result binding' }
+        foreach ($name in @('executed','process_tree_observed','lifetime_observed','preparation_observed')) {
+            if ($inner.$name -isnot [bool] -or -not $inner.$name) { throw 'Preparation observation missing' }
+        }
+        # Transport only bounded child observations AFTER exact tree completion
+        # and checked parent releases. Incomplete/failed evidence stays UNKNOWN.
+        foreach ($name in @('status','executed','exit_code','stdout','stderr','output_truncated',
+            'process_tree_observed','lifetime_observed','preparation_observed','setup_preload_observed')) { $result[$name] = $inner.$name }
+        $result.preparation_supervision_observed = $true
+    } else {
+    $preparation = [CommandWatchdog]::PrepareInherited([uint32]($request.timeout*1000),$qpcLimit,$qpcFrequency,$DeadlineUnix,
+        $PreparationPipe,$PreparationOwner,[uint32]$request.lifetime.owner_pid,$request.lifetime.owner_created,$RequestId)
     $preloadHash = $null
     if ($null -ne $request.PSObject.Properties['setup_preload']) {
         if ($request.setup_preload -isnot [string] -or $request.setup_preload.Length -gt 4096 -or
@@ -703,7 +809,7 @@ public static class CommandWatchdog {
         request_sha256=$digest; helper_sha256=$helperHash; operator_sid=$identity.User.Value;
         started_at_utc=[DateTime]::UtcNow.ToString('o'); timeout=$request.timeout; deadline_unix=$DeadlineUnix;
         execution_qpc_limit=$qpcLimit; execution_qpc_frequency=$qpcFrequency; lifetime=$request.lifetime;
-        preparation_protocol=1; setup_preload_protocol=1; setup_preload_sha256=$preloadHash
+        preparation_protocol=1; setup_preload_protocol=1; preparation_supervision_protocol=1; setup_preload_sha256=$preloadHash
     }
     Write-New ($RequestId + '.approved.json') $bytes
     $bomUtf8 = New-Object Text.UTF8Encoding($true)
@@ -722,6 +828,7 @@ public static class CommandWatchdog {
     $result.output_truncated = $answer.Truncated
     $result.process_tree_observed = $answer.ProcessTreeObserved; $result.lifetime_observed = $answer.LifetimeObserved
     $result.status = if ($answer.Cancelled) { 'cancelled_outcome_unknown' } elseif ($answer.Timeout) { 'timeout_outcome_unknown' } elseif ($answer.Code -eq 0) { 'completed' } else { 'failed' }
+    }
 } catch {
     $result.status = 'outcome_unknown'
 } finally {
@@ -734,7 +841,8 @@ public static class CommandWatchdog {
     $result.finished_at_utc = [DateTime]::UtcNow.ToString('o')
     # Failure evidence must remain writable AFTER lease/deadline loss. It cannot
     # launch anything, clear the permanent claim or authorize a second attempt.
-    Write-Receipt ($RequestId + '.result.json') $result $false
+    $suffix = if ($preparationWorker) { '.worker-result.json' } else { '.result.json' }
+    Write-Receipt ($RequestId + $suffix) $result $false
 }
 if ($result.status -eq 'completed') { exit 0 }
 exit 2

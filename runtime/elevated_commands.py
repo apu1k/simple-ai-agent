@@ -60,10 +60,12 @@ def load_launcher() -> tuple[Path, Path, dict[str, Any]]:
     if (set(policy) not in ({'version', 'operator_sid', 'helper_sha256', 'max_timeout'},
                            {'version', 'operator_sid', 'helper_sha256', 'max_timeout', 'lifetime_protocol'},
                            {'version', 'operator_sid', 'helper_sha256', 'max_timeout', 'lifetime_protocol', 'preparation_protocol'},
-                           {'version', 'operator_sid', 'helper_sha256', 'max_timeout', 'lifetime_protocol', 'preparation_protocol', 'setup_preload_protocol'})
+                           {'version', 'operator_sid', 'helper_sha256', 'max_timeout', 'lifetime_protocol', 'preparation_protocol', 'setup_preload_protocol'},
+                           {'version', 'operator_sid', 'helper_sha256', 'max_timeout', 'lifetime_protocol', 'preparation_protocol', 'setup_preload_protocol', 'preparation_supervision_protocol'})
             or ('lifetime_protocol' in policy and (type(policy['lifetime_protocol']) is not int or policy['lifetime_protocol'] != 1))
             or ('preparation_protocol' in policy and (type(policy['preparation_protocol']) is not int or policy['preparation_protocol'] != 1))
             or ('setup_preload_protocol' in policy and (type(policy['setup_preload_protocol']) is not int or policy['setup_preload_protocol'] != 1))
+            or ('preparation_supervision_protocol' in policy and (type(policy['preparation_supervision_protocol']) is not int or policy['preparation_supervision_protocol'] != 1))
             or type(policy['version']) is not int or policy['version'] != 1
             or policy['operator_sid'] != _current_user_sid()
             or type(policy['max_timeout']) is not int
@@ -103,6 +105,7 @@ def validate_receipt(receipt: dict[str, Any], claim: PrivilegedClaim, digest: st
             or ('lifetime_observed' in receipt and type(receipt['lifetime_observed']) is not bool)
             or ('preparation_observed' in receipt and type(receipt['preparation_observed']) is not bool)
             or ('setup_preload_observed' in receipt and type(receipt['setup_preload_observed']) is not bool)
+            or ('preparation_supervision_observed' in receipt and type(receipt['preparation_supervision_observed']) is not bool)
             or not isinstance(receipt.get('stdout'), str) or not isinstance(receipt.get('stderr'), str)
             or len(receipt['stdout'].encode('utf-8')) + len(receipt['stderr'].encode('utf-8')) > 150000
             or receipt.get('retry_authorized') is not False
@@ -135,6 +138,10 @@ def validate_receipt(receipt: dict[str, Any], claim: PrivilegedClaim, digest: st
     if receipt.get('setup_preload_observed') is True and (
             receipt['status'] == 'outcome_unknown' or receipt.get('preparation_observed') is not True):
         raise PrivilegedHostError('Inconsistent native setup pre-load observation')
+    if receipt.get('preparation_supervision_observed') is True and (
+            receipt['status'] != 'completed' or receipt.get('preparation_observed') is not True
+            or receipt.get('lifetime_observed') is not True or receipt.get('process_tree_observed') is not True):
+        raise PrivilegedHostError('Inconsistent preparation-worker supervision observation')
     if receipt['status'] == 'completed' and (not receipt['executed'] or receipt['exit_code'] != 0):
         raise PrivilegedHostError('Inconsistent completion receipt')
 
@@ -144,6 +151,7 @@ def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: st
                         required_helper_sha256: str | None = None,
                         require_lifetime: bool = False,
                         require_preparation: bool = False,
+                        require_preparation_supervision: bool = False,
                         setup_preload: str | None = None) -> dict[str, Any]:
     if os.name != 'nt' or claim.operation != 'elevated_commands':
         raise PrivilegedHostError('Windows elevated-command grant required')
@@ -160,6 +168,9 @@ def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: st
     capable = type(policy.get('lifetime_protocol')) is int and policy['lifetime_protocol'] == 1
     prepared = type(policy.get('preparation_protocol')) is int and policy['preparation_protocol'] == 1
     preload_capable = type(policy.get('setup_preload_protocol')) is int and policy['setup_preload_protocol'] == 1
+    supervised = type(policy.get('preparation_supervision_protocol')) is int and policy['preparation_supervision_protocol'] == 1
+    if require_preparation_supervision and (not capable or not prepared or not supervised):
+        raise PrivilegedHostError('Reviewed preparation-worker supervision deployment required before approval')
     if setup_preload is not None:
         if (not isinstance(setup_preload, str) or not 1 <= len(setup_preload) <= 4096
                 or any(not 32 <= ord(c) <= 126 for c in setup_preload)):
@@ -212,6 +223,8 @@ def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: st
             raise PrivilegedHostError('Missing protected preparation observation; outcome unknown')
         if setup_preload is not None and receipt.get('status') != 'outcome_unknown' and receipt.get('setup_preload_observed') is not True:
             raise PrivilegedHostError('Missing protected native pre-load observation; outcome unknown')
+        if supervised and receipt.get('status') == 'completed' and receipt.get('preparation_supervision_observed') is not True:
+            raise PrivilegedHostError('Missing protected preparation-worker supervision observation; outcome unknown')
         if capable and gate.execution_cancelled(claim):
             return dict(base, status='cancelled_outcome_unknown', effects_verified=False,
                         retry_authorized=False, receipt=str(receipt_path))

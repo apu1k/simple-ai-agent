@@ -88,7 +88,7 @@ function Write-New([string]$Name,[byte[]]$Data) {
     }
 }
 Write-New 'helper.ps1' $bytes
-$policy = @{version=1; operator_sid=$OperatorSid; helper_sha256=$digest; max_timeout=900; lifetime_protocol=1; preparation_protocol=1; setup_preload_protocol=1}
+$policy = @{version=1; operator_sid=$OperatorSid; helper_sha256=$digest; max_timeout=900; lifetime_protocol=1; preparation_protocol=1; setup_preload_protocol=1; preparation_supervision_protocol=1}
 Write-New 'policy.json' ([Text.Encoding]::UTF8.GetBytes(($policy | ConvertTo-Json -Compress)))
 # Only this data inbox is operator-writable. It is never searched for helper code.
 $inboxSecurity = New-Object Security.AccessControl.DirectorySecurity
