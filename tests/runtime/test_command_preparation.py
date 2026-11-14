@@ -72,7 +72,7 @@ def test_preparation_observation_cannot_substitute_for_execution_observations(mi
 
 def test_helper_guards_each_durable_preparation_and_preserves_failure_evidence():
     helper = (ROOT / 'scripts/privileged_command_helper.ps1').read_text(encoding='utf-8')
-    first = helper.index('$preparation = [CommandWatchdog]::PrepareInherited')
+    first = helper.rindex('$preparation = [CommandWatchdog]::PrepareInherited')
     assert first < helper.index("Write-Receipt ($RequestId + '.start.json')")
     assert first < helper.index("Write-New ($RequestId + '.approved.json')")
     assert first < helper.index("Write-New ($RequestId + '.payload.ps1')")

@@ -3,13 +3,19 @@ param(
     [Parameter(Mandatory=$true)][long]$DeadlineUnix,
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$RequestSha256,
     [long]$PreparationPipe=0, [long]$PreparationOwner=0,
-    [long]$ExecutionQpcLimit=0, [long]$ExecutionQpcFrequency=0
+    [long]$ExecutionQpcLimit=0, [long]$ExecutionQpcFrequency=0,
+    [ValidateRange(0,1)][int]$BootstrapSupervised=0, [int]$BootstrapTimeout=0
 )
 # Internal inherited cancellation handles, NEVER code or approval authority.
-$preparationWorker = $PreparationPipe -ne 0 -or $PreparationOwner -ne 0
-if (($preparationWorker -and ($PreparationPipe -le 0 -or $PreparationOwner -le 0 -or
+$inheritedFrame = $PreparationPipe -ne 0 -or $PreparationOwner -ne 0
+$preparationWorker = $inheritedFrame -and $BootstrapSupervised -eq 0
+$bootstrapWorker = $inheritedFrame -and $BootstrapSupervised -eq 1
+if (($inheritedFrame -and ($PreparationPipe -le 0 -or $PreparationOwner -le 0 -or
     $PreparationPipe -eq $PreparationOwner -or $ExecutionQpcLimit -le 0 -or $ExecutionQpcFrequency -le 0)) -or
-    (-not $preparationWorker -and ($ExecutionQpcLimit -ne 0 -or $ExecutionQpcFrequency -ne 0))) {
+    (-not $inheritedFrame -and ($ExecutionQpcLimit -ne 0 -or $ExecutionQpcFrequency -ne 0)) -or
+    ($BootstrapSupervised -eq 1 -and -not $bootstrapWorker) -or
+    ($bootstrapWorker -and ($BootstrapTimeout -lt 1 -or $BootstrapTimeout -gt 900)) -or
+    (-not $bootstrapWorker -and $BootstrapTimeout -ne 0)) {
     throw 'Invalid inherited preparation frame'
 }
 # GENERAL ADMINISTRATOR EXECUTION. Protected installation only. Not a sandbox.
@@ -85,6 +91,11 @@ if ($policy.version -ne 1 -or $policy.max_timeout -ne 900 -or $policy.lifetime_p
     $policy.helper_sha256 -cne $helperHash -or $policy.operator_sid -cne $identity.User.Value) {
     throw 'Installed policy/code/operator mismatch'
 }
+$bootstrapPolicy = $null -ne $policy.PSObject.Properties['bootstrap_supervision_protocol']
+if ($bootstrapPolicy -and ($policy.bootstrap_supervision_protocol -isnot [int] -or $policy.bootstrap_supervision_protocol -ne 1 -or
+    $policy.bootstrap_sha256 -isnot [string] -or $policy.bootstrap_sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+    (-not $bootstrapWorker -and -not $preparationWorker))) { throw 'Supervised bootstrap deployment required' }
+if ($bootstrapWorker -and -not $bootstrapPolicy) { throw 'Bootstrap policy unavailable' }
 $remaining = $DeadlineUnix - [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 if ($remaining -le 0 -or $remaining -gt 1800) { throw 'Expired or excessive approval deadline' }
 $inputPath = [IO.Path]::Combine($root,'requests',($RequestId + '.json'))
@@ -109,6 +120,9 @@ $utf8 = New-Object Text.UTF8Encoding($false,$true)
 $request = $utf8.GetString($bytes) | ConvertFrom-Json
 $fields = @('version','request_id','operation','deadline_unix','timeout','script','cwd','reason','operator_sid','helper_sha256','lifetime')
 if ($null -ne $request.PSObject.Properties['setup_preload']) { $fields += 'setup_preload' }
+if ($bootstrapPolicy) { $fields += 'bootstrap_sha256' }
+if ($bootstrapPolicy -and ($request.bootstrap_sha256 -cne $policy.bootstrap_sha256 -or
+    ($bootstrapWorker -and $BootstrapTimeout -ne $request.timeout))) { throw 'Approved bootstrap binding differs' }
 if (@(Compare-Object $fields @($request.PSObject.Properties.Name)).Count -ne 0 -or
     $request.version -ne 1 -or $request.request_id -cne $RequestId -or
     $request.operation -cne 'elevated_commands' -or $request.deadline_unix -ne $DeadlineUnix -or
@@ -169,14 +183,15 @@ if ($qpcFrequency -lt 1 -or $qpcFrequency -gt 1000000000 -or $qpcFirst -lt 1 -or
     throw 'Original execution window unavailable'
 }
 $qpcLimit = [long]([decimal]$qpcFirst + [Math]::Floor([decimal]$executionSeconds * $qpcFrequency))
-if ($preparationWorker) {
+if ($inheritedFrame) {
     if ($ExecutionQpcFrequency -ne $qpcFrequency) { throw 'Inherited execution clock differs' }
     $qpcLimit = [Math]::Min($qpcLimit,$ExecutionQpcLimit)
 }
 if ($qpcLimit -le $qpcFirst) { throw 'Original execution window expired' }
 # No durable preparation or payload before the SAME native lifetime is acquired.
-# Outer bootstrap compilation is charged but still precedes supervision. ALL
-# preparation-worker loading/compilation/I/O is independently job-supervised.
+# A reviewed precompiled bootstrap supervises this WHOLE helper when deployed.
+# Legacy general entry remains distinct. The bootstrap's own OS/CLR/module load
+# is an external trust prerequisite, not authenticated by this helper.
 $preparation = $null
 $scriptPath = [IO.Path]::Combine($receipts,($RequestId + '.payload.ps1'))
 function Command-Arguments([string]$ScriptPath) {
@@ -190,6 +205,7 @@ function Command-Arguments([string]$ScriptPath) {
 }
 $result = @{version=1; request_id=$RequestId; operation='elevated_commands'; request_sha256=$digest;
     helper_sha256=$helperHash; status='outcome_unknown'; executed=$false; effects_verified=$false; process_tree_observed=$false; lifetime_observed=$false; preparation_observed=$false; setup_preload_observed=$false; preparation_supervision_observed=$false;
+    bootstrap_frame_observed=$false; bootstrap_sha256=$null;
     exit_code=$null; stdout=''; stderr=''; output_truncated=$false; retry_authorized=$false}
 try {
     # Kill-on-close process containment. External services/VMs/tasks are NOT contained.
@@ -746,8 +762,14 @@ public static class CommandWatchdog {
     if (-not $preparationWorker) {
         # Own the worker BEFORE its code loading, compilation, pre-load I/O or
         # durable preparation. The worker NEVER inherits this owning job handle.
-        $preparation = [CommandWatchdog]::Prepare([uint32]($request.timeout*1000),$qpcLimit,$qpcFrequency,$DeadlineUnix,
-            $request.lifetime.pipe,[uint32]$request.lifetime.owner_pid,$request.lifetime.owner_created,$RequestId)
+        if ($bootstrapWorker) {
+            $preparation = [CommandWatchdog]::PrepareInherited([uint32]($request.timeout*1000),$qpcLimit,$qpcFrequency,$DeadlineUnix,
+                $PreparationPipe,$PreparationOwner,
+                [uint32]$request.lifetime.owner_pid,$request.lifetime.owner_created,$RequestId)
+        } else {
+            $preparation = [CommandWatchdog]::Prepare([uint32]($request.timeout*1000),$qpcLimit,$qpcFrequency,$DeadlineUnix,
+                $request.lifetime.pipe,[uint32]$request.lifetime.owner_pid,$request.lifetime.owner_created,$RequestId)
+        }
         $workerArgs = '-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "' + $PSCommandPath +
             '" -RequestId ' + $RequestId + ' -DeadlineUnix ' + $DeadlineUnix + ' -RequestSha256 ' + $RequestSha256
         Write-Receipt ($RequestId + '.supervision-start.json') @{
@@ -782,6 +804,9 @@ public static class CommandWatchdog {
         foreach ($name in @('status','executed','exit_code','stdout','stderr','output_truncated',
             'process_tree_observed','lifetime_observed','preparation_observed','setup_preload_observed')) { $result[$name] = $inner.$name }
         $result.preparation_supervision_observed = $true
+        # This child observes only delivery, NEVER its parent's future completion.
+        $result.bootstrap_frame_observed = $bootstrapWorker
+        if ($bootstrapWorker) { $result.bootstrap_sha256 = $policy.bootstrap_sha256 }
     } else {
     $preparation = [CommandWatchdog]::PrepareInherited([uint32]($request.timeout*1000),$qpcLimit,$qpcFrequency,$DeadlineUnix,
         $PreparationPipe,$PreparationOwner,[uint32]$request.lifetime.owner_pid,$request.lifetime.owner_created,$RequestId)

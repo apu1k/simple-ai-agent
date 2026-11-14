@@ -45,6 +45,7 @@ ENTRY_POINTS = (
     ('validator-install-guardian.exe', 'AiAgent.ValidatorEntry.ValidatorGuardianProgram'),
     ('validator-provision-worker.exe', 'AiAgent.ValidatorWorker.ValidatorWorkerProgram'),
 )
+COMMAND_ENTRY_POINT = ('command-bootstrap.exe', 'AiAgent.ApprovedCommands.ApprovedCommandBootstrap')
 SETUP_ENTRY_POINTS = (
     ('validator-setup-host.exe', 'AiAgent.ValidatorSetup.ValidatorSetupHostProgram'),
     ('validator-setup-watchdog.exe', 'AiAgent.ValidatorSetup.ValidatorSetupWatchdogProgram'),

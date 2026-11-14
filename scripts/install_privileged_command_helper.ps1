@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$HelperSha256,
-    [Parameter(Mandatory=$true)][ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$OperatorSid
+    [Parameter(Mandatory=$true)][ValidatePattern('^S-1-5-21-\d+-\d+-\d+-\d+$')][string]$OperatorSid,
+    [Parameter(Mandatory=$true)][string]$BootstrapPath,
+    [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-f]{64}$')][string]$BootstrapSha256
 )
 # SEPARATELY REVIEWED OPERATOR SETUP ONLY. No tool installs or upgrades this.
 $ErrorActionPreference = 'Stop'
@@ -49,6 +51,31 @@ $sha = [Security.Cryptography.SHA256]::Create()
 try { $digest = ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant() }
 finally { $sha.Dispose() }
 if ($bytes.Length -gt 65536 -or $digest -cne $HelperSha256) { throw 'Reviewed helper bytes mismatch' }
+# Finished executable pin is an INDEPENDENT operator review input. Never build,
+# discover/promote a pin, execute the input or modify an existing installation.
+if ($BootstrapPath -notmatch '^[A-Za-z]:\\' -or [IO.Path]::GetFullPath($BootstrapPath) -cne $BootstrapPath) { throw 'Canonical reviewed bootstrap input required' }
+function Read-Bounded([string]$Path,[int]$Maximum) {
+    $file = [IO.File]::Open($Path,'Open','Read','Read')
+    try {
+        if ($file.Length -lt 1 -or $file.Length -gt $Maximum) { throw 'Reviewed input bound' }
+        $data = New-Object byte[] ([int]$file.Length); $offset = 0
+        while ($offset -lt $data.Length) {
+            $n = $file.Read($data,$offset,$data.Length-$offset)
+            if ($n -le 0) { throw 'Truncated reviewed input' }; $offset += $n
+        }
+        return ,$data
+    } finally { $file.Dispose() }
+}
+$bootstrap = Read-Bounded $BootstrapPath 16777216
+$bootstrapConfig = Read-Bounded ($BootstrapPath + '.config') 4096
+$sha = [Security.Cryptography.SHA256]::Create()
+try { $bootstrapDigest = ([BitConverter]::ToString($sha.ComputeHash($bootstrap))).Replace('-','').ToLowerInvariant() }
+finally { $sha.Dispose() }
+$expectedConfig = [Text.Encoding]::UTF8.GetBytes('<?xml version="1.0" encoding="utf-8"?>' + "`n" +
+    '<configuration><startup useLegacyV2RuntimeActivationPolicy="false"><supportedRuntime version="v4.0" sku=".NETFramework,Version=v4.8"/></startup><runtime><loadFromRemoteSources enabled="false"/></runtime></configuration>' + "`n")
+if ($bootstrapDigest -cne $BootstrapSha256 -or [Convert]::ToBase64String($bootstrapConfig) -cne [Convert]::ToBase64String($expectedConfig)) {
+    throw 'Reviewed bootstrap/configuration differs'
+}
 $security = New-Object Security.AccessControl.DirectorySecurity
 $security.SetAccessRuleProtection($true,$false)
 $security.SetOwner($admins)
@@ -88,7 +115,9 @@ function Write-New([string]$Name,[byte[]]$Data) {
     }
 }
 Write-New 'helper.ps1' $bytes
-$policy = @{version=1; operator_sid=$OperatorSid; helper_sha256=$digest; max_timeout=900; lifetime_protocol=1; preparation_protocol=1; setup_preload_protocol=1; preparation_supervision_protocol=1}
+Write-New 'command-bootstrap.exe' $bootstrap
+Write-New 'command-bootstrap.exe.config' $bootstrapConfig
+$policy = @{version=1; operator_sid=$OperatorSid; helper_sha256=$digest; max_timeout=900; lifetime_protocol=1; preparation_protocol=1; setup_preload_protocol=1; preparation_supervision_protocol=1; bootstrap_supervision_protocol=1; bootstrap_sha256=$bootstrapDigest}
 Write-New 'policy.json' ([Text.Encoding]::UTF8.GetBytes(($policy | ConvertTo-Json -Compress)))
 # Only this data inbox is operator-writable. It is never searched for helper code.
 $inboxSecurity = New-Object Security.AccessControl.DirectorySecurity

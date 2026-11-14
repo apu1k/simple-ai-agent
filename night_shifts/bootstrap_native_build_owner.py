@@ -132,6 +132,9 @@ class _ValidatorBuildOwner:
                  setup_phase: str | None = None) -> None:
         if setup_phase is None:
             self._recipe = build.plan_validation_build(review, source_files=source_files, toolchain_files=toolchain_files)
+        elif setup_phase == 'command_bootstrap':
+            from night_shifts import bootstrap_native_command_build as command_build
+            self._recipe = command_build.plan_command_bootstrap_build(review, source_files=source_files, toolchain_files=toolchain_files)
         else:
             from night_shifts import bootstrap_native_setup_build as setup_build
             if setup_phase not in ('host', 'watchdog'):

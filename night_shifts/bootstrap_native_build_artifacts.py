@@ -226,7 +226,7 @@ class _Metadata:
 def inspect_fixed_executable(name: str, raw: bytes) -> LocalExecutableMetadata:
     """Inspect bytes only. Forgeable return data cannot authorize installation."""
     try:
-        expected = dict((*build.ENTRY_POINTS, *build.SETUP_ENTRY_POINTS))
+        expected = dict((*build.ENTRY_POINTS, *build.SETUP_ENTRY_POINTS, build.COMMAND_ENTRY_POINT))
         _need(type(name) is str and name in expected)
         pe = _PE(raw)
         clr = pe.directory(14)
@@ -257,7 +257,8 @@ def inspect_fixed_executable(name: str, raw: bytes) -> LocalExecutableMetadata:
                   and metadata.blob(row[5]) == bytes.fromhex('b77a5c561934e089')
                   and metadata.blob(row[8]) == b'')
             refs.append(ref)
-        _need(len(refs) == len(set(refs)) and {'mscorlib', 'System', 'System.Runtime.Serialization'} <= set(refs)
+        required = {'mscorlib', 'System'} if name == build.COMMAND_ENTRY_POINT[0] else {'mscorlib', 'System', 'System.Runtime.Serialization'}
+        _need(len(refs) == len(set(refs)) and required <= set(refs)
               and set(refs) <= {ref[:-4] for ref in build.REFERENCE_NAMES})
         manifest = pe.manifest()
         _need(b'<!' not in manifest and _xml_shape(ET.fromstring(manifest)) == _xml_shape(ET.fromstring(build.MANIFEST_BYTES)))

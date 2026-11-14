@@ -52,6 +52,15 @@ def _setup_build(
         kernel=kernel, clock=window.seconds, deadline=deadline, setup_phase=phase).run()
 
 
+def build_command_bootstrap_candidate(
+    review: object, *, source_files: object, toolchain_files: object,
+    deadline: float, cancelled: Callable[[], bool] = lambda: False,
+) -> owner.LocalBuildObservation:
+    """Precompile the fixed outer owner; no output installation or launch."""
+    return _setup_build(review, source_files=source_files, toolchain_files=toolchain_files,
+                        deadline=deadline, cancelled=cancelled, phase='command_bootstrap')
+
+
 def build_setup_host_candidate(
     review: object, *, source_files: object, toolchain_files: object,
     deadline: float, cancelled: Callable[[], bool] = lambda: False,

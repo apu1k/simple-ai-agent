@@ -173,7 +173,8 @@ def _wait_for_helper(kernel: Any, handle: Any, root: Path, claim: PrivilegedClai
 
 
 def _elevate(powershell: Path, helper: Path, claim: PrivilegedClaim, *,
-             request_sha256: str | None = None) -> str:
+             request_sha256: str | None = None,
+             command_bootstrap: tuple[int, str, int, str] | None = None) -> str:
     """RunAs with Windows consent, never shell/PATH lookup or arbitrary text."""
     from ctypes import wintypes as w
 
@@ -202,6 +203,20 @@ def _elevate(powershell: Path, helper: Path, claim: PrivilegedClaim, *,
         if not re.fullmatch('[0-9a-f]{64}', request_sha256):
             raise PrivilegedHostError('Invalid approved request digest')
         params += f' -RequestSha256 {request_sha256}'
+    if command_bootstrap is not None:
+        timeout, pipe, pid, created = command_bootstrap
+        prefix = r'\\.\pipe\AiAgentCommandLease-v1-' + claim.request_id + '-'
+        if (helper.name != 'helper.ps1' or helper.parent.name != 'AiAgentElevatedCommands'
+                or type(timeout) is not int or not 1 <= timeout <= 900
+                or request_sha256 is None or type(pipe) is not str or not pipe.startswith(prefix)
+                or not re.fullmatch('[0-9a-f]{32}', pipe[len(prefix):])
+                or type(pid) is not int or not 1 <= pid <= 0xffffffff
+                or type(created) is not str or not re.fullmatch('[1-9][0-9]{0,18}', created)
+                or int(created) > 0x7fffffffffffffff):
+            raise PrivilegedHostError('Invalid fixed command bootstrap frame')
+        powershell = helper.parent / 'command-bootstrap.exe'
+        params = (f'--approved-command-bootstrap-v1 {claim.request_id} {int(claim.deadline_unix)} '
+                  f'{request_sha256} {timeout} {pipe} {pid} {created}')
     info = ShellExecuteInfo()
     info.cbSize = ctypes.sizeof(info)
     info.fMask = 0x40 | 0x100  # NOCLOSEPROCESS, NOASYNC
@@ -230,7 +245,9 @@ def _elevate(powershell: Path, helper: Path, claim: PrivilegedClaim, *,
             raise PrivilegedHostError('Cannot read elevated exit status')
         return 'completed' if code.value == 0 else 'helper_failed'
     finally:
-        kernel.CloseHandle(info.hProcess)
+        closed = kernel.CloseHandle(info.hProcess)
+        if command_bootstrap is not None and not closed:
+            raise PrivilegedHostError('Command bootstrap process-handle close unknown')
 
 
 class _ReceiptRunner:

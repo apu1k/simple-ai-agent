@@ -37,7 +37,7 @@ def observation(p):
         result_sha256=hashlib.sha256(raw).hexdigest(), result_valid=True)
     outer = dict(version=1, operation='elevated_commands', request_id=ID, helper_sha256=p['outer_helper_sha256'],
         status='completed', executed=True, effects_verified=False, retry_authorized=False, output_truncated=False,
-        exit_code=0, stderr='', process_tree_observed=True, lifetime_observed=True, preparation_observed=True, setup_preload_observed=True, preparation_supervision_observed=True)
+        exit_code=0, stderr='', process_tree_observed=True, lifetime_observed=True, preparation_observed=True, setup_preload_observed=True, preparation_supervision_observed=True, bootstrap_supervision_observed=True)
     return outer, raw, receipt
 
 
@@ -123,7 +123,8 @@ def test_success_is_only_a_bound_observation_never_acceptance_or_provisioning(pu
     ('lifetime_observed', False), ('lifetime_observed', 1), ('lifetime_observed', None), ('status', 'cancelled_outcome_unknown'),
     ('preparation_observed', False), ('preparation_observed', 1), ('preparation_observed', None),
     ('setup_preload_observed', False), ('setup_preload_observed', 1), ('setup_preload_observed', None),
-    ('preparation_supervision_observed', False), ('preparation_supervision_observed', 1), ('preparation_supervision_observed', None)])
+    ('preparation_supervision_observed', False), ('preparation_supervision_observed', 1), ('preparation_supervision_observed', None),
+    ('bootstrap_supervision_observed', False), ('bootstrap_supervision_observed', 1), ('bootstrap_supervision_observed', None)])
 def test_outer_faults_cannot_promote_even_a_complete_inner_receipt(field, bad):
     p, _ = review()
     outer, raw, receipt = observation(p)

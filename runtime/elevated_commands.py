@@ -12,7 +12,7 @@ import re
 import time
 from pathlib import Path
 from contextlib import nullcontext
-from typing import Any
+from typing import Any, cast
 
 from core.tool_progress import approval_progress
 from runtime.privileged_host import (
@@ -61,11 +61,15 @@ def load_launcher() -> tuple[Path, Path, dict[str, Any]]:
                            {'version', 'operator_sid', 'helper_sha256', 'max_timeout', 'lifetime_protocol'},
                            {'version', 'operator_sid', 'helper_sha256', 'max_timeout', 'lifetime_protocol', 'preparation_protocol'},
                            {'version', 'operator_sid', 'helper_sha256', 'max_timeout', 'lifetime_protocol', 'preparation_protocol', 'setup_preload_protocol'},
-                           {'version', 'operator_sid', 'helper_sha256', 'max_timeout', 'lifetime_protocol', 'preparation_protocol', 'setup_preload_protocol', 'preparation_supervision_protocol'})
+                           {'version', 'operator_sid', 'helper_sha256', 'max_timeout', 'lifetime_protocol', 'preparation_protocol', 'setup_preload_protocol', 'preparation_supervision_protocol'},
+                           {'version', 'operator_sid', 'helper_sha256', 'max_timeout', 'lifetime_protocol', 'preparation_protocol', 'setup_preload_protocol', 'preparation_supervision_protocol', 'bootstrap_supervision_protocol', 'bootstrap_sha256'})
             or ('lifetime_protocol' in policy and (type(policy['lifetime_protocol']) is not int or policy['lifetime_protocol'] != 1))
             or ('preparation_protocol' in policy and (type(policy['preparation_protocol']) is not int or policy['preparation_protocol'] != 1))
             or ('setup_preload_protocol' in policy and (type(policy['setup_preload_protocol']) is not int or policy['setup_preload_protocol'] != 1))
             or ('preparation_supervision_protocol' in policy and (type(policy['preparation_supervision_protocol']) is not int or policy['preparation_supervision_protocol'] != 1))
+            or ('bootstrap_supervision_protocol' in policy and
+                (type(policy['bootstrap_supervision_protocol']) is not int or policy['bootstrap_supervision_protocol'] != 1
+                 or not isinstance(policy.get('bootstrap_sha256'), str) or not re.fullmatch('[0-9a-f]{64}', policy['bootstrap_sha256'])))
             or type(policy['version']) is not int or policy['version'] != 1
             or policy['operator_sid'] != _current_user_sid()
             or type(policy['max_timeout']) is not int
@@ -76,6 +80,17 @@ def load_launcher() -> tuple[Path, Path, dict[str, Any]]:
     helper = (root / 'helper.ps1').read_bytes()
     if len(helper) > 65536 or hashlib.sha256(helper).hexdigest() != policy['helper_sha256']:
         raise PrivilegedHostError('Elevated launcher differs from installed policy')
+    if 'bootstrap_supervision_protocol' in policy:
+        from night_shifts.bootstrap_native_install_request import _CONFIG
+        for name in ('command-bootstrap.exe', 'command-bootstrap.exe.config'):
+            _assert_protected(root / name)
+        with (root / 'command-bootstrap.exe').open('rb') as stream:
+            raw = stream.read(16 * 1024**2 + 1)
+        if not 1 <= len(raw) <= 16 * 1024**2 or hashlib.sha256(raw).hexdigest() != policy['bootstrap_sha256']:
+            raise PrivilegedHostError('Command bootstrap differs from reviewed deployment')
+        with (root / 'command-bootstrap.exe.config').open('rb') as stream:
+            if stream.read(4097) != _CONFIG:
+                raise PrivilegedHostError('Command bootstrap runtime configuration differs')
     # Requests are intentionally operator-writable; NEVER load code from here.
     local_path(str(root / 'requests'), directory=True)
     return root, powershell, policy
@@ -106,6 +121,7 @@ def validate_receipt(receipt: dict[str, Any], claim: PrivilegedClaim, digest: st
             or ('preparation_observed' in receipt and type(receipt['preparation_observed']) is not bool)
             or ('setup_preload_observed' in receipt and type(receipt['setup_preload_observed']) is not bool)
             or ('preparation_supervision_observed' in receipt and type(receipt['preparation_supervision_observed']) is not bool)
+            or ('bootstrap_frame_observed' in receipt and type(receipt['bootstrap_frame_observed']) is not bool)
             or not isinstance(receipt.get('stdout'), str) or not isinstance(receipt.get('stderr'), str)
             or len(receipt['stdout'].encode('utf-8')) + len(receipt['stderr'].encode('utf-8')) > 150000
             or receipt.get('retry_authorized') is not False
@@ -142,6 +158,11 @@ def validate_receipt(receipt: dict[str, Any], claim: PrivilegedClaim, digest: st
             receipt['status'] != 'completed' or receipt.get('preparation_observed') is not True
             or receipt.get('lifetime_observed') is not True or receipt.get('process_tree_observed') is not True):
         raise PrivilegedHostError('Inconsistent preparation-worker supervision observation')
+    if receipt.get('bootstrap_frame_observed') is True and (receipt['status'] != 'completed'
+            or receipt.get('preparation_supervision_observed') is not True
+            or not isinstance(receipt.get('bootstrap_sha256'), str)
+            or not re.fullmatch('[0-9a-f]{64}', receipt['bootstrap_sha256'])):
+        raise PrivilegedHostError('Inconsistent bootstrap delivery observation')
     if receipt['status'] == 'completed' and (not receipt['executed'] or receipt['exit_code'] != 0):
         raise PrivilegedHostError('Inconsistent completion receipt')
 
@@ -152,6 +173,7 @@ def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: st
                         require_lifetime: bool = False,
                         require_preparation: bool = False,
                         require_preparation_supervision: bool = False,
+                        require_bootstrap_supervision: bool = False,
                         setup_preload: str | None = None) -> dict[str, Any]:
     if os.name != 'nt' or claim.operation != 'elevated_commands':
         raise PrivilegedHostError('Windows elevated-command grant required')
@@ -169,6 +191,9 @@ def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: st
     prepared = type(policy.get('preparation_protocol')) is int and policy['preparation_protocol'] == 1
     preload_capable = type(policy.get('setup_preload_protocol')) is int and policy['setup_preload_protocol'] == 1
     supervised = type(policy.get('preparation_supervision_protocol')) is int and policy['preparation_supervision_protocol'] == 1
+    bootstrap = type(policy.get('bootstrap_supervision_protocol')) is int and policy['bootstrap_supervision_protocol'] == 1
+    if require_bootstrap_supervision and (not capable or not prepared or not supervised or not bootstrap):
+        raise PrivilegedHostError('Reviewed complete-helper bootstrap supervision deployment required before approval')
     if require_preparation_supervision and (not capable or not prepared or not supervised):
         raise PrivilegedHostError('Reviewed preparation-worker supervision deployment required before approval')
     if setup_preload is not None:
@@ -193,6 +218,8 @@ def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: st
             payload['lifetime'] = lifetime.binding
         if setup_preload is not None:
             payload['setup_preload'] = setup_preload
+        if bootstrap:
+            payload['bootstrap_sha256'] = policy['bootstrap_sha256']
         request, decision = await_approval(gate, claim, payload)
         base = dict(request_id=claim.request_id, approval=decision, review_sha256=request.review_sha256)
         if decision != 'accepted':
@@ -208,8 +235,14 @@ def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: st
             stream.write(request.review_json.encode('utf-8'))
             stream.flush()
             os.fsync(stream.fileno())
-        state = _elevate(powershell, root / 'helper.ps1', claim,
-                         request_sha256=request.review_sha256)
+        if bootstrap:
+            if lifetime is None:
+                raise PrivilegedHostError('Bootstrap caller lifetime unavailable')
+            binding = lifetime.binding
+            state = _elevate(powershell, root / 'helper.ps1', claim, request_sha256=request.review_sha256,
+                command_bootstrap=cast(tuple[int, str, int, str], (timeout, binding['pipe'], binding['owner_pid'], binding['owner_created'])))
+        else:
+            state = _elevate(powershell, root / 'helper.ps1', claim, request_sha256=request.review_sha256)
         if state == 'uac_cancelled':
             return dict(base, status=state, executed=False)
         if state not in ('completed', 'helper_failed'):
@@ -225,6 +258,15 @@ def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: st
             raise PrivilegedHostError('Missing protected native pre-load observation; outcome unknown')
         if supervised and receipt.get('status') == 'completed' and receipt.get('preparation_supervision_observed') is not True:
             raise PrivilegedHostError('Missing protected preparation-worker supervision observation; outcome unknown')
+        if bootstrap:
+            # The helper can publish before its parent finishes. Parent failure
+            # MUST defeat even a valid completed protected receipt.
+            if (state != 'completed' or receipt.get('status') != 'completed'
+                    or receipt.get('bootstrap_frame_observed') is not True
+                    or receipt.get('bootstrap_sha256') != policy['bootstrap_sha256']):
+                return dict(base, status='outcome_unknown', effects_verified=False, retry_authorized=False,
+                    bootstrap_supervision_observed=False, receipt=str(receipt_path))
+            receipt = dict(receipt, bootstrap_supervision_observed=True)
         if capable and gate.execution_cancelled(claim):
             return dict(base, status='cancelled_outcome_unknown', effects_verified=False,
                         retry_authorized=False, receipt=str(receipt_path))

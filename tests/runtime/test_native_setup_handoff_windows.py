@@ -200,7 +200,7 @@ $a | ConvertTo-Json -Compress
             executed=True, effects_verified=False, retry_authorized=False, output_truncated=False, exit_code=0, stderr='',
             stdout=answer['Stdout'], process_tree_observed=answer['ProcessTreeObserved'], lifetime_observed=answer['LifetimeObserved'],
             preparation_observed=answer['PreparationObserved'], setup_preload_observed=answer['SetupPreloadObserved'],
-            preparation_supervision_observed=True)  # Synthetic transport; real outer preparation is tested separately.
+            preparation_supervision_observed=True, bootstrap_supervision_observed=True)  # Synthetic transport; real outer supervision is tested separately.
         observed = launch.reconcile_setup_handoff(review, request_id=identity_id, outer=outer)
         assert observed['status'] == 'setup_observed_not_accepted'
         assert observed['accepted'] is observed['provisioning_authorized'] is observed['retry_authorized'] is False
