@@ -83,7 +83,7 @@ namespace AiAgent.ValidatorSetup {
             using (var f=new FileStream(Path.Combine(p.Location.Root,"resumed.marker"),FileMode.CreateNew,FileAccess.Write,FileShare.Read)) {
                 byte[] marker=Encoding.ASCII.GetBytes("INERT FIXTURE RESUMED\n"); f.Write(marker,0,marker.Length); f.Flush(true);
             }
-            string mode="__MODE__"; if (mode!="normal") Thread.Sleep(Timeout.Infinite);
+            string mode="__MODE__"; if (mode!="normal" && mode!="exit_accounting_lag") Thread.Sleep(Timeout.Infinite);
             var indices=new Dictionary<string,ulong>(StringComparer.Ordinal); ulong index=100;
             foreach (string name in SetupTransaction.Anchors) indices.Add(name,index++); return new SetupReferences(p.Parent,indices);
         }
@@ -93,6 +93,8 @@ namespace AiAgent.ValidatorSetup {
     internal sealed class ObservedKernel : IGuardianKernel,IGuardianWindowKernel {
         readonly WindowsSetupSupervisorKernel inner;
         readonly SetupHostProfile p;
+        ChildPair actual;
+        int lagPolls;
         [DllImport("kernel32.dll",ExactSpelling=true)] static extern IntPtr GetCurrentProcess();
         [DllImport("kernel32.dll",ExactSpelling=true)] static extern IntPtr OpenProcess(uint access,bool inherit,uint pid);
         [DllImport("kernel32.dll",ExactSpelling=true)] static extern bool DuplicateHandle(IntPtr source,IntPtr handle,IntPtr target,out IntPtr result,uint access,bool inherit,uint options);
@@ -108,7 +110,7 @@ namespace AiAgent.ValidatorSetup {
         }
         public void BindWindow(GuardianPlan plan,IGuardianClock c,double cap) { inner.BindWindow(plan,c,cap); }
         public ChildPair CreateSuspended(object job,string root) {
-            ChildPair child=inner.CreateSuspended(job,root);
+            ChildPair child=inner.CreateSuspended(job,root); actual=child;
             IntPtr controller=OpenProcess(0x40,false,__CONTROLLER_PID__u),copy=IntPtr.Zero;
             if (controller==IntPtr.Zero) throw new Exception("FIXTURE_CONTROLLER_OPEN");
             try {
@@ -126,7 +128,15 @@ namespace AiAgent.ValidatorSetup {
         }
         public bool Member(object process,object job) { return inner.Member(process,job); }
         public uint Resume(object thread) { return inner.Resume(thread); } public uint Wait(object process,uint ms) { return inner.Wait(process,ms); }
-        public uint ExitCode(object process) { return inner.ExitCode(process); } public uint Active(object job) { return inner.Active(job); }
+        public uint ExitCode(object process) { return inner.ExitCode(process); } public uint Active(object job) {
+            uint count=inner.Active(job); string mode="__MODE__";
+            // Explicit TEST timing fault: never fabricate an empty job. The
+            // actual held root is signaled; real native accounting still runs.
+            if (mode=="exit_accounting_lag" && actual!=null && inner.Wait(actual.Process,0)==0 && lagPolls<3) {
+                lagPolls++; File.WriteAllText(Path.Combine(p.Location.Root,"accounting-lag.marker"),lagPolls.ToString()); return 1;
+            }
+            return count;
+        }
         public void Stop(object job) { inner.Stop(job); } public void Pause(int ms) { inner.Pause(ms); } public void Close(object h) { inner.Close(h); }
     }
     internal static class FixtureHostProgram {
@@ -156,7 +166,7 @@ def _compile(folder, paths, output, entry):
     Path(str(output) + '.config').write_bytes(request._CONFIG)
 
 
-@pytest.mark.parametrize('mode', ['normal', 'deadline', 'owner_death', 'incoming_deadline'])
+@pytest.mark.parametrize('mode', ['normal', 'deadline', 'owner_death', 'incoming_deadline', 'exit_accounting_lag'])
 def test_native_setup_job_window_termination_and_exact_child_handle(mode):
     if os.name != 'nt':
         pytest.skip('requires ordinary x64 Windows job/QPC characterization')
@@ -231,9 +241,12 @@ def test_native_setup_job_window_termination_and_exact_child_handle(mode):
             import json
             receipt = json.loads((folder / 'supervisor-receipt.json').read_bytes())
             assert receipt['scope'] == 'local_setup_process_observations_not_acceptance'
-            assert receipt['empty_job_observed'] is True and receipt['result_valid'] == (mode == 'normal')
-            assert receipt['end'] == ('RootExited' if mode == 'normal' else 'DeadlineStopped')
-            assert proc.returncode == (0 if mode == 'normal' else 124)
+            normal = mode in ('normal', 'exit_accounting_lag')
+            assert receipt['empty_job_observed'] is True and receipt['result_valid'] == normal
+            assert receipt['end'] == ('RootExited' if normal else 'DeadlineStopped')
+            assert proc.returncode == (0 if normal else 124)
+            if mode == 'exit_accounting_lag':
+                assert (folder / 'accounting-lag.marker').read_text(encoding='ascii') == '3'
             if mode == 'incoming_deadline':
                 assert time.monotonic() - began < 10, 'Incoming original cap renewed to profile budget'
         else:

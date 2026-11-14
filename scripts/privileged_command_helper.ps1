@@ -71,6 +71,7 @@ foreach ($path in @($root,$receipts,$PSCommandPath,([IO.Path]::Combine($root,'po
 $policy = [IO.File]::ReadAllText([IO.Path]::Combine($root,'policy.json')) | ConvertFrom-Json
 $helperHash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($policy.version -ne 1 -or $policy.max_timeout -ne 900 -or $policy.lifetime_protocol -ne 1 -or $policy.preparation_protocol -ne 1 -or
+    $policy.setup_preload_protocol -ne 1 -or
     $policy.helper_sha256 -cne $helperHash -or $policy.operator_sid -cne $identity.User.Value) {
     throw 'Installed policy/code/operator mismatch'
 }
@@ -97,6 +98,7 @@ if ($digest -cne $RequestSha256) { throw 'Approved request changed' }
 $utf8 = New-Object Text.UTF8Encoding($false,$true)
 $request = $utf8.GetString($bytes) | ConvertFrom-Json
 $fields = @('version','request_id','operation','deadline_unix','timeout','script','cwd','reason','operator_sid','helper_sha256','lifetime')
+if ($null -ne $request.PSObject.Properties['setup_preload']) { $fields += 'setup_preload' }
 if (@(Compare-Object $fields @($request.PSObject.Properties.Name)).Count -ne 0 -or
     $request.version -ne 1 -or $request.request_id -cne $RequestId -or
     $request.operation -cne 'elevated_commands' -or $request.deadline_unix -ne $DeadlineUnix -or
@@ -172,7 +174,7 @@ function Command-Arguments([string]$ScriptPath) {
     return '-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -EncodedCommand ' + $encoded
 }
 $result = @{version=1; request_id=$RequestId; operation='elevated_commands'; request_sha256=$digest;
-    helper_sha256=$helperHash; status='outcome_unknown'; executed=$false; effects_verified=$false; process_tree_observed=$false; lifetime_observed=$false; preparation_observed=$false;
+    helper_sha256=$helperHash; status='outcome_unknown'; executed=$false; effects_verified=$false; process_tree_observed=$false; lifetime_observed=$false; preparation_observed=$false; setup_preload_observed=$false;
     exit_code=$null; stdout=''; stderr=''; output_truncated=$false; retry_authorized=$false}
 try {
     # Kill-on-close process containment. External services/VMs/tasks are NOT contained.
@@ -222,7 +224,7 @@ public static class CommandWatchdog {
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
     public sealed class Dump { public string Text; public bool Truncated; }
     // Process observations only; never external-service/VM/effect verification.
-    public sealed class Answer { public int Code; public bool Timeout,Truncated,ProcessTreeObserved,LifetimeObserved,Cancelled,PreparationObserved; public string Stdout,Stderr; }
+    public sealed class Answer { public int Code; public bool Timeout,Truncated,ProcessTreeObserved,LifetimeObserved,Cancelled,PreparationObserved,SetupPreloadObserved; public string Stdout,Stderr; }
     [DllImport("kernel32.dll",ExactSpelling=true,SetLastError=true)] static extern bool PeekNamedPipe(IntPtr pipe,IntPtr buffer,uint bytes,IntPtr read,out uint available,IntPtr left);
     [DllImport("kernel32.dll",ExactSpelling=true)] static extern bool GetNamedPipeServerProcessId(IntPtr pipe,out uint pid);
     [DllImport("kernel32.dll",ExactSpelling=true)] static extern IntPtr OpenProcess(uint access,bool inherit,uint pid);
@@ -315,8 +317,183 @@ public static class CommandWatchdog {
     }
     // A single-use native owner bridges durable preparation and launch. There
     // is no reconnect, deadline renewal or second executable attempt on failure.
+    // Held native pre-load inputs for the FIXED setup operation only. The
+    // already-loaded helper/OS/CLR/compiler closure remains an external trust
+    // prerequisite. No create, launch, ACL repair, inventory repair or fallback.
+    sealed class SetupLease : IDisposable {
+        [StructLayout(LayoutKind.Sequential)] struct UnicodeName { internal ushort Length,Maximum; internal IntPtr Buffer; }
+        [StructLayout(LayoutKind.Sequential)] struct Attributes { internal uint Length; internal IntPtr Root,Name; internal uint Flags; internal IntPtr Security,Qos; }
+        [StructLayout(LayoutKind.Sequential)] struct Status { internal IntPtr Code; internal UIntPtr Information; }
+        [StructLayout(LayoutKind.Sequential)] struct Time { internal uint Low,High; }
+        [StructLayout(LayoutKind.Sequential)] struct Info {
+            internal uint Flags; internal Time Created,Accessed,Written;
+            internal uint Volume,SizeHigh,SizeLow,Links,IndexHigh,IndexLow;
+        }
+        [DllImport("ntdll.dll",ExactSpelling=true)] static extern int NtCreateFile(out IntPtr handle,uint access,ref Attributes attributes,out Status status,IntPtr size,uint flags,uint share,uint disposition,uint options,IntPtr ea,uint eaBytes);
+        [DllImport("kernel32.dll",ExactSpelling=true,CharSet=CharSet.Unicode)] static extern uint GetDriveTypeW(string root);
+        [DllImport("kernel32.dll",ExactSpelling=true,CharSet=CharSet.Unicode)] static extern bool GetVolumeInformationByHandleW(IntPtr handle,StringBuilder label,uint count,IntPtr serial,IntPtr maximum,IntPtr flags,StringBuilder fs,uint fsCount);
+        [DllImport("kernel32.dll",ExactSpelling=true)] static extern bool GetFileInformationByHandle(IntPtr handle,out Info info);
+        [DllImport("kernel32.dll",ExactSpelling=true)] static extern bool GetFileInformationByHandleEx(IntPtr handle,int kind,out uint value,uint count);
+        [DllImport("kernel32.dll",ExactSpelling=true,CharSet=CharSet.Unicode)] static extern uint GetFinalPathNameByHandleW(IntPtr handle,StringBuilder name,uint count,uint flags);
+        [DllImport("kernel32.dll",ExactSpelling=true)] static extern bool SetFilePointerEx(IntPtr handle,long offset,out long position,uint method);
+        [DllImport("kernel32.dll",ExactSpelling=true)] static extern bool ReadFile(IntPtr handle,byte[] bytes,uint count,out uint read,IntPtr overlapped);
+        [DllImport("advapi32.dll",ExactSpelling=true)] static extern uint GetSecurityInfo(IntPtr handle,int kind,uint sections,out IntPtr owner,out IntPtr group,out IntPtr dacl,IntPtr sacl,out IntPtr descriptor);
+        [DllImport("advapi32.dll",ExactSpelling=true)] static extern uint GetSecurityDescriptorLength(IntPtr descriptor);
+        [DllImport("kernel32.dll",ExactSpelling=true)] static extern IntPtr LocalFree(IntPtr pointer);
+        sealed class Entry {
+            internal IntPtr Handle; internal bool Directory,Ancestor;
+            internal Info Before; internal string Path,Descriptor,Hash; internal long Bytes;
+        }
+        const string Admins="S-1-5-32-544",SystemSid="S-1-5-18",Installer="S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+        readonly Action check;
+        readonly System.Collections.Generic.List<Entry> entries=new System.Collections.Generic.List<Entry>();
+        readonly System.Collections.Generic.HashSet<string> identities=new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+        bool disposed;
+        static Exception Refused() { return new Exception("Native setup pre-load refused"); }
+        static ulong Index(Info info) { return ((ulong)info.IndexHigh<<32)|info.IndexLow; }
+        static long Extent(Info info) {
+            ulong bytes=((ulong)info.SizeHigh<<32)|info.SizeLow;
+            if (bytes>Int64.MaxValue) throw Refused(); return (long)bytes;
+        }
+        static string Final(IntPtr handle) {
+            var name=new StringBuilder(512); uint n=GetFinalPathNameByHandleW(handle,name,512,1);
+            if (n<1 || n>=512) throw Refused(); return name.ToString();
+        }
+        static string Descriptor(IntPtr handle,bool directory,bool ancestor) {
+            IntPtr owner,group,dacl,descriptor;
+            uint error=GetSecurityInfo(handle,1,7,out owner,out group,out dacl,IntPtr.Zero,out descriptor);
+            try {
+                if (error!=0 || descriptor==IntPtr.Zero || owner==IntPtr.Zero || group==IntPtr.Zero || dacl==IntPtr.Zero) throw Refused();
+                uint length=GetSecurityDescriptorLength(descriptor);
+                if (length<20 || length>65536) throw Refused();
+                byte[] raw=new byte[(int)length]; Marshal.Copy(descriptor,raw,0,raw.Length);
+                var sd=new System.Security.AccessControl.RawSecurityDescriptor(raw,0);
+                var acl=sd.DiscretionaryAcl;
+                if (sd.Owner==null || (sd.Owner.Value!=Admins && sd.Owner.Value!=SystemSid && (!ancestor || sd.Owner.Value!=Installer)) ||
+                    (sd.ControlFlags&System.Security.AccessControl.ControlFlags.DiscretionaryAclPresent)==0 || acl==null || acl.Count<1 || acl.Count>128) throw Refused();
+                var remaining=new System.Collections.Generic.HashSet<string>(new string[]{Admins,SystemSid},StringComparer.Ordinal);
+                if (!ancestor && ((sd.ControlFlags&System.Security.AccessControl.ControlFlags.DiscretionaryAclProtected)==0 ||
+                    sd.Group==null || sd.Group.Value!=Admins || acl.Count!=2)) throw Refused();
+                foreach (System.Security.AccessControl.GenericAce value in acl) {
+                    var ace=value as System.Security.AccessControl.CommonAce;
+                    if (ace==null || ace.IsCallback || (ace.AceType!=System.Security.AccessControl.AceType.AccessAllowed &&
+                        ace.AceType!=System.Security.AccessControl.AceType.AccessDenied) || ((int)ace.AceFlags&~31)!=0) throw Refused();
+                    string sid=ace.SecurityIdentifier.Value;
+                    if (!ancestor) {
+                        if (ace.AceType!=System.Security.AccessControl.AceType.AccessAllowed || (int)ace.AceFlags!=(directory?3:0) ||
+                            ace.AccessMask!=0x1f01ff || !remaining.Remove(sid)) throw Refused();
+                    } else if (((int)ace.AceFlags&8)==0 && ace.AceType==System.Security.AccessControl.AceType.AccessAllowed &&
+                        sid!=Admins && sid!=SystemSid && sid!=Installer &&
+                        (unchecked((uint)ace.AccessMask)&~(0x1200a9u|2u|4u|0x80000000u|0x20000000u))!=0) throw Refused();
+                }
+                return sd.GetSddlForm(System.Security.AccessControl.AccessControlSections.Owner|
+                    System.Security.AccessControl.AccessControlSections.Group|System.Security.AccessControl.AccessControlSections.Access);
+            } finally {
+                if (descriptor!=IntPtr.Zero && LocalFree(descriptor)!=IntPtr.Zero) throw new Exception("Native setup security release unknown");
+            }
+        }
+        Info Observe(Entry e) {
+            check(); Info info; uint flags;
+            if (e.Handle==IntPtr.Zero || GetFileType(e.Handle)!=1 || !GetFileInformationByHandle(e.Handle,out info) ||
+                Index(info)==0 || info.Links!=1 || (info.Flags&0x5e00)!=0 || ((info.Flags&16)!=0)!=e.Directory ||
+                !GetHandleInformation(e.Handle,out flags) || flags!=0) throw Refused();
+            if (e.Directory && (!GetFileInformationByHandleEx(e.Handle,23,out flags,4) || flags!=0)) throw Refused();
+            Extent(info); return info;
+        }
+        Entry Own(IntPtr handle,bool directory,bool ancestor,string path,uint? volume) {
+            if (handle==IntPtr.Zero || handle==new IntPtr(-1)) throw Refused();
+            var e=new Entry {Handle=handle,Directory=directory,Ancestor=ancestor}; entries.Add(e);
+            e.Before=Observe(e); e.Path=Final(handle); e.Descriptor=Descriptor(handle,directory,ancestor);
+            if ((path!=null && e.Path!=path) || (volume.HasValue && e.Before.Volume!=volume.Value) ||
+                !identities.Add(e.Before.Volume.ToString(System.Globalization.CultureInfo.InvariantCulture)+":"+Index(e.Before).ToString(System.Globalization.CultureInfo.InvariantCulture))) throw Refused();
+            return e;
+        }
+        void Match(Entry e) {
+            Info info=Observe(e);
+            if (info.Volume!=e.Before.Volume || Index(info)!=Index(e.Before) || info.Flags!=e.Before.Flags || info.Links!=e.Before.Links ||
+                (!e.Directory && Extent(info)!=Extent(e.Before)) || Final(e.Handle)!=e.Path || Descriptor(e.Handle,e.Directory,e.Ancestor)!=e.Descriptor) throw Refused();
+            check();
+        }
+        Entry Open(Entry parent,string name,bool directory,bool ancestor) {
+            if (name==null || name.Length<1 || name.Length>120 || name=="." || name==".." || name.EndsWith(".",StringComparison.Ordinal) ||
+                name.EndsWith(" ",StringComparison.Ordinal) || name.IndexOfAny(new char[]{'\\','/',':','\0','\r','\n','"','*','?','<','>','|'})>=0) throw Refused();
+            Match(parent); IntPtr buffer=IntPtr.Zero,text=IntPtr.Zero,handle=IntPtr.Zero;
+            try {
+                buffer=Marshal.StringToHGlobalUni(name);
+                var unicode=new UnicodeName {Length=(ushort)(name.Length*2),Maximum=(ushort)((name.Length+1)*2),Buffer=buffer};
+                text=Marshal.AllocHGlobal(Marshal.SizeOf(typeof(UnicodeName))); Marshal.StructureToPtr(unicode,text,false);
+                var attributes=new Attributes {Length=(uint)Marshal.SizeOf(typeof(Attributes)),Root=parent.Handle,Name=text,Flags=0x1040};
+                Status status;
+                int result=NtCreateFile(out handle,directory?0x1200a1u:0x80120080u,ref attributes,out status,IntPtr.Zero,0,
+                    directory?3u:1u,1,directory?0x200021u:0x200060u,IntPtr.Zero,0);
+                if (result!=0 || status.Information.ToUInt64()!=1) throw Refused();
+                IntPtr owned=handle; handle=IntPtr.Zero;
+                Entry e=Own(owned,directory,ancestor,parent.Path.TrimEnd('\\')+"\\"+name,parent.Before.Volume); Match(parent); return e;
+            } finally { bool closed=Release(ref handle); Free(ref text); Free(ref buffer); if (!closed) throw new Exception("Native setup handle close unknown"); }
+        }
+        void Pin(Entry e) {
+            Match(e); if (Extent(e.Before)!=e.Bytes) throw Refused();
+            long position;
+            if (!SetFilePointerEx(e.Handle,0,out position,0) || position!=0) throw Refused();
+            using (var sha=System.Security.Cryptography.SHA256.Create()) {
+                byte[] buffer=new byte[65536]; long total=0; uint read;
+                for (;;) {
+                    check();
+                    if (!ReadFile(e.Handle,buffer,(uint)buffer.Length,out read,IntPtr.Zero) || read>buffer.Length) throw Refused();
+                    if (read==0) break;
+                    total+=read; if (total>e.Bytes) throw Refused();
+                    sha.TransformBlock(buffer,0,(int)read,buffer,0);
+                }
+                sha.TransformFinalBlock(new byte[0],0,0);
+                if (total!=e.Bytes || BitConverter.ToString(sha.Hash).Replace("-","").ToLowerInvariant()!=e.Hash) throw Refused();
+            }
+            Match(e);
+        }
+        internal SetupLease(Action guard,string root,uint volume,ulong[] indices,string[] names,long[] lengths,string[] hashes) {
+            check=guard;
+            try {
+                if (root==null || root.Length>240 || !System.Text.RegularExpressions.Regex.IsMatch(root,@"\A[A-Z]:\\") ||
+                    System.IO.Path.GetFullPath(root)!=root || root.EndsWith("\\",StringComparison.Ordinal) ||
+                    indices==null || indices.Length!=4 || new System.Collections.Generic.HashSet<ulong>(indices).Count!=4 || Array.IndexOf(indices,0ul)>=0 ||
+                    names==null || (names.Length!=5 && names.Length!=6) || lengths==null || lengths.Length!=names.Length || hashes==null || hashes.Length!=names.Length) throw Refused();
+                string[] fixedNames=new string[]{"policy.json","validator-setup-host.exe","validator-setup-host.exe.config","validator-setup-watchdog.exe","validator-setup-watchdog.exe.config","setup.packet"};
+                for (int i=0;i<names.Length;i++) {
+                    long maximum=i==0?1024:((i==2 || i==4)?4096:(i==5?33554432:16777216));
+                    if (names[i]!=fixedNames[i] || lengths[i]<1 || lengths[i]>maximum || hashes[i]==null ||
+                        !System.Text.RegularExpressions.Regex.IsMatch(hashes[i],@"\A[0-9a-f]{64}\z")) throw Refused();
+                }
+                check(); string drive=root.Substring(0,3);
+                if (GetDriveTypeW(drive)!=3) throw Refused();
+                Security sa=new Security(); sa.Size=Marshal.SizeOf(sa);
+                Entry parent=Own(CreateFile(drive,0x1200a1,3,ref sa,3,0x02200000,IntPtr.Zero),true,true,null,volume);
+                var fs=new StringBuilder(32);
+                if (!GetVolumeInformationByHandleW(parent.Handle,null,0,IntPtr.Zero,IntPtr.Zero,IntPtr.Zero,fs,32) || fs.ToString()!="NTFS" ||
+                    !System.Text.RegularExpressions.Regex.IsMatch(parent.Path,@"\A\\\\\?\\Volume\{[0-9a-fA-F-]{36}\}\\\z")) throw Refused();
+                string[] parts=root.Substring(3).Split('\\');
+                for (int i=0;i<parts.Length;i++) parent=Open(parent,parts[i],true,i+1!=parts.Length);
+                if (Index(parent.Before)!=indices[0]) throw Refused();
+                string[] directories=new string[]{"claims","receipts","scratch"};
+                for (int i=0;i<directories.Length;i++) if (Index(Open(parent,directories[i],true,false).Before)!=indices[i+1]) throw Refused();
+                for (int i=0;i<names.Length;i++) {
+                    Entry e=Open(parent,names[i],false,false); e.Bytes=lengths[i]; e.Hash=hashes[i]; Pin(e);
+                }
+                Verify();
+            } catch { Dispose(); throw; }
+        }
+        internal void Verify() {
+            if (disposed) throw Refused();
+            foreach (Entry e in entries) { if (e.Hash==null) Match(e); else Pin(e); } check();
+        }
+        public void Dispose() {
+            if (disposed) return; disposed=true; bool closed=true;
+            for (int i=entries.Count-1;i>=0;i--) closed=Release(ref entries[i].Handle)&closed;
+            if (!closed) throw new Exception("Native setup handle close unknown");
+        }
+    }
     public sealed class Preparation : IDisposable {
         Lifetime lifetime;
+        SetupLease setup;
+        bool setupAttempted;
         readonly uint ms;
         readonly long limit,frequency,deadline;
         long lastQpc,lastWall;
@@ -348,21 +525,34 @@ public static class CommandWatchdog {
             if (spent) throw new Exception("Preparation already consumed");
             Observe();
         }
+        public void HoldSetup(string root,uint volume,ulong[] indices,string[] names,long[] lengths,string[] hashes) {
+            Check(); if (setupAttempted) throw new Exception("Native setup pre-load already consumed");
+            setupAttempted=true;
+            try { setup=new SetupLease(Observe,root,volume,indices,names,lengths,hashes); }
+            catch { failed=true; throw; }
+        }
         internal Answer Run(string exe,string args,string cwd) {
             if (spent) throw new Exception("Preparation already consumed");
             spent=true; // uncertainty BEFORE observation or native entry
             Observe();
+            if (setup!=null) setup.Verify();
             Answer answer=RunCore(exe,args,cwd,ms,limit,frequency,lifetime);
             // RunCore already observes cancellation/deadline termination. A
             // later loss cannot promote normal completion into acceptance.
-            if (!answer.Cancelled && !answer.Timeout) Observe();
+            if (!answer.Cancelled && !answer.Timeout) { Observe(); if (setup!=null) setup.Verify(); }
+            answer.SetupPreloadObserved=setup!=null;
             answer.PreparationObserved=true; return answer;
         }
         public void Dispose() {
             if (disposed) return;
             disposed=true;
+            SetupLease files=setup; setup=null;
             Lifetime old=lifetime; lifetime=null;
-            if (old!=null) old.Dispose(); // checked; never retry uncertain closes
+            // Attempt both release families. Neither uncertain close is retried.
+            bool closed=true;
+            try { if (files!=null) files.Dispose(); } catch { closed=false; }
+            try { if (old!=null) old.Dispose(); } catch { closed=false; }
+            if (!closed) throw new Exception("Preparation close unknown");
         }
     }
     public static Preparation Prepare(uint ms,long limit,long frequency,long deadlineUnix,string pipe,uint pid,string created,string requestId) {
@@ -489,6 +679,23 @@ public static class CommandWatchdog {
 '@
     $preparation = [CommandWatchdog]::Prepare([uint32]($request.timeout*1000),$qpcLimit,$qpcFrequency,$DeadlineUnix,
         $request.lifetime.pipe,[uint32]$request.lifetime.owner_pid,$request.lifetime.owner_created,$RequestId)
+    $preloadHash = $null
+    if ($null -ne $request.PSObject.Properties['setup_preload']) {
+        if ($request.setup_preload -isnot [string] -or $request.setup_preload.Length -gt 4096 -or
+            $request.setup_preload -cmatch '[^\x20-\x7e]') { throw 'Fixed native setup pre-load data required' }
+        $preload = $request.setup_preload | ConvertFrom-Json
+        if ($preload.version -isnot [int] -or $preload.version -ne 1 -or
+            @(Compare-Object @('version','root','volume','indices','files') @($preload.PSObject.Properties.Name)).Count -ne 0) { throw 'Fixed native setup pre-load schema required' }
+        $names = @(); $lengths = @(); $hashes = @()
+        foreach ($pin in $preload.files) {
+            if (@(Compare-Object @('name','bytes','sha256') @($pin.PSObject.Properties.Name)).Count -ne 0) { throw 'Fixed native setup pin required' }
+            $names += $pin.name; $lengths += $pin.bytes; $hashes += $pin.sha256
+        }
+        $preparation.HoldSetup($preload.root,[uint32]$preload.volume,[uint64[]]$preload.indices,[string[]]$names,[long[]]$lengths,[string[]]$hashes)
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $preloadHash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::ASCII.GetBytes($request.setup_preload)))).Replace('-','').ToLowerInvariant() }
+        finally { $sha.Dispose() }
+    }
     # Permanent collision barrier, exact snapshot and payload, all under ONE
     # held caller capability. A partial write stays; failures never reset it.
     Write-Receipt ($RequestId + '.start.json') @{
@@ -496,7 +703,7 @@ public static class CommandWatchdog {
         request_sha256=$digest; helper_sha256=$helperHash; operator_sid=$identity.User.Value;
         started_at_utc=[DateTime]::UtcNow.ToString('o'); timeout=$request.timeout; deadline_unix=$DeadlineUnix;
         execution_qpc_limit=$qpcLimit; execution_qpc_frequency=$qpcFrequency; lifetime=$request.lifetime;
-        preparation_protocol=1
+        preparation_protocol=1; setup_preload_protocol=1; setup_preload_sha256=$preloadHash
     }
     Write-New ($RequestId + '.approved.json') $bytes
     $bomUtf8 = New-Object Text.UTF8Encoding($true)
@@ -510,6 +717,7 @@ public static class CommandWatchdog {
     $preparation.Dispose(); $preparation = $null
     $result.executed = $true
     $result.preparation_observed = $answer.PreparationObserved
+    $result.setup_preload_observed = $answer.SetupPreloadObserved
     $result.exit_code = $answer.Code; $result.stdout = $answer.Stdout; $result.stderr = $answer.Stderr
     $result.output_truncated = $answer.Truncated
     $result.process_tree_observed = $answer.ProcessTreeObserved; $result.lifetime_observed = $answer.LifetimeObserved

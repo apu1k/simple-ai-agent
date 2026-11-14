@@ -31,6 +31,7 @@ from tests.night_shifts.test_bootstrap_native_setup_build import profile
 from tests.night_shifts.test_native_validator_setup import powershell
 from tests.night_shifts.test_native_validator_setup_supervision_windows import FIXTURE, _compile
 from tests.runtime.test_elevated_commands import quote
+from tests.runtime.test_command_preload import identity as native_identity, ordinary_source
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -41,7 +42,7 @@ def _once(text, old, new):
 
 
 @pytest.mark.skipif(os.name != 'nt', reason='ordinary native nested-job/QPC fixture')
-@pytest.mark.parametrize('mode', ['normal', 'bad_watchdog_pin', 'missing_window', 'claim_collision'])
+@pytest.mark.parametrize('mode', ['normal', 'bad_watchdog_pin', 'missing_window', 'claim_collision', 'exit_accounting_lag'])
 @pytest.mark.parametrize('newlines', [b'\n', b'\r\n'], ids=['LF', 'CRLF'])
 def test_complete_ordinary_handoff_snapshot_and_nested_watchdogs(mode, newlines):
     identity = powershell("$i=[Security.Principal.WindowsIdentity]::GetCurrent(); "
@@ -59,6 +60,10 @@ def test_complete_ordinary_handoff_snapshot_and_nested_watchdogs(mode, newlines)
     hp['operator_sid'] = sid
     hp['expires_unix'] = int(time.time()) + 600
     hp['host_anchor']['path'] = str(target)
+    volume, index = native_identity(target)
+    hp['host_anchor']['identity'] = dict(volume=volume, index=index)
+    for name in ('claims', 'receipts', 'scratch'):
+        hp['host_anchor'][name + '_index'] = native_identity(target / name)[1]
     hp['budget_seconds'] = 20
     paths = []
     for name in sb.WATCHDOG_SOURCES:
@@ -75,7 +80,7 @@ def test_complete_ordinary_handoff_snapshot_and_nested_watchdogs(mode, newlines)
     generated_watchdog = sources / sb.WATCHDOG_PROFILE_NAME
     generated_watchdog.write_bytes(sb.emit_setup_watchdog_profile({'bytes': 123, 'sha256': 'a' * 64}))
     paths.append(generated_watchdog)
-    fixture = FIXTURE.replace('__MODE__', 'normal').replace('__CONTROLLER_PID__', str(os.getpid()))
+    fixture = FIXTURE.replace('__MODE__', 'exit_accounting_lag' if mode == 'exit_accounting_lag' else 'normal').replace('__CONTROLLER_PID__', str(os.getpid()))
     fixture = _once(fixture, 'string PathOf(string n) { return Path.Combine(p.Host.Location.Root,n); }',
         'string PathOf(string n) { return Path.Combine(p.Host.Location.Root,n=="fixture-attempt.claim"?"claims/install-attempt.claim":'
         '((n=="operation-result.bin" || n=="supervisor-receipt.json")?"receipts/"+n:n)); }')
@@ -100,7 +105,8 @@ def test_complete_ordinary_handoff_snapshot_and_nested_watchdogs(mode, newlines)
         review['watchdog_pin']['sha256'] = '0' * 64
     (target / 'policy.json').write_bytes(launch._policy(review)[0])
     identity_id, until = 'c' * 32, int(time.time()) + 300
-    snapshot = launch.prepare_setup_handoff(review, template=template, request_id=identity_id, deadline_unix=until).script
+    frozen = launch.prepare_setup_handoff(review, template=template, request_id=identity_id, deadline_unix=until)
+    snapshot = frozen.script
     snapshot = snapshot.replace('\r\n', '\n')  # TEST copy only, after exact-byte pin validation
     # Explicit ordinary-user TEST copies only. No production admission bypass.
     start, end = snapshot.index('function ProtectedPath('), snapshot.index('function PrivateFile(')
@@ -140,26 +146,37 @@ def test_complete_ordinary_handoff_snapshot_and_nested_watchdogs(mode, newlines)
     count, rate = c.c_int64(), c.c_int64()
     assert k.QueryPerformanceFrequency(c.byref(rate)) and k.QueryPerformanceCounter(c.byref(count))
     cap = count.value + 20 * rate.value
-    record = dict(version=1, operation='elevated_commands', status='started', preparation_protocol=1, request_id=identity_id,
+    record = dict(version=1, operation='elevated_commands', status='started', preparation_protocol=1,
+        setup_preload_protocol=1, setup_preload_sha256=hashlib.sha256(frozen.preload.encode('ascii')).hexdigest(), request_id=identity_id,
         operator_sid=sid, helper_sha256='d' * 64, timeout=20, deadline_unix=until,
         execution_qpc_limit=cap, execution_qpc_frequency=rate.value)
     if mode == 'missing_window':
         del record['execution_qpc_limit']
     start_path.write_text(json.dumps(record), encoding='utf-8')
     _, exe = _windows_paths()
-    helper = ROOT / 'scripts/privileged_command_helper.ps1'
     args = '-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "' + str(snapshot_path) + '"'
     # Explicit ordinary lease/admission fixture, not a privileged grant. The
     # real pipe, server identity and native cancellation checks remain intact.
     lease = CommandLifetime(SimpleNamespace(execution_cancelled=lambda claim: False), PrivilegedClaim(identity_id, until), sid)
     binding = lease.binding
+    native = workspace / 'ordinary-preload.cs'
+    native.write_text(ordinary_source(skip_private=True), encoding='utf-8')
+    preload = json.loads(frozen.preload)
+    # Bad inner pin is still rejected by the snapshot in this exact-cause case;
+    # the OUTER native hold uses the true fixture watchdog pin, not approval.
+    if mode == 'bad_watchdog_pin':
+        preload['files'][3]['sha256'] = hashlib.sha256(watchdog.read_bytes()).hexdigest()
+    preload_path = workspace / 'ordinary-preload.json'
+    preload_path.write_text(json.dumps(preload), encoding='ascii')
     controller = f"""
 $ErrorActionPreference='Stop'
-$text=[IO.File]::ReadAllText({quote(helper)})
-$start=$text.IndexOf('using System;'); $end=$text.IndexOf("'@",$start)
-Add-Type -TypeDefinition $text.Substring($start,$end-$start)
+Add-Type -Path {quote(native)}
 $p=[CommandWatchdog]::Prepare(20000,{cap}L,{rate.value}L,{until}L,{quote(binding['pipe'])},[uint32]{binding['owner_pid']},{quote(binding['owner_created'])},{quote(identity_id)})
-try {{ $p.Check(); $a=[CommandWatchdog]::RunPrepared($p,{quote(exe)},{quote(args)},{quote(workspace)}) }} finally {{ $p.Dispose() }}
+try {{
+    $v=[IO.File]::ReadAllText({quote(preload_path)}) | ConvertFrom-Json
+    $p.HoldSetup($v.root,[uint32]$v.volume,[uint64[]]$v.indices,[string[]]@($v.files | ForEach-Object {{$_.name}}),[long[]]@($v.files | ForEach-Object {{$_.bytes}}),[string[]]@($v.files | ForEach-Object {{$_.sha256}}))
+    $p.Check(); $a=[CommandWatchdog]::RunPrepared($p,{quote(exe)},{quote(args)},{quote(workspace)})
+}} finally {{ $p.Dispose() }}
 $a | ConvertTo-Json -Compress
 """
     with lease:
@@ -168,9 +185,11 @@ $a | ConvertTo-Json -Compress
     assert result.returncode == 0, (str(workspace), result.stdout, result.stderr)
     answer = json.loads(result.stdout)
     assert answer['Timeout'] is answer['Truncated'] is False, str(workspace)
-    assert answer['ProcessTreeObserved'] is answer['LifetimeObserved'] is answer['PreparationObserved'] is True and answer['Cancelled'] is False, str(workspace)
+    assert answer['ProcessTreeObserved'] is answer['LifetimeObserved'] is answer['PreparationObserved'] is answer['SetupPreloadObserved'] is True and answer['Cancelled'] is False, str(workspace)
     install_claim = target / 'claims/install-attempt.claim'
-    if mode == 'normal':
+    if mode in ('normal', 'exit_accounting_lag'):
+        if mode == 'exit_accounting_lag':
+            assert (target / 'accounting-lag.marker').read_text(encoding='ascii') == '3'
         assert answer['Code'] == 0 and not answer['Stderr'], (str(workspace), json.dumps(answer, sort_keys=True))
         handle = int((target / 'child-handle.txt').read_text(encoding='ascii'))
         try:
@@ -180,7 +199,7 @@ $a | ConvertTo-Json -Compress
         outer = dict(version=1, operation='elevated_commands', request_id=identity_id, helper_sha256='d' * 64, status='completed',
             executed=True, effects_verified=False, retry_authorized=False, output_truncated=False, exit_code=0, stderr='',
             stdout=answer['Stdout'], process_tree_observed=answer['ProcessTreeObserved'], lifetime_observed=answer['LifetimeObserved'],
-            preparation_observed=answer['PreparationObserved'])
+            preparation_observed=answer['PreparationObserved'], setup_preload_observed=answer['SetupPreloadObserved'])
         observed = launch.reconcile_setup_handoff(review, request_id=identity_id, outer=outer)
         assert observed['status'] == 'setup_observed_not_accepted'
         assert observed['accepted'] is observed['provisioning_authorized'] is observed['retry_authorized'] is False

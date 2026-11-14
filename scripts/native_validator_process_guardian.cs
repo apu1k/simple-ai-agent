@@ -99,7 +99,7 @@ namespace AiAgent.ValidatorGuardian {
         internal const string GuardianExe="validator-install-guardian.exe";
         internal const string WorkerExe="validator-provision-worker.exe";
         internal const string WorkerArguments="--provision-once";
-        internal const int MaxSeconds=900, StopReserveSeconds=5, WaitSliceMs=500, PollMs=20;
+        internal const int MaxSeconds=900, StopReserveSeconds=5, WaitSliceMs=500, PollMs=20, ExitAccountingPolls=5;
         readonly object sync=new object();
         readonly GuardianPlan plan;
         readonly IGuardianClock clock;
@@ -167,6 +167,22 @@ namespace AiAgent.ValidatorGuardian {
             uint active=api.Active(job);
             if (active>2) throw new GuardianUnknown("job_accounting_unknown");
             return active;
+        }
+        bool ResidualAfterRootExit() {
+            if (Count()==0) return false;
+            // A signaled root can precede the job's exit-accounting update.
+            // Re-observe, never assume emptiness or accept a stop as success.
+            // At most 100ms, INSIDE the original run cap; no stop reserve is
+            // spent on executable lifetime and no retry/new child is permitted.
+            for (int poll=0;poll<ExitAccountingPolls;poll++) {
+                if (RunExpired()) return true;
+                int delay=(int)Math.Min(PollMs,Math.Floor((stopAt-Now())*1000));
+                if (delay<1) return true;
+                api.Pause(delay);
+                if (RunExpired()) return true;
+                if (Count()==0) return false;
+            }
+            return true;
         }
         void StopOnce() {
             if (stopAttempted) return;
@@ -239,7 +255,9 @@ namespace AiAgent.ValidatorGuardian {
                     uint wait=api.Wait(child.Process,ms);
                     if (wait==0) {
                         exitCode=api.ExitCode(child.Process); // valid even when code==259
-                        timedOut=RunExpired(); residual=Count()!=0; break;
+                        timedOut=RunExpired();
+                        if (!timedOut) { residual=ResidualAfterRootExit(); timedOut=RunExpired(); }
+                        break;
                     }
                     if (wait!=258) throw new GuardianUnknown("root_wait_unknown");
                     if (poll==MaxSeconds*1000/WaitSliceMs) throw new GuardianUnknown("wait_progress_unknown");

@@ -35,6 +35,7 @@ class SetupHandoff:
     script: str
     seconds: int
     working_directory: str
+    preload: str
 
 
 def _pin(raw: bytes) -> dict[str, object]:
@@ -95,7 +96,13 @@ def prepare_setup_handoff(value: object, *, template: bytes, request_id: str, de
             'validator-setup-watchdog.exe.config': _pin(request._CONFIG)}
         if profile['operation'] == 'publish':
             files['setup.packet'] = profile['packet']
-        data = dict(request_id=request_id, deadline_unix=deadline_unix, seconds=profile['budget_seconds'],
+        identity = cast(dict[str, int], host['identity'])
+        preload = json.dumps(dict(version=1, root=root, volume=identity['volume'],
+            indices=[identity['index'], host['claims_index'], host['receipts_index'], host['scratch_index']],
+            files=[dict(name=name, **cast(dict[str, object], pin)) for name, pin in files.items()]),
+            sort_keys=True, separators=(',', ':'), allow_nan=False)
+        data = dict(preload_sha256=hashlib.sha256(preload.encode('ascii')).hexdigest(),
+            request_id=request_id, deadline_unix=deadline_unix, seconds=profile['budget_seconds'],
             expires_unix=profile['expires_unix'], operator_sid=profile['operator_sid'], root=root,
             publish=profile['operation'] == 'publish', outer_helper_sha256=p['outer_helper_sha256'],
             files=files, outer_claim=base64.b64encode(claim).decode('ascii'))
@@ -103,7 +110,7 @@ def prepare_setup_handoff(value: object, *, template: bytes, request_id: str, de
         script = template.replace(PLACEHOLDER, encoded).decode('ascii')
         if len(script.encode('utf-8')) > 32768:
             raise SetupLaunchRefused('handoff_script_bound')
-        return SetupHandoff(script, cast(int, profile['budget_seconds']), root)
+        return SetupHandoff(script, cast(int, profile['budget_seconds']), root, preload)
     except (request.InstallRequestRefused, UnicodeError, ValueError, TypeError, OverflowError):
         raise SetupLaunchRefused('handoff_data') from None
 
@@ -143,7 +150,7 @@ def reconcile_setup_handoff(value: object, *, request_id: str, outer: object) ->
                 or o.get('status') != 'completed' or o.get('executed') is not True or o.get('effects_verified') is not False
                 or o.get('retry_authorized') is not False or o.get('output_truncated') is not False
                 or o.get('process_tree_observed') is not True or o.get('lifetime_observed') is not True
-                or o.get('preparation_observed') is not True
+                or o.get('preparation_observed') is not True or o.get('setup_preload_observed') is not True
                 or type(o.get('exit_code')) is not int or o['exit_code'] != 0 or o.get('stderr') != ''):
             raise SetupLaunchRefused('handoff_outer')
         stdout = o.get('stdout')

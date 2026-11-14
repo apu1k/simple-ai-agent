@@ -20,6 +20,8 @@ CORE = ROOT / 'scripts/native_validator_process_guardian.cs'
 WINDOWS = ROOT / 'scripts/native_validator_process_guardian_windows.cs'
 SCENARIOS = (
     'construct_no_io', 'normal_exit', 'nonzero_exit', 'exit_259_is_valid',
+    'accounting_lag_one', 'accounting_lag_several', 'accounting_lag_boundary', 'accounting_lag_persistent',
+    'accounting_lag_deadline', 'accounting_lag_wall_expiry', 'accounting_lag_pause_fault', 'accounting_lag_no_pause_progress',
     'deadline', 'maximum_budget', 'wall_expiry', 'wall_backwards_no_extension',
     'residual_child', 'stop_progress', 'hold_handles_until_empty', 'close_order',
     'one_shot_success', 'one_shot_failure', 'one_shot_concurrent',
@@ -67,7 +69,8 @@ namespace AiAgent.ValidatorGuardian {
         internal string Fault,PairMode,CloseFault;
         internal bool Host=true,MemberValue=true,NeverExit,Residue,NoWaitProgress,StopFails,StopNeverEmpty,RootNeverSignaled;
         internal bool Running,Done,Stopped;
-        internal int Stops,Resumes,StopPolls;
+        internal int Stops,Resumes,StopPolls,ExitAccountingLag,Pauses;
+        internal bool NoPauseProgress;
         internal uint ResumeValue=1,Code,WaitFailure;
         internal uint? InitialCount;
         internal double ExitAt=100.1;
@@ -114,7 +117,9 @@ namespace AiAgent.ValidatorGuardian {
                 if (StopPolls>0) { StopPolls--; return 1; }
                 Done=true; Residue=false;
             }
-            NaturalExit(); return !Done?1u:(Residue?1u:0u);
+            NaturalExit();
+            if (Done && !Stopped && ExitAccountingLag>0) { ExitAccountingLag--; return 1; }
+            return !Done?1u:(Residue?1u:0u);
         }
         public void Stop(object job) {
             Live(job,"job"); Event("stop"); Stops++;
@@ -122,7 +127,8 @@ namespace AiAgent.ValidatorGuardian {
             Stopped=true;
         }
         public void Pause(int ms) {
-            Event("pause"); GuardianHarness.Check(ms>=1 && ms<=20); Clock.Time+=ms/1000.0;
+            Event("pause"); GuardianHarness.Check(ms>=1 && ms<=20); Pauses++;
+            if (!NoPauseProgress) Clock.Time+=ms/1000.0;
         }
         public void Close(object handle) {
             var h=(TestHandle)handle; GuardianHarness.Check(!h.Closed); h.Closed=true; h.Closes++;
@@ -268,6 +274,20 @@ namespace AiAgent.ValidatorGuardian {
             switch (name) {
                 case "construct_no_io": Check(e.Api.Events.Count==0); return;
                 case "nonzero_exit": e.Api.Code=7; break;
+                case "accounting_lag_one": e.Api.ExitAccountingLag=1; break;
+                case "accounting_lag_several": e.Api.ExitAccountingLag=3; break;
+                case "accounting_lag_boundary": e.Api.ExitAccountingLag=5; break;
+                case "accounting_lag_persistent": e.Api.ExitAccountingLag=6; break;
+                case "accounting_lag_no_pause_progress": e.Api.ExitAccountingLag=6; e.Api.NoPauseProgress=true; break;
+                case "accounting_lag_deadline":
+                    e.Api.ExitAccountingLag=6; e.Api.Hook=delegate(string at) { if (at=="pause") e.Clock.Time=105; }; break;
+                case "accounting_lag_wall_expiry":
+                    e.Api.ExitAccountingLag=6; e.Api.Hook=delegate(string at) { if (at=="pause") e.Clock.Wall=1900; }; break;
+                case "accounting_lag_pause_fault":
+                    e.Api.ExitAccountingLag=6; e.Api.Fault="pause";
+                    Failure(delegate { guardian.Run(); },false,"guardian_unknown");
+                    e.Api.AllClosed(); Check(e.Api.Stops==1 && e.Api.Resumes==1);
+                    Failure(delegate { guardian.Run(); },true,"one_shot"); return;
                 case "exit_259_is_valid": e.Api.Code=259; break;
                 case "deadline":
                 case "no_wait_deadline_renewal": e.Api.NeverExit=true; break;
@@ -291,12 +311,21 @@ namespace AiAgent.ValidatorGuardian {
             }
             LocalProcessObservation answer=guardian.Run(); e.Api.AllClosed(); Check(answer.EmptyObserved && answer.Resumed && answer.ProcessId==42);
             Check(answer.InstallationId==e.Plan().InstallationId && answer.ApprovalSha256==e.Plan().ApprovalSha256);
-            if (e.Api.NeverExit) {
+            if (e.Api.NeverExit || name=="accounting_lag_deadline" || name=="accounting_lag_wall_expiry") {
                 Check(answer.End==LocalProcessEnd.DeadlineStopped && e.Api.Stops==1);
-                Check(e.Clock.Time<=((name=="maximum_budget")?995:105)+0.001);
-                Check(!answer.ExitCode.HasValue);
-            } else if (name=="residual_child" || name=="stop_progress") Check(answer.End==LocalProcessEnd.ResidualTreeStopped && e.Api.Stops==1);
+                Check(e.Clock.Time<=((name=="maximum_budget")?995:(name=="accounting_lag_deadline"?105.02:105))+0.001);
+                Check(answer.ExitCode.HasValue==!e.Api.NeverExit);
+            } else if (name=="residual_child" || name=="stop_progress" || name=="accounting_lag_persistent" || name=="accounting_lag_no_pause_progress")
+                Check(answer.End==LocalProcessEnd.ResidualTreeStopped && e.Api.Stops==1);
             else Check(answer.End==LocalProcessEnd.RootExited && answer.ExitCode==e.Api.Code && e.Api.Stops==0);
+            if (name.StartsWith("accounting_lag_",StringComparison.Ordinal)) {
+                Check(e.Api.Pauses>=1 && e.Api.Pauses<=5);
+                if (name=="accounting_lag_one") Check(e.Api.Pauses==1);
+                if (name=="accounting_lag_several") Check(e.Api.Pauses==3);
+                if (name=="accounting_lag_boundary" || name=="accounting_lag_persistent" || name=="accounting_lag_no_pause_progress") Check(e.Api.Pauses==5);
+                if (name=="accounting_lag_no_pause_progress") Check(e.Clock.Time==100.1);
+                if (name=="accounting_lag_wall_expiry") Check(e.Clock.Time<100.2);
+            }
             foreach (uint ms in e.Api.Waits) Check(ms<=500);
             Check(e.Api.Resumes==1 && e.Api.Stops<=1);
             if (name=="one_shot_success") Failure(delegate { guardian.Run(); },true,"one_shot");

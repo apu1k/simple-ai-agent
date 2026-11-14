@@ -37,7 +37,7 @@ def observation(p):
         result_sha256=hashlib.sha256(raw).hexdigest(), result_valid=True)
     outer = dict(version=1, operation='elevated_commands', request_id=ID, helper_sha256=p['outer_helper_sha256'],
         status='completed', executed=True, effects_verified=False, retry_authorized=False, output_truncated=False,
-        exit_code=0, stderr='', process_tree_observed=True, lifetime_observed=True, preparation_observed=True)
+        exit_code=0, stderr='', process_tree_observed=True, lifetime_observed=True, preparation_observed=True, setup_preload_observed=True)
     return outer, raw, receipt
 
 
@@ -56,6 +56,13 @@ def test_complete_snapshot_has_fixed_inputs_original_transport_and_permanent_cla
     encoded = frozen.script.split(start, 1)[1].split("')", 1)[0]
     data = json.loads(base64.b64decode(encoded))
     assert data['request_id'] == ID and data['deadline_unix'] == 1500
+    preload = json.loads(frozen.preload)
+    names = ('policy.json', 'validator-setup-host.exe', 'validator-setup-host.exe.config',
+        'validator-setup-watchdog.exe', 'validator-setup-watchdog.exe.config', *(['setup.packet'] if publish else []))
+    assert preload == dict(version=1, root=r'C:\SetupHost', volume=43, indices=[10, 11, 12, 13],
+        files=[dict(name=name, **data['files'][name]) for name in names])
+    assert data['preload_sha256'] == hashlib.sha256(frozen.preload.encode('ascii')).hexdigest()
+    assert len(frozen.preload) <= 4096
     assert data['files']['validator-setup-watchdog.exe'] == p['watchdog_pin']
     assert ('setup.packet' in data['files']) == publish
     assert set(data['files']) == {'policy.json', 'validator-setup-host.exe', 'validator-setup-host.exe.config',
@@ -114,7 +121,8 @@ def test_success_is_only_a_bound_observation_never_acceptance_or_provisioning(pu
     ('output_truncated', True), ('exit_code', True), ('exit_code', 124), ('stderr', 'diagnostic'),
     ('process_tree_observed', False), ('process_tree_observed', 1), ('process_tree_observed', None),
     ('lifetime_observed', False), ('lifetime_observed', 1), ('lifetime_observed', None), ('status', 'cancelled_outcome_unknown'),
-    ('preparation_observed', False), ('preparation_observed', 1), ('preparation_observed', None)])
+    ('preparation_observed', False), ('preparation_observed', 1), ('preparation_observed', None),
+    ('setup_preload_observed', False), ('setup_preload_observed', 1), ('setup_preload_observed', None)])
 def test_outer_faults_cannot_promote_even_a_complete_inner_receipt(field, bad):
     p, _ = review()
     outer, raw, receipt = observation(p)

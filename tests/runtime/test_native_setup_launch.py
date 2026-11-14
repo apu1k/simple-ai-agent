@@ -26,10 +26,12 @@ def test_fixed_integration_uses_existing_approval_and_never_retries(monkeypatch,
     if status in ('rejected', 'expired', 'uac_cancelled'):
         data['executed'] = False
     calls = []
-    def run(gate, claim, script, seconds, reason, cwd, *, required_helper_sha256, require_lifetime, require_preparation):
+    def run(gate, claim, script, seconds, reason, cwd, *, required_helper_sha256, require_lifetime, require_preparation, setup_preload):
         calls.append(claim)
         assert required_helper_sha256 == p['outer_helper_sha256'] and require_lifetime is require_preparation is True
         assert seconds == 20 and cwd == r'C:\SetupHost'
+        assert json.loads(setup_preload)['indices'] == [10, 11, 12, 13]
+        assert json.loads(setup_preload)['files'][3] == dict(name='validator-setup-watchdog.exe', **p['watchdog_pin'])
         encoded = script.split("FromBase64String('", 1)[1].split("')", 1)[0]
         assert 'NVSO0001' in script and ID in base64.b64decode(encoded).decode('ascii')
         assert 'No provisioning' in reason
@@ -96,7 +98,7 @@ $p=[CommandWatchdog]::Prepare(10000,$limit,$rate,([DateTimeOffset]::UtcNow.ToUni
 try {{
     $expected='Preparation window unavailable'
     if ({quote(fault)} -eq 'close') {{
-        $expected='Caller lifetime close unknown'
+        $expected='Preparation close unknown'
     }} else {{
         $field=if ({quote(fault)} -eq 'qpc_rollback') {{ 'lastQpc' }} else {{ 'lastWall' }}
         $value=if ($field -eq 'lastQpc') {{ [Diagnostics.Stopwatch]::GetTimestamp()+$rate }} else {{ [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+10000 }}

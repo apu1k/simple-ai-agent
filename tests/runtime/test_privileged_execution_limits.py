@@ -140,7 +140,11 @@ if(Test-Path -LiteralPath {quote(late)}) {{ throw 'timed-out child continued wor
 Write-Output 'EXECUTION_LIMIT_FIXTURE_PASSED'
 """
     exe = Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
-    result = subprocess.run([str(exe), '-NoProfile', '-NonInteractive', '-Command', script],
+    # The fixed compiler input can exceed Windows' command-line limit. Keep
+    # it in this ordinary disposable fixture, never execute a helper entry.
+    controller = tmp_path / 'ordinary-watchdog-controller.ps1'
+    controller.write_text(script, encoding='utf-8-sig')
+    result = subprocess.run([str(exe), '-NoProfile', '-NonInteractive', '-File', str(controller)],
                             capture_output=True, text=True, timeout=20, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'EXECUTION_LIMIT_FIXTURE_PASSED' in result.stdout
