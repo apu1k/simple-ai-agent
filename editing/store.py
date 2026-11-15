@@ -20,7 +20,10 @@ from __future__ import annotations
 
 import shutil
 from difflib import SequenceMatcher
+from functools import wraps
 from pathlib import Path
+from threading import RLock
+from typing import Callable, Concatenate, ParamSpec, TypeVar
 
 from editing.diff import create_unified_diff
 from editing.model import FileEdit, PendingEdit
@@ -30,8 +33,21 @@ MAX_OPERATION_PREVIEW_ENTRIES = 100
 MAX_CHARACTER_DIFF_CELLS = 1_000_000
 
 
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _locked(method: Callable[Concatenate["EditStore", _P], _R]) -> Callable[Concatenate["EditStore", _P], _R]:
+    @wraps(method)
+    def guarded(self: EditStore, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return guarded
+
+
 class EditStore:
     def __init__(self):
+        self._lock = RLock()
         self._edits: dict[int, PendingEdit] = {}
         self._next_id: int = 1
 
@@ -39,6 +55,7 @@ class EditStore:
     # Propose content edits
     # ------------------------------------------------------------------
 
+    @_locked
     def propose(
         self,
         path: Path,
@@ -73,6 +90,7 @@ class EditStore:
         self._edits[edit_id] = pending
         return pending, diff
 
+    @_locked
     def propose_create(self, path: Path, content: str) -> tuple[PendingEdit, str]:
         """
         Create a pending proposal for creating a brand-new file.
@@ -97,6 +115,7 @@ class EditStore:
         self._edits[edit_id] = pending
         return pending, diff
 
+    @_locked
     def propose_replace(
         self,
         path: Path,
@@ -143,6 +162,7 @@ class EditStore:
     # Propose filesystem operations
     # ------------------------------------------------------------------
 
+    @_locked
     def propose_move(
         self,
         source: Path,
@@ -190,6 +210,7 @@ class EditStore:
         self._edits[edit_id] = pending
         return pending, preview
 
+    @_locked
     def propose_delete(
         self,
         path: Path,
@@ -251,6 +272,7 @@ class EditStore:
         self._edits[edit_id] = pending
         return pending, preview
 
+    @_locked
     def propose_copy(
         self,
         source: Path,
@@ -310,6 +332,7 @@ class EditStore:
     # Approve
     # ------------------------------------------------------------------
 
+    @_locked
     def approve(self, edit_id: int) -> str:
         """
         Apply the pending edit/operation to disk and mark it as applied.
@@ -444,6 +467,7 @@ class EditStore:
     # Reject
     # ------------------------------------------------------------------
 
+    @_locked
     def reject(self, edit_id: int) -> str:
         """
         Mark a pending edit as rejected. Does not touch the file.
@@ -465,12 +489,15 @@ class EditStore:
     # Query
     # ------------------------------------------------------------------
 
+    @_locked
     def get(self, edit_id: int) -> PendingEdit | None:
         return self._edits.get(edit_id)
 
+    @_locked
     def all(self) -> dict[int, PendingEdit]:
         return dict(self._edits)
 
+    @_locked
     def pending(self) -> dict[int, PendingEdit]:
         return {k: v for k, v in self._edits.items() if v.status == "pending"}
 

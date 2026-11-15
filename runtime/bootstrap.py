@@ -1,16 +1,17 @@
 """
 runtime/bootstrap.py
 
-Composition helpers for the Textual runtime.
+Composition helpers shared by agent runtimes and frontend adapters.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from core.agent import Agent
 from core.tool_registry import ToolRegistry, autodiscover
+from llm.base import LLMClient
 from llm.providers import create_llm_client, PROVIDERS
 from config.settings import DEBUG_LOGS, OPERATIONAL_DATABASE
 from night_shifts.storage import ToolCallStore
@@ -27,13 +28,33 @@ from runtime.prompt import build_system_prompt
 from runtime.state import AgentState, ModelConfig
 from runtime.tool_profiles import AgentProfile, build_profile_registry
 
+if TYPE_CHECKING:
+    from runtime.service import AgentRuntime
+
+
+def create_default_runtime() -> "AgentRuntime":
+    """Compose the agent host independently of a frontend."""
+    from runtime.service import AgentRuntime
+    from tools.knowledge.runtime import start_embedding_warmup
+
+    if not PROVIDERS:
+        raise ValueError("No providers configured.")
+    provider = PROVIDERS.get("openai") or next(iter(PROVIDERS.values()))
+    if not provider.default_model:
+        raise ValueError(f"Provider '{provider.label}' has no default_model configured.")
+    initialize_tools()
+    config, llm = build_model_config_and_client(provider, provider.default_model)
+    state = create_initial_state(config)
+    start_embedding_warmup()
+    return AgentRuntime(state=state, llm=llm)
+
 
 def initialize_tools() -> None:
     """Autodiscover all @tool-decorated functions."""
     autodiscover("tools")
 
 
-def build_model_config_and_client(provider, model) -> tuple[ModelConfig, object]:
+def build_model_config_and_client(provider, model) -> tuple[ModelConfig, LLMClient]:
     """Create ModelConfig and LLM client from selected provider/model."""
     if provider.api_type == "gemini_vertex":
         if not provider.project:
@@ -114,7 +135,7 @@ def create_initial_state(model_config: ModelConfig) -> AgentState:
 def create_agent(
     *,
     state: AgentState,
-    llm: object,
+    llm: LLMClient,
     on_debug: Callable[[str], None] | None = None,
     on_tool: Callable[[str], None] | None = None,
     on_raw: Callable[[str], None] | None = None,

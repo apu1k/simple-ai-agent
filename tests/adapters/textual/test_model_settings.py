@@ -8,8 +8,8 @@ from textual.events import Mount
 from textual.widgets import Input, Tree
 
 from adapters.textual.app import AgentTextualApp
-from runtime.state import ModelSettings, OPENAI_REASONING_EFFORTS
-from runtime.privileged_turn import PrivilegedTurn
+from runtime.state import OPENAI_REASONING_EFFORTS
+from tests.runtime_helpers import make_runtime
 
 
 class SettingsTestApp(AgentTextualApp):
@@ -21,9 +21,8 @@ class SettingsTestApp(AgentTextualApp):
 
     def on_mount(self, event: Mount) -> None:
         # Textual dispatches base-class handlers too unless default is prevented.
-        # No agent, API requests, tools or chat storage needed for UI tests.
         event.prevent_default()
-        self._refresh_state()
+        self._connect_runtime()
         self.query_one("#input", Input).focus()
 
     def _append_chat(self, role: str, text: str) -> None:
@@ -31,38 +30,28 @@ class SettingsTestApp(AgentTextualApp):
 
 
 def make_app(tmp_path):
-    return SettingsTestApp(
-        state=SimpleNamespace(
-            cwd=tmp_path,
-            model_settings=ModelSettings(),
-            privileged_turn=PrivilegedTurn(),
-            model_config=SimpleNamespace(
-                provider_label="OpenAI", model="o3", api_type="responses",
-            ),
-            edit_store=SimpleNamespace(pending=lambda: []),
-            chat_session_id=None,
-        ),
-        llm=SimpleNamespace(),
-    )
+    runtime, agent = make_runtime(tmp_path)
+    app = SettingsTestApp(runtime=runtime)
+    app.fixture_agent = agent
+    return app
 
 
-def test_privileged_progress_updates_while_worker_waits_and_input_remains_responsive(tmp_path, monkeypatch):
+def test_privileged_progress_updates_while_worker_waits_and_input_remains_responsive(tmp_path):
     from threading import Event
     from core.tool_progress import PRIVILEGED_EVIDENCE_PREFIX
 
     started = Event()
     release = Event()
-    monkeypatch.setattr('adapters.textual.app.record_final_turn', lambda *args: None)
     async def run_test():
         app = make_app(tmp_path)
         async with app.run_test(size=(160, 40)) as pilot:
             def step(text):
-                app._on_tool(PRIVILEGED_EVIDENCE_PREFIX + 'Hashing source VHDX — 5s elapsed')
+                app.fixture_agent.on_tool(PRIVILEGED_EVIDENCE_PREFIX + 'Hashing source VHDX — 5s elapsed')
                 started.set()
                 assert release.wait(5), 'Test worker was not released'
-                app._on_tool(PRIVILEGED_EVIDENCE_PREFIX + 'Validating protected receipt')
+                app.fixture_agent.on_tool(PRIVILEGED_EVIDENCE_PREFIX + 'Validating protected receipt')
                 return 'verified fixture result'
-            app.agent = SimpleNamespace(step=step)
+            app.fixture_agent.behavior = step
             app._start_agent_step('fixture only; no UAC')
             try:
                 assert await asyncio.to_thread(started.wait, 2)
@@ -86,28 +75,27 @@ def test_privileged_progress_updates_while_worker_waits_and_input_remains_respon
 
 
 def test_flex_wait_notice_is_visible_from_worker_before_retry_and_input_stays_responsive(
-    tmp_path, monkeypatch,
+    tmp_path,
 ):
     from threading import Event
-    from llm.request_progress import notify_request_retry, request_progress_listener
+    from llm.request_progress import notify_request_retry
 
     started, release = Event(), Event()
-    monkeypatch.setattr('adapters.textual.app.record_final_turn', lambda *args: None)
 
     async def run_test():
         app = make_app(tmp_path)
         async with app.run_test(size=(160, 40)) as pilot:
             def step(text):
-                with request_progress_listener(app._on_tool):
-                    notify_request_retry(300.0, 1, 5)
-                    started.set()
-                    assert release.wait(10), 'Test worker was not released'
+                notify_request_retry(300.0, 1, 5)
+                started.set()
+                assert release.wait(10), 'Test worker was not released'
                 return 'recovered fixture answer'
 
-            app.agent = SimpleNamespace(step=step)
+            app.fixture_agent.behavior = step
             app._start_agent_step('offline Flex notice fixture')
             try:
                 assert await asyncio.to_thread(started.wait, 5)
+                app._drain_runtime_events()
                 notices = [text for role, text in app._messages if role == 'System']
                 assert len(notices) == 1
                 assert 'waiting 5 minutes (300 seconds) before retry 1/5' in notices[0]
@@ -131,11 +119,14 @@ def test_flex_wait_notice_is_visible_from_worker_before_retry_and_input_stays_re
     asyncio.run(run_test())
 
 
-def test_unified_setting_arms_both_fixed_helpers_and_revokes_authority():
+def test_unified_setting_arms_both_fixed_helpers_and_revokes_authority(tmp_path):
     messages = []
-    gate = PrivilegedTurn()
+    runtime, _ = make_runtime(tmp_path)
+    gate = runtime.state.privileged_turn
+    client = runtime.attach_client(can_approve=True)
     fake = SimpleNamespace(
-        _processing=False, state=SimpleNamespace(privileged_turn=gate),
+        runtime=runtime, _runtime_client_id=client,
+        _processing=False, state=runtime.state,
         _exit_model_settings_mode=lambda: None, _refresh_state=lambda: None,
         _append_chat=lambda role, text: messages.append((role, text)),
     )
@@ -148,6 +139,7 @@ def test_unified_setting_arms_both_fixed_helpers_and_revokes_authority():
     assert gate.armed_operation == 'elevated_commands'
     AgentTextualApp._set_model_setting(fake, "elevated_commands", False)
     assert gate.status == 'disabled'
+    runtime.close()
 
 
 def test_settings_command_search_and_tree_selection(tmp_path):
@@ -202,13 +194,15 @@ def test_privileged_progress_is_full_width_plain_text_and_not_a_model_answer(tmp
             progress = app.query_one('#privileged_progress', Static)
             assert progress.has_class('hidden')
             message = 'Hashing source VHDX — 125s elapsed [not markup]'
-            app._on_tool(PRIVILEGED_EVIDENCE_PREFIX + message)
+            app.fixture_agent.on_tool(PRIVILEGED_EVIDENCE_PREFIX + message)
+            app._drain_runtime_events()
             await pilot.pause()
             assert not progress.has_class('hidden')
             assert progress.region.width == 80  # Includes the two padding columns.
             assert progress.render_line(0).text.strip() == message
             assert len(app._messages) == 1 and app._messages[0][0] == 'System'
-            app._on_tool(PRIVILEGED_EVIDENCE_PREFIX + 'Rechecking source VM state — 130s elapsed')
+            app.fixture_agent.on_tool(PRIVILEGED_EVIDENCE_PREFIX + 'Rechecking source VM state — 130s elapsed')
+            app._drain_runtime_events()
             await pilot.pause()
             assert len(app._messages) == 1
             app._finish_agent_step()

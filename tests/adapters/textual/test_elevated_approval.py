@@ -1,18 +1,15 @@
 """Live pending UI with a waiting fixture worker; no UAC or host operations."""
 import asyncio
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from textual.events import Mount
 from textual.widgets import Input, Static
 
 from adapters.textual.app import AgentTextualApp
-from core.tool_progress import tool_progress_listener
-from editing.store import EditStore
 from runtime.elevated_commands import await_approval
-from runtime.privileged_turn import ELEVATED_OPERATION, PrivilegedTurn
-from runtime.state import ModelSettings
+from runtime.privileged_turn import ELEVATED_OPERATION
+from tests.runtime_helpers import make_runtime
 
 
 class ApprovalTestApp(AgentTextualApp):
@@ -21,35 +18,35 @@ class ApprovalTestApp(AgentTextualApp):
 
     def on_mount(self, event: Mount) -> None:
         event.prevent_default()
-        self._refresh_state()
+        self._connect_runtime()
         self.query_one('#input', Input).focus()
 
 
 @pytest.mark.parametrize('action,expected', [('enter', 'accepted'), ('delete', 'rejected'), ('revoke', 'expired')])
-def test_pending_command_approval_is_responsive_and_separate_from_file_edits(tmp_path, monkeypatch, action, expected):
-    monkeypatch.setattr('adapters.textual.app.record_final_turn', lambda *args: None)
+def test_pending_command_approval_is_responsive_and_separate_from_file_edits(tmp_path, action, expected):
     async def run():
-        permit = PrivilegedTurn()
+        runtime, agent = make_runtime(tmp_path)
+        state = runtime.state
+        permit = state.privileged_turn
         permit.arm(ELEVATED_OPERATION)
-        state = SimpleNamespace(cwd=tmp_path, privileged_turn=permit, edit_store=EditStore(),
-                                model_settings=ModelSettings(), chat_session_id=None,
-                                model_config=SimpleNamespace(provider_label='Fixture', model='Fixture', api_type='responses'))
         # A normal file proposal shares the view but not the approval namespace.
         state.edit_store.propose_create(tmp_path / 'fixture.txt', 'not yet written')
-        app = ApprovalTestApp(state=state, llm=SimpleNamespace())
+        app = ApprovalTestApp(runtime=runtime)
         async with app.run_test(size=(150, 40)) as pilot:
             def step(text):
-                with permit.turn('head'), tool_progress_listener(app._on_tool):
-                    request, decision = await_approval(permit, permit.claim(ELEVATED_OPERATION),
-                                                       {'script': 'Write-Output "[not markup]"', 'timeout': 60})
-                    if decision == 'accepted':
-                        permit.require_accepted(request)
-                    return decision
-            app.agent = SimpleNamespace(step=step)
+                request, decision = await_approval(permit, permit.claim(ELEVATED_OPERATION),
+                                                   {'script': 'Write-Output "[not markup]"', 'timeout': 60})
+                if decision == 'accepted':
+                    permit.require_accepted(request)
+                return decision
+            agent.behavior = step
             app._start_agent_step('fixture only')
             for _ in range(40):
                 await pilot.pause()
-                if permit.pending():
+                if permit.pending() and any(
+                    role == 'Approval' and 'Nothing has executed' in text
+                    for role, text in app._messages
+                ):
                     break
                 await asyncio.sleep(0.025)
             assert permit.pending() and app._processing

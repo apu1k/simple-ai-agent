@@ -1,20 +1,10 @@
-"""
-adapters/textual/app.py
-
-Minimal Textual frontend for simple-ai-agent.
-
-Phase 2 goals:
-- start a Textual app
-- send messages to the existing Agent
-- show assistant replies
-- show debug/tool/raw/error callback output
-- keep the CLI frontend untouched
-"""
+"""Textual client for the UI-independent agent runtime."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable, Literal, cast
+from typing import Any, Literal
 
 from rich.console import Group
 from rich.markdown import Markdown
@@ -30,16 +20,11 @@ from textual.widgets import Footer, Input, Static, Tree
 
 from adapters.textual.approval_review import render_privileged_review
 from core.tool_artifacts import is_internal_tool_artifact
-from core.tool_progress import (
-    PRIVILEGED_APPROVAL_PREFIX, PRIVILEGED_EVIDENCE_PREFIX, approval_ui_context,
-)
 from runtime.privileged_turn import ELEVATED_OPERATION, PendingPrivilege
 from llm.providers import PROVIDERS, list_provider_models
-from llm.request_progress import REQUEST_PROGRESS_PREFIX
-from runtime.bootstrap import build_model_config_and_client, create_agent
-from runtime.chat_store import DEFAULT_CHAT_TURN_LIMIT, record_final_turn, start_new_chat
-from runtime.prompt import build_system_prompt
-from runtime.state import ModelSettingValue, OPENAI_REASONING_EFFORTS, ReasoningEffort
+from runtime.chat_store import DEFAULT_CHAT_TURN_LIMIT
+from runtime.service import AgentRuntime, EventHistoryExpired
+from runtime.state import ModelSettingValue, OPENAI_REASONING_EFFORTS
 
 
 class ClipboardInput(Input):
@@ -71,7 +56,7 @@ class ClipboardInput(Input):
 
 
 class AgentTextualApp(App):
-    """Minimal Textual UI around the existing synchronous Agent."""
+    """Render runtime snapshots/events without owning agent execution."""
 
     ENABLE_COMMAND_PALETTE = False
     AUTO_FOCUS = "#input"
@@ -115,11 +100,20 @@ class AgentTextualApp(App):
         "\\quit",
     ]
 
-    def __init__(self, *, state: Any, llm: Any):
+    def __init__(
+        self, *, runtime: AgentRuntime | None = None, state: Any = None, llm: Any = None,
+    ):
         super().__init__()
-        self.state = state
-        self.llm = llm
-        self.agent = None
+        if runtime is None:
+            if state is None or llm is None:
+                raise ValueError("Provide a runtime or both state and llm")
+            runtime = AgentRuntime(state=state, llm=llm)
+        elif state is not None or llm is not None:
+            raise ValueError("Do not combine runtime with state/llm")
+        self.runtime = runtime
+        self.state = runtime.state
+        self._runtime_client_id: str | None = None
+        self._runtime_cursor = 0
         self._theme_dark = True
         self._processing = False
         self._mode: Literal[
@@ -145,7 +139,6 @@ class AgentTextualApp(App):
         self._pending_search = ""
         self._visible_pending_ids: list[int | str] = []
         self._selected_pending_id: int | str | None = None
-        self._approval_notices: set[str] = set()
 
         self._chat_search = ""
         self._visible_chat_sessions: list[Any] = []
@@ -195,16 +188,66 @@ class AgentTextualApp(App):
 
     def on_mount(self) -> None:
         self.screen.add_class("theme-dark")
-        self.agent = create_agent(
-            state=self.state,
-            llm=self.llm,
-            on_debug=self._on_debug,
-            on_tool=self._on_tool,
-            on_raw=self._on_raw,
-            on_error=self._on_error,
-        )
-        self._refresh_state()
+        self._connect_runtime()
         self._schedule_initial_input_focus()
+
+    def _connect_runtime(self) -> None:
+        self._runtime_client_id = self.runtime.attach_client(can_approve=True)
+        try:
+            self.runtime.initialize()
+        except Exception:
+            self.runtime.detach_client(self._runtime_client_id)
+            self._runtime_client_id = None
+            raise
+        self._apply_runtime_snapshot()
+        self.set_interval(0.05, self._drain_runtime_events)
+
+    def _apply_runtime_snapshot(self) -> None:
+        snapshot = self.runtime.snapshot()
+        self._runtime_cursor = snapshot.sequence
+        self._messages = list(snapshot.messages)
+        self._render_chat()
+        self._finish_agent_step()
+        self._set_processing(snapshot.processing)
+        if snapshot.progress:
+            self._show_privileged_evidence_progress(snapshot.progress)
+
+    def _drain_runtime_events(self) -> None:
+        # Textual tears widgets down before dispatching the app's Unmount.
+        if not self.is_running or self._runtime_client_id is None:
+            return
+        try:
+            events = self.runtime.events_since(self._runtime_cursor)
+        except EventHistoryExpired:
+            self._apply_runtime_snapshot()
+            if self._mode == "pending_select":
+                self._render_pending_view()
+            return
+        for event in events:
+            self._runtime_cursor = event.sequence
+            if event.kind == "message":
+                self._append_chat(event.role, event.text)
+            elif event.kind == "conversation_changed":
+                self._messages = list(event.messages)
+                self._render_chat()
+                self._finish_agent_step()
+            elif event.kind == "run_started":
+                self._set_processing(True)
+            elif event.kind == "run_finished":
+                self._finish_agent_step()
+            elif event.kind == "progress":
+                self._show_privileged_evidence_progress(event.text)
+            elif event.kind in {"debug", "tool", "raw", "error"}:
+                self._append_log(event.kind, event.text)
+        if events:
+            self._refresh_state()
+            if self._mode == "pending_select":
+                self._render_pending_view()
+            elif self._mode == "model_settings_select" and any(
+                event.kind in {"state_changed", "run_started", "run_finished", "conversation_changed"}
+                for event in events
+            ):
+                self._render_model_settings_tree()
 
     def _schedule_initial_input_focus(self) -> None:
         """
@@ -226,6 +269,8 @@ class AgentTextualApp(App):
             self.set_timer(delay, self._focus_input)
 
     def _focus_input(self) -> None:
+        if not self.is_running:
+            return
         input_widget = self.query_one("#input", Input)
         input_widget.disabled = False
         input_widget.focus()
@@ -263,7 +308,6 @@ class AgentTextualApp(App):
             self._handle_command(text)
             return
 
-        self._append_chat("You", text)
         self._start_agent_step(text)
 
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -397,18 +441,11 @@ class AgentTextualApp(App):
             return
 
         if command == "\\new_chat":
-            session_id = start_new_chat(self.state)
-            if self.agent is not None:
-                self.agent.reset(
-                    build_system_prompt(
-                        self.state,
-                        use_native_tools=getattr(self.llm, "supports_native_tools", False),
-                        tool_registry=self.agent.registry,
-                    )
-                )
-            self._messages.clear()
-            self._render_chat()
-            self._append_chat("System", f"Started new chat session: {session_id}")
+            try:
+                self.runtime.new_chat()
+                self._drain_runtime_events()
+            except (RuntimeError, ValueError) as error:
+                self._append_chat("Error", str(error))
             return
 
         if command == "\\history":
@@ -416,15 +453,11 @@ class AgentTextualApp(App):
             return
 
         if command == "\\reset":
-            if self.agent is not None:
-                self.agent.reset(
-                    build_system_prompt(
-                        self.state,
-                        use_native_tools=getattr(self.llm, "supports_native_tools", False),
-                        tool_registry=self.agent.registry,
-                    )
-                )
-            self._append_chat("System", "Conversation context reset.")
+            try:
+                self.runtime.reset_context()
+                self._drain_runtime_events()
+            except (RuntimeError, ValueError) as error:
+                self._append_chat("Error", str(error))
             return
 
         if command == "\\pwd":
@@ -436,13 +469,11 @@ class AgentTextualApp(App):
             if not path:
                 self._append_chat("System", "Usage: \\cd <path>")
                 return
-            from tools.fs.read import cd
-            result = cd(self.state, path)
-            if isinstance(result, str) and result.startswith("Error:"):
-                self._append_chat("Error", result)
-            else:
-                self._append_chat("System", result)
-            self._refresh_state()
+            try:
+                self.runtime.change_directory(path)
+                self._drain_runtime_events()
+            except (RuntimeError, ValueError) as error:
+                self._append_chat("Error", str(error))
             return
 
         if command == "\\state":
@@ -634,15 +665,13 @@ class AgentTextualApp(App):
         if self._processing and not (key == "elevated_commands" and value is False):
             self._append_chat("System", "Cannot change model settings while AI is processing (except revoking elevation).")
             return
+        try:
+            self.runtime.set_model_setting(key, value, client_id=self._runtime_client_id)
+        except (RuntimeError, ValueError, PermissionError) as error:
+            self._append_chat("Error", str(error))
+            return
         if key == "elevated_commands" and isinstance(value, bool):
-            gate = getattr(self.state, "privileged_turn", None)
-            if gate is None:
-                self._append_chat("System", "Elevated commands are unavailable in this runtime.")
-                return
-            if value:
-                gate.arm(ELEVATED_OPERATION)
-            else:
-                gate.revoke()
+            gate = self.state.privileged_turn
             self._exit_model_settings_mode()
             self._append_chat(
                 "System",
@@ -654,7 +683,6 @@ class AgentTextualApp(App):
         elif key == "include_diff" and (isinstance(value, bool) or value == "model"):
             self._set_include_diff_setting(value)
         elif key == "openai_flex" and isinstance(value, bool):
-            self.state.model_settings.openai_flex = value
             self._exit_model_settings_mode()
             label = "enabled" if value else "disabled"
             self._append_chat(
@@ -664,7 +692,6 @@ class AgentTextualApp(App):
                 "Other providers are unchanged.",
             )
         elif key == "openai_reasoning_effort" and (value is None or value in OPENAI_REASONING_EFFORTS):
-            self.state.model_settings.openai_reasoning_effort = cast(ReasoningEffort | None, value)
             self._exit_model_settings_mode()
             label = "API default" if value is None else value
             self._append_chat(
@@ -676,17 +703,12 @@ class AgentTextualApp(App):
         self._refresh_state()
 
     def _set_include_diff_setting(self, value: bool | Literal["model"]) -> None:
-        self.state.model_settings.include_diff = value
         label = "enabled" if value is True else "model choice" if value == "model" else "disabled"
         self._exit_model_settings_mode()
         self._append_chat("System", f"Proposal diff results set to {label}.")
 
     def _pending_entries(self) -> dict[int | str, Any]:
-        entries: dict[int | str, Any] = dict(self.state.edit_store.pending())
-        gate = getattr(self.state, 'privileged_turn', None)
-        if gate is not None:
-            entries.update(gate.pending())
-        return entries
+        return self.runtime.pending()
 
     def _enter_pending_select_mode(self) -> None:
         self._mode = "pending_select"
@@ -848,19 +870,9 @@ class AgentTextualApp(App):
             self._set_pending_header("No pending edit selected.")
             return
         try:
-            if isinstance(edit, PendingPrivilege):
-                decision = self.state.privileged_turn.decide(edit.id, accept=True)
-                self._append_chat('Approval', f'Administrator request #{edit.id}: {decision}. '
-                                  'Acceptance is not execution; Windows UAC follows if still eligible.')
-                self._render_pending_view()
-                self._refresh_state()
-                return
-            message = self.state.edit_store.approve(edit.id)
-            cwd_message = self._ensure_existing_cwd()
-            self._append_chat("System", message)
-            if cwd_message:
-                self._append_chat("System", cwd_message)
-        except (KeyError, ValueError) as e:
+            self.runtime.decide_pending(edit.id, accept=True, client_id=self._runtime_client_id)
+            self._drain_runtime_events()
+        except (KeyError, ValueError, RuntimeError, PermissionError, OSError) as e:
             self._append_chat("Error", str(e))
         self._render_pending_view()
         self._refresh_state()
@@ -871,15 +883,9 @@ class AgentTextualApp(App):
             self._set_pending_header("No pending edit selected.")
             return
         try:
-            if isinstance(edit, PendingPrivilege):
-                decision = self.state.privileged_turn.decide(edit.id, accept=False)
-                self._append_chat('Approval', f'Administrator request #{edit.id}: {decision}; no execution.')
-                self._render_pending_view()
-                self._refresh_state()
-                return
-            message = self.state.edit_store.reject(edit.id)
-            self._append_chat("System", message)
-        except (KeyError, ValueError) as e:
+            self.runtime.decide_pending(edit.id, accept=False, client_id=self._runtime_client_id)
+            self._drain_runtime_events()
+        except (KeyError, ValueError, RuntimeError, PermissionError) as e:
             self._append_chat("Error", str(e))
         self._render_pending_view()
         self._refresh_state()
@@ -1080,51 +1086,14 @@ class AgentTextualApp(App):
             self._set_chat_header("No chat selected.")
             return
 
-        turns = self.state.chat_store.load_original_turns(
-            session.session_id, limit=DEFAULT_CHAT_TURN_LIMIT
-        )
-
-        self.state.chat_session_id = session.session_id
-
-        latest_state = None
-        if turns:
-            maybe_state = turns[-1].get("state")
-            if isinstance(maybe_state, dict):
-                latest_state = maybe_state
-
-        provider_key = str((latest_state or {}).get("provider_key", "")).strip()
-        model = str((latest_state or {}).get("model", "")).strip()
-        provider = PROVIDERS.get(provider_key) if provider_key else None
-        if provider is not None and model:
-            try:
-                self._rebuild_runtime_for_provider_model(provider, model)
-            except Exception as e:
-                self._append_chat("Error", f"Failed to restore provider/model from chat state: {e}")
-                self._append_log("error", f"chat restore failed for provider={provider_key}, model={model}: {e}")
-
-        self._messages.clear()
-        for turn in turns:
-            user_text = str(turn.get("user", ""))
-            assistant_text = str(turn.get("assistant_final", ""))
-            self._messages.append(("You", user_text))
-            self._messages.append(("AI", assistant_text))
-        self._render_chat()
-
-        if self.agent is not None:
-            self.agent.reset(
-                build_system_prompt(
-                    self.state,
-                    use_native_tools=getattr(self.llm, "supports_native_tools", False),
-                    tool_registry=self.agent.registry,
-                )
-            )
-            for turn in turns:
-                self.agent.messages.append({"role": "user", "content": str(turn.get("user", ""))})
-                self.agent.messages.append({"role": "assistant", "content": str(turn.get("assistant_final", ""))})
-
+        try:
+            self.runtime.load_chat(session.session_id)
+        except (RuntimeError, ValueError) as error:
+            self._set_chat_header(str(error))
+            return
+        self._drain_runtime_events()
         self._exit_chat_select_mode()
         self._refresh_state()
-        self._append_chat("System", f"Loaded chat session: {session.session_id}")
 
     def _set_model_header(self, text: str) -> None:
         self.query_one("#model_header", Static).update(text)
@@ -1164,6 +1133,17 @@ class AgentTextualApp(App):
 
         if self._mode == "model_select":
             self._render_model_tree()
+
+    def _from_any_thread(self, callback: Callable[..., None], *args: Any) -> None:
+        """Marshal UI-only model discovery results; ignore a disconnected UI."""
+        if self._runtime_client_id is None:
+            return
+        try:
+            self.call_from_thread(callback, *args)
+        except RuntimeError:
+            # Model discovery may finish after the UI has unmounted. Never
+            # fall back to touching widgets from the discovery worker thread.
+            return
 
     @work(thread=True, exclusive=True, group="model-listing")
     def _load_models_worker(self) -> None:
@@ -1362,30 +1342,9 @@ class AgentTextualApp(App):
         )
 
     def _rebuild_runtime_for_provider_model(self, provider, model: str) -> None:
-        """Atomically rebuild model config, llm client, and agent for a provider/model."""
-        config, llm = build_model_config_and_client(provider, model)
-
-        # Replace runtime bundle atomically: state config + llm + fresh agent.
-        self.state.model_config = config
-        self.llm = llm
-        if self.agent is None:
-            self.agent = create_agent(
-                state=self.state,
-                llm=self.llm,
-                on_debug=self._on_debug,
-                on_tool=self._on_tool,
-                on_raw=self._on_raw,
-                on_error=self._on_error,
-            )
-        else:
-            self.agent.set_llm(
-                self.llm,
-                system_prompt=build_system_prompt(
-                    self.state,
-                    use_native_tools=getattr(self.llm, 'supports_native_tools', False),
-                    tool_registry=self.agent.registry,
-                ),
-            )
+        """Ask the runtime to switch; it owns the client and model context."""
+        self.runtime.switch_model(provider.key, model)
+        self._drain_runtime_events()
         self._refresh_state()
 
     def _switch_model(self, provider_key: str, model: str) -> None:
@@ -1473,32 +1432,16 @@ class AgentTextualApp(App):
         self._enter_chat_select_mode()
 
     def on_unmount(self) -> None:
-        gate = getattr(self.state, "privileged_turn", None)
-        if gate is not None:
-            gate.revoke()
+        if self._runtime_client_id is not None:
+            self.runtime.detach_client(self._runtime_client_id)
+            self._runtime_client_id = None
 
     def _start_agent_step(self, text: str) -> None:
-        self._set_processing(True)
-        self._run_agent_step(text)
-
-    @work(thread=True, exclusive=True, group="agent")
-    def _run_agent_step(self, text: str) -> None:
         try:
-            if self.agent is None:
-                raise RuntimeError("Agent is not initialized.")
-
-            with approval_ui_context():
-                reply = self.agent.step(text)
-            try:
-                record_final_turn(self.state, text, reply)
-            except Exception as history_error:
-                print(f"[history] write failed: {history_error}", flush=True)
-            self._from_any_thread(self._append_chat, "AI", reply)
-        except Exception as e:
-            print(f"[error] {e}", flush=True)
-            self._from_any_thread(self._append_chat, "Error", str(e))
-        finally:
-            self._from_any_thread(self._finish_agent_step)
+            self.runtime.submit(text)
+            self._drain_runtime_events()
+        except (RuntimeError, ValueError, OSError) as error:
+            self._append_chat("Error", str(error))
 
     def _finish_agent_step(self) -> None:
         self._privileged_evidence_progress = ''
@@ -1594,32 +1537,6 @@ class AgentTextualApp(App):
 
     def _refresh_state(self) -> None:
         self._refresh_header()
-
-    def _ensure_existing_cwd(self) -> str | None:
-        """Move state.cwd to the nearest existing parent if it was deleted."""
-        cwd = self.state.cwd
-
-        try:
-            if cwd.exists() and cwd.is_dir():
-                return None
-        except OSError:
-            pass
-
-        original = cwd
-        while True:
-            parent = cwd.parent
-            if parent == cwd:
-                break
-
-            cwd = parent
-            try:
-                if cwd.exists() and cwd.is_dir():
-                    self.state.cwd = cwd
-                    return f"Current directory was removed. Moved up to: {cwd}"
-            except OSError:
-                continue
-
-        return f"Warning: current directory was removed and no existing parent could be found: {original}"
 
     def _state_text(self) -> str:
         session_text = self.state.chat_session_id or "no active chat"
@@ -1763,61 +1680,10 @@ class AgentTextualApp(App):
         input_widget.value = left + right[j:]
         input_widget.cursor_position = cursor
 
-    def _from_any_thread(self, callback: Callable[..., None], *args: Any) -> None:
-        """
-        Schedule a UI update from a worker thread, but still work if called
-        during normal UI lifecycle methods.
-        """
-        try:
-            self.call_from_thread(callback, *args)
-        except RuntimeError:
-            callback(*args)
-
-    def _on_debug(self, message: str) -> None:
-        self._append_log("debug", message)
-
-    def _on_tool(self, message: str) -> None:
-        self._append_log("tool", message)
-        if message.startswith(REQUEST_PROGRESS_PREFIX):
-            self._from_any_thread(
-                self._append_chat, "System", message[len(REQUEST_PROGRESS_PREFIX):],
-            )
-            return
-        if message.startswith(PRIVILEGED_APPROVAL_PREFIX):
-            self._from_any_thread(self._show_privileged_approval, message[len(PRIVILEGED_APPROVAL_PREFIX):])
-            return
-        if message.startswith(PRIVILEGED_EVIDENCE_PREFIX):
-            self._from_any_thread(
-                self._show_privileged_evidence_progress,
-                message[len(PRIVILEGED_EVIDENCE_PREFIX):],
-            )
-
-    def _show_privileged_approval(self, identity: str) -> None:
-        gate = getattr(self.state, 'privileged_turn', None)
-        if gate is None or identity not in gate.pending() or identity in self._approval_notices:
-            return
-        self._approval_notices.add(identity)
-        self._append_chat('Approval', f'Administrator approval required — request #{identity}. '
-                          'Open \\pending (or F9) to review and accept or reject. Nothing has executed.')
-        if self._mode == 'pending_select':
-            self._render_pending_view()
-        self._refresh_header()
-
     def _show_privileged_evidence_progress(self, message: str) -> None:
-        # The agent already runs in a Textual worker. These notifications are
-        # display-only, not assistant answers or persisted conversation turns.
-        if not self._privileged_evidence_progress:
-            notice = ('Privileged request progress appears above the chat. '
-                      'Progress is not proof of execution, completion, or cleanup.')
-            self._append_chat('System', notice)
+        # Display only: execution and progress state belong to the runtime.
         self._privileged_evidence_progress = message
         progress = self.query_one('#privileged_progress', Static)
         progress.update(Text(message))
         progress.remove_class('hidden')
         self._refresh_header()
-
-    def _on_raw(self, message: str) -> None:
-        self._append_log("raw", message)
-
-    def _on_error(self, message: str) -> None:
-        self._append_log("error", message)
