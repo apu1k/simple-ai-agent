@@ -15,6 +15,7 @@ import pytest
 from textual.widgets import Input
 
 from adapters.textual.app import AgentTextualApp
+from runtime.chat_store import ChatStore
 from runtime.remote import RemoteRuntimeClient, validate_server_url
 from runtime.server import CommandLedger, CommandRequest
 from runtime.wire import public_frame
@@ -114,6 +115,64 @@ def test_two_remote_textual_clients_approve_after_initiator_closes_and_reconnect
                     assert reconnected._messages == second._messages
                     assert not reconnected._processing
         asyncio.run(scenario())
+
+
+def test_remote_clean_context_reload_is_shared_and_keeps_the_local_chat(tmp_path):
+    store = ChatStore(tmp_path / "history")
+    session = store.new_session()
+    for index in range(1, 41):
+        store.append_turn(session_id=session, user_text=f"u{index}", assistant_text=f"a{index}")
+    with running_server(tmp_path) as (url, port):
+        first = RemoteRuntimeClient(url, TOKEN)
+        second = RemoteRuntimeClient(url, TOKEN)
+        first_id = first.attach_client()
+        second_id = second.attach_client()
+
+        async def scenario():
+            await eventually(lambda: first.connection_status == second.connection_status == "connected")
+            first.load_chat(session)
+            await eventually(lambda: second.state.chat_session_id == session)
+            first.reload_context()
+
+            def reloaded(adapter):
+                messages = adapter.snapshot().messages
+                return bool(messages) and messages[-1][1].startswith("Reloaded clean context: 32 saved turns")
+
+            await eventually(lambda: reloaded(first) and reloaded(second))
+            expected = tuple(
+                (role, text)
+                for index in range(9, 41)
+                for role, text in (("You", f"u{index}"), ("AI", f"a{index}"))
+            )
+            assert first.snapshot().messages[:-1] == second.snapshot().messages[:-1] == expected
+            assert first.state.chat_session_id == second.state.chat_session_id == session
+            assert store.list_sessions()[0].turn_count == 40
+            first.submit("continue clean chat")
+            await eventually(lambda: second.snapshot().run is not None and second.snapshot().run.status == "completed")
+            assert second.snapshot().messages[-1] == ("AI", "answer: continue clean chat")
+            assert store.list_sessions()[0].turn_count == 41
+
+        try:
+            asyncio.run(scenario())
+        finally:
+            close_adapter(first, first_id)
+            close_adapter(second, second_id)
+
+
+def test_remote_reload_context_uses_an_empty_epoch_bound_command_and_rejects_offline():
+    adapter = RemoteRuntimeClient("http://127.0.0.1:8765", TOKEN)
+    with pytest.raises(RuntimeError, match="disconnected"):
+        adapter.reload_context()
+    assert adapter._jobs.empty()
+    adapter._server_id = uuid4().hex
+    adapter._set_connected(True)
+    adapter.reload_context()
+    job = adapter._jobs.get_nowait()
+    assert job["kind"] == "command"
+    assert job["body"]["operation"] == "reload_context"
+    assert job["body"]["arguments"] == {}
+    assert job["body"]["server_id"] == adapter._server_id
+    assert len(job["body"]["request_id"]) == 32
 
 
 def test_backend_restart_reconnects_but_old_review_token_cannot_approve_reused_id(tmp_path):

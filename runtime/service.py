@@ -216,6 +216,25 @@ class AgentRuntime:
             self._reset_agent()
             self._message("System", "Conversation context reset.")
 
+    def reload_context(self) -> None:
+        """Replay saved final turns in a fresh provider chain, not a new local chat."""
+        with self._condition:
+            self._require_idle()
+            if not self.state.chat_session_id:
+                raise ValueError("No active chat session to reload. Start or load a chat first.")
+            turns = self.state.chat_store.load_original_turns(
+                self.state.chat_session_id, limit=DEFAULT_CHAT_TURN_LIMIT,
+            )
+            self.initialize()
+            self._restore_saved_turns(turns)
+            self._message(
+                "System",
+                f"Reloaded clean context: {len(turns)} saved turns "
+                f"(last {DEFAULT_CHAT_TURN_LIMIT}), without intermediate tool exchanges. "
+                "The next message starts a fresh provider conversation. "
+                "Local chat history and pending proposals are unchanged.",
+            )
+
     def load_chat(self, session_id: str) -> None:
         with self._condition:
             self._require_idle()
@@ -233,18 +252,7 @@ class AgentRuntime:
                 except Exception as error:
                     warnings.append(f"Failed to restore provider/model from chat state: {error}")
             self.state.chat_session_id = session_id
-            self._reset_agent()
-            assert self._agent is not None
-            messages: list[tuple[str, str]] = []
-            for turn in turns:
-                user = str(turn.get("user", ""))
-                assistant = str(turn.get("assistant_final", ""))
-                self._agent.messages.extend((
-                    {"role": "user", "content": user},
-                    {"role": "assistant", "content": assistant},
-                ))
-                messages.extend((("You", user), ("AI", assistant)))
-            self._replace_messages(messages)
+            self._restore_saved_turns(turns)
             for warning in warnings:
                 self._message("Error", warning)
             self._message("System", f"Loaded chat session: {session_id}")
@@ -451,6 +459,23 @@ class AgentRuntime:
             use_native_tools=getattr(llm, "supports_native_tools", False),
             tool_registry=self._agent.registry,
         )
+
+    def _restore_saved_turns(self, turns: list[dict]) -> None:
+        messages: list[tuple[str, str]] = []
+        for turn in turns:
+            messages.extend((
+                ("You", str(turn.get("user", ""))),
+                ("AI", str(turn.get("assistant_final", ""))),
+            ))
+        # Agent.reset also clears stateful provider continuation IDs. Do not
+        # carry an old response chain (and its hidden tool context) into replay.
+        self._reset_agent()
+        assert self._agent is not None
+        self._agent.messages.extend(
+            {"role": "user" if role == "You" else "assistant", "content": text}
+            for role, text in messages
+        )
+        self._replace_messages(messages)
 
     def _reset_agent(self) -> None:
         assert self._agent is not None

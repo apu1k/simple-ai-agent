@@ -210,6 +210,40 @@ def test_full_ledger_refuses_new_ids_without_forgetting_previous_decisions(tmp_p
         runtime.close()
 
 
+def test_clean_context_reload_command_is_strict_shared_and_deduplicated(host):
+    client, runtime, agent, epoch = host
+    assert command(client, epoch, "reload_context").status_code == 409
+    runtime.submit("saved question")
+    assert runtime.wait_for_idle(2)
+    session = runtime.state.chat_session_id
+    agent.messages.append({"role": "tool", "content": "discard old tool output"})
+    runtime._message("System", "discard old progress")
+    before = runtime.snapshot()
+    assert command(client, epoch, "reload_context", {"limit": 64}).status_code == 422
+    assert runtime.snapshot() == before
+    assert command(client, uuid4().hex, "reload_context").status_code == 409
+    assert runtime.snapshot() == before
+    request_id = uuid4().hex
+    response = command(client, epoch, "reload_context", request_id=request_id)
+    assert response.status_code == 200
+    snapshot = runtime.snapshot()
+    assert snapshot.run is None
+    assert snapshot.messages[:2] == (("You", "saved question"), ("AI", "answer: saved question"))
+    assert snapshot.messages[-1][1].startswith("Reloaded clean context: 1 saved turns")
+    assert agent.messages[1:] == [
+        {"role": "user", "content": "saved question"},
+        {"role": "assistant", "content": "answer: saved question"},
+    ]
+    retried = command(client, epoch, "reload_context", request_id=request_id)
+    assert retried.status_code == 200 and retried.json() == response.json()
+    assert runtime.snapshot() == snapshot
+    public = client.get("/v1/snapshot").json()
+    assert public["snapshot"]["messages"] == [list(message) for message in snapshot.messages]
+    assert runtime.state.chat_session_id == session
+    assert len(runtime.list_sessions()) == 1
+    assert len(runtime.load_original_turns(session)) == 1
+
+
 @pytest.mark.parametrize("token", ["", "short", " x" + "a" * 32, "é" * 32])
 def test_weak_or_malformed_tokens_are_rejected(tmp_path, token):
     runtime, agent = make_runtime(tmp_path)

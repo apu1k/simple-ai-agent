@@ -58,6 +58,45 @@ def test_load_chat_restores_latest_32_turns_to_ui_and_agent(chat_history, tmp_pa
         runtime.close()
 
 
+def test_reload_context_command_replaces_both_clients_with_clean_last_32_turns(chat_history, tmp_path):
+    store, session = chat_history
+    runtime, agent = make_runtime(tmp_path)
+    runtime.state.chat_store = store
+    runtime.state.chat_session_id = session.session_id
+    agent.messages.append({"role": "tool", "content": "old intermediate result"})
+    runtime._message("System", "old progress")
+
+    async def run_test():
+        first = AgentTextualApp(runtime=runtime)
+        async with first.run_test():
+            second = AgentTextualApp(runtime=runtime)
+            async with second.run_test():
+                assert "\\reload_context" in first.INPUT_COMMANDS
+                first._handle_command("\\help")
+                assert "\\reload_context: reload the last 32 saved turns" in first._messages[-1][1]
+                first._handle_command("\\reload_context")
+                second._drain_runtime_events()
+                expected = [
+                    (role, text)
+                    for index in range(9, 41)
+                    for role, text in (("You", f"u{index}"), ("AI", f"a{index}"))
+                ]
+                assert first._messages[:-1] == second._messages[:-1] == expected
+                assert first._messages[-1] == second._messages[-1]
+                assert first._messages[-1][1].startswith("Reloaded clean context: 32 saved turns")
+                assert agent.messages[1:] == [
+                    {"role": "user" if role == "You" else "assistant", "content": text}
+                    for role, text in expected
+                ]
+                assert runtime.state.chat_session_id == session.session_id
+                assert store.list_sessions()[0].turn_count == 40
+
+    try:
+        asyncio.run(run_test())
+    finally:
+        runtime.close()
+
+
 def test_chat_preview_shows_latest_32_turns_and_matching_heading(chat_history):
     store, session = chat_history
     widgets = {

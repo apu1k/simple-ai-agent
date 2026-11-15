@@ -151,6 +151,9 @@ class RemoteRuntimeClient:
     def reset_context(self) -> None:
         self._command("reset_context")
 
+    def reload_context(self) -> None:
+        self._command("reload_context")
+
     def load_chat(self, session_id: str) -> None:
         self._command("load_chat", session_id=session_id)
 
