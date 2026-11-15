@@ -188,6 +188,17 @@ class AgentRuntime:
         with self._condition:
             return self._condition.wait_for(lambda: not self._is_processing(), timeout)
 
+    def prepare_restart(self, sequence: int) -> None:
+        """Atomically drain an idle host after the operator reviewed its state."""
+        with self._condition:
+            if self._is_processing():
+                raise RuntimeBusyError("An agent run is active; finish it before restarting")
+            if self._closed:
+                return  # A lost drain acknowledgement is safe to retry.
+            if sequence != self._sequence:
+                raise ValueError("Runtime changed; review it again before restarting")
+            self.close(wait=False)
+
     def close(self, *, wait: bool = True) -> None:
         """Stop accepting work; revoke privilege, but do not claim tool cancellation."""
         with self._condition:

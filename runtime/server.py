@@ -75,6 +75,11 @@ class CommandRequest(Arguments):
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
+class RestartRequest(Arguments):
+    server_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    sequence: int = Field(ge=0)
+
+
 class CommandLedger:
     """Never evict an accepted ID and then accidentally execute it twice."""
 
@@ -163,6 +168,29 @@ def create_server(
     @app.get("/v1/health", dependencies=[Depends(authenticate)])
     def health():
         return {"version": API_VERSION, "server_id": server_id, "closed": runtime.snapshot().closed}
+
+    def local_maintenance(request: Request) -> None:
+        authenticate(request)
+        if request.client is None or request.client.host not in {"127.0.0.1", "::1"}:
+            raise HTTPException(403, "Maintenance requires a direct loopback connection")
+
+    @app.get("/v1/maintenance", dependencies=[Depends(local_maintenance)])
+    def maintenance_status():
+        with runtime._condition:
+            current = runtime.snapshot()
+            return {"version": API_VERSION, "server_id": server_id, "process_id": os.getpid(),
+                    "sequence": current.sequence, "processing": current.processing,
+                    "pending_count": len(runtime.pending()), "closed": current.closed}
+
+    @app.post("/v1/maintenance/drain", dependencies=[Depends(local_maintenance)])
+    def drain_for_restart(request: RestartRequest):
+        if request.server_id != server_id:
+            raise HTTPException(409, "Server changed; review before restarting")
+        try:
+            runtime.prepare_restart(request.sequence)
+        except (RuntimeBusyError, ValueError):
+            raise HTTPException(409, "Runtime is busy or changed; review before restarting") from None
+        return {"server_id": server_id, "closed": True}
 
     @app.get("/v1/snapshot", dependencies=[Depends(authenticate)])
     def snapshot():
