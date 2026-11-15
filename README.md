@@ -136,9 +136,66 @@ Never commit `.env`, `providers.toml`, credentials, or private chat data.
 
 ## Run
 
+Start the server and Textual in **separate terminals**. Generate a private token once:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Set the same token in both terminals (PowerShell):
+
+```powershell
+$env:AI_AGENT_TOKEN = "<generated token>"
+```
+
+Server terminal, on the PC with your providers and files:
+
+```bash
+python -m runtime.server
+```
+
+Client terminal:
+
 ```bash
 python main_textual.py
 ```
+
+Textual connects to `http://127.0.0.1:8765` by default. Multiple clients share one live
+conversation. Closing Textual disconnects only the interface; keep the server process
+running. Server restarts still lose live context, proposals, events and unfinished work;
+completed chat history remains on disk. Orderly server shutdown waits for ordinary work.
+The Python entrypoints do not install or change Windows services or scheduled tasks.
+
+For another device, use Tailscale Serve to proxy private HTTPS to `127.0.0.1:8765`,
+start the server with `--allowed-host YOUR-PC.YOUR-TAILNET.ts.net`, and set
+`AI_AGENT_SERVER=https://YOUR-PC.YOUR-TAILNET.ts.net` plus the same token on the client.
+Keep the Serve endpoint tailnet-only; do not enable Funnel. The server listens only on
+loopback. Authentication is required even over Tailscale; the shared token grants ordinary
+agent/file-approval access, not a filesystem sandbox. Rotate it by restarting the server
+with a new token. Browser-origin API requests are currently rejected.
+
+### Existing Windows browser startup
+
+The Windows launcher `scripts/start_backend.ps1` starts the backend as an ordinary user.
+The operator's local `start_all_silent.ps1` / `start_all_visible.ps1` launch it before
+Textual Serve; `start_textual.ps1` waits for authenticated backend readiness. Existing
+Caddy/Authelia routing and the browser URL stay unchanged; port 8765 stays on localhost.
+The existing scheduled-task trigger is unchanged (a logon task starts at login, not before login).
+
+The launchers share an automatically generated, per-Windows-user DPAPI-encrypted token in
+`.agent_runtime/startup-token.dpapi`, unless `AI_AGENT_TOKEN` is explicitly provided in their
+process environment. No plaintext token is put in a script, command line or log. Run both
+launchers under the same Windows account. These Windows launchers set local connection
+settings explicitly; they do not take their token from `.env`. Backend startup failures
+are in `logs/backend-*.err.log`; running the stack again does not replace an existing backend.
+The local `stop_all.ps1` stops web access but deliberately leaves the agent backend running.
+
+The machine-specific Caddy/Authelia/stack scripts remain Git-ignored; the reusable
+`agent_startup.ps1` and `start_backend.ps1` are tracked. No live processes are restarted by editing them.
+
+Privileged/UAC workflows are **not exposed remotely**. For the original trusted local
+interface, explicitly set `AI_AGENT_MODE=local` before starting Textual. That mode still
+owns an in-process runtime and stops when its hosting process closes.
 
 The main views support:
 

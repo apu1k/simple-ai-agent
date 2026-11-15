@@ -65,7 +65,7 @@ def test_chat_preview_shows_latest_32_turns_and_matching_heading(chat_history):
         for selector in ("#chat_detail", "#chat_detail_scroll", "#chat_history")
     }
     app = SimpleNamespace(
-        state=SimpleNamespace(chat_store=store),
+        runtime=SimpleNamespace(load_original_turns=store.load_original_turns),
         _selected_chat_summary=lambda: session,
         query_one=lambda selector, widget_type: widgets[selector],
         _message_renderable=lambda role, text: Text(f"{role}: {text}"),

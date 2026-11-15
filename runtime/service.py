@@ -4,9 +4,9 @@ from __future__ import annotations
 from collections import deque
 from contextlib import nullcontext
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from threading import Condition, RLock, Thread
-from typing import Callable, Literal
+from typing import Callable
 from uuid import uuid4
 
 from core.agent import Agent
@@ -26,6 +26,7 @@ from runtime.chat_store import (
     record_final_turn,
     start_new_chat,
 )
+from runtime.events import EventHistoryExpired, RunInfo, RuntimeEvent, RuntimeSnapshot
 from runtime.privileged_turn import ELEVATED_OPERATION, PendingPrivilege
 from runtime.prompt import build_system_prompt
 from runtime.state import (
@@ -35,44 +36,14 @@ from runtime.state import (
 )
 
 
+__all__ = [
+    "AgentRuntime", "RuntimeBusyError", "EventHistoryExpired",
+    "RuntimeEvent", "RuntimeSnapshot", "RunInfo",
+]
+
+
 class RuntimeBusyError(RuntimeError):
     pass
-
-
-class EventHistoryExpired(ValueError):
-    """The client must fetch a snapshot instead of replaying this cursor."""
-
-
-@dataclass(frozen=True)
-class RuntimeEvent:
-    sequence: int
-    kind: str
-    text: str = ""
-    role: str = ""
-    run_id: str | None = None
-    messages: tuple[tuple[str, str], ...] = ()
-
-
-@dataclass(frozen=True)
-class RunInfo:
-    run_id: str
-    user_text: str
-    status: Literal["running", "completed", "failed"] = "running"
-    reply: str | None = None
-    error: str | None = None
-
-
-@dataclass(frozen=True)
-class RuntimeSnapshot:
-    sequence: int
-    messages: tuple[tuple[str, str], ...]
-    run: RunInfo | None
-    progress: str
-    closed: bool
-
-    @property
-    def processing(self) -> bool:
-        return self.run is not None and self.run.status == "running"
 
 
 class AgentRuntime:
@@ -108,6 +79,7 @@ class AgentRuntime:
         self._progress = ""
         self._closed = False
         self._clients: dict[str, bool] = {}
+        self._privileged_enabled = True
 
     def initialize(self) -> None:
         with self._condition:
@@ -126,9 +98,40 @@ class AgentRuntime:
         """Register a trusted adapter, not a model-selected authorization."""
         with self._condition:
             self._require_open()
+            if can_approve and not self._privileged_enabled:
+                raise PermissionError("Privileged operations are disabled on this host")
             identity = uuid4().hex
             self._clients[identity] = can_approve
             return identity
+
+    def disable_privileged_operations(self) -> None:
+        """Irreversible for this runtime; network hosts never grant UAC authority."""
+        with self._condition:
+            self._require_idle()
+            self._privileged_enabled = False
+            self._clients = dict.fromkeys(self._clients, False)
+            self.state.privileged_turn.revoke()
+
+    @property
+    def providers(self):
+        from llm.providers import PROVIDERS
+        return PROVIDERS
+
+    def provider_models(self, key: str) -> list[str]:
+        from llm.providers import list_provider_models
+        provider = self.providers.get(key)
+        if provider is None:
+            raise ValueError("Unknown provider")
+        return list_provider_models(provider, timeout=6.0, max_retries=0)
+
+    def list_sessions(self, limit: int = 200):
+        return self.state.chat_store.list_sessions(limit=limit)
+
+    def load_original_turns(self, session_id: str, limit: int = DEFAULT_CHAT_TURN_LIMIT):
+        return self.state.chat_store.load_original_turns(session_id, limit=limit)
+
+    def format_session_list(self, limit: int = 20) -> str:
+        return self.state.chat_store.format_session_list(limit=limit)
 
     def detach_client(self, identity: str) -> None:
         with self._condition:
@@ -291,6 +294,8 @@ class AgentRuntime:
                 raise RuntimeBusyError("Cannot change model settings while AI is processing (except revoking elevation).")
             if key == "elevated_commands" and isinstance(value, bool):
                 if value:
+                    if not self._privileged_enabled:
+                        raise PermissionError("Privileged operations are disabled on this host")
                     self._require_approver(client_id)
                     self.state.privileged_turn.arm(ELEVATED_OPERATION)
                 else:
@@ -336,6 +341,16 @@ class AgentRuntime:
                         self._message("System", cwd_message)
             self._publish("state_changed")
             return message
+
+    def decide_file_pending(self, identity: int, *, accept: bool, revision: str) -> str:
+        from runtime.wire import proposal_revision
+        with self._condition:
+            edit = self.state.edit_store.pending().get(identity)
+            if edit is None:
+                raise ValueError("Proposal is no longer pending")
+            if proposal_revision(edit) != revision:
+                raise ValueError("Proposal changed; review it again before deciding")
+            return self.decide_pending(identity, accept=accept)
 
     def _execute(self, text: str, approval_available: bool) -> None:
         try:

@@ -1,8 +1,11 @@
 """
 Textual entrypoint for simple-ai-agent.
 
-Run locally as a Textual TUI:
-    textual run main_textual.py
+Connect to the independently started server (AI_AGENT_TOKEN required):
+    python -m runtime.server
+    python main_textual.py
+
+Explicit in-process/UAC mode: set AI_AGENT_MODE=local before starting Textual.
 
 Serve for browser access, depending on your Textual version:
     textual serve --host 127.0.0.1 --port 8000 main_textual:app

@@ -43,6 +43,8 @@ Thumbs.db
 # updates (caddy,...)
 Caddyfile
 /scripts/*
+!/scripts/agent_startup.ps1
+!/scripts/start_backend.ps1
 !/scripts/privileged_host_helper.ps1
 !/scripts/install_privileged_host_helper.ps1
 !/scripts/privileged_inspection_helper.ps1

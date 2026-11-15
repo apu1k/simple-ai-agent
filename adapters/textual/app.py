@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from rich.console import Group
 from rich.markdown import Markdown
@@ -21,9 +21,12 @@ from textual.widgets import Footer, Input, Static, Tree
 from adapters.textual.approval_review import render_privileged_review
 from core.tool_artifacts import is_internal_tool_artifact
 from runtime.privileged_turn import ELEVATED_OPERATION, PendingPrivilege
-from llm.providers import PROVIDERS, list_provider_models
 from runtime.chat_store import DEFAULT_CHAT_TURN_LIMIT
-from runtime.service import AgentRuntime, EventHistoryExpired
+from runtime.events import EventHistoryExpired
+
+if TYPE_CHECKING:
+    from runtime.remote import RemoteRuntimeClient
+    from runtime.service import AgentRuntime
 from runtime.state import ModelSettingValue, OPENAI_REASONING_EFFORTS
 
 
@@ -84,7 +87,7 @@ class AgentTextualApp(App):
         ("f4", "open_model_settings", "Settings"),
     ]
 
-    COMMANDS = [
+    INPUT_COMMANDS = [
         "\\help",
         "\\models",
         "\\settings",
@@ -101,17 +104,17 @@ class AgentTextualApp(App):
     ]
 
     def __init__(
-        self, *, runtime: AgentRuntime | None = None, state: Any = None, llm: Any = None,
+        self, *, runtime: AgentRuntime | RemoteRuntimeClient | None = None, state: Any = None, llm: Any = None,
     ):
         super().__init__()
         if runtime is None:
             if state is None or llm is None:
                 raise ValueError("Provide a runtime or both state and llm")
+            from runtime.service import AgentRuntime
             runtime = AgentRuntime(state=state, llm=llm)
         elif state is not None or llm is not None:
             raise ValueError("Do not combine runtime with state/llm")
         self.runtime = runtime
-        self.state = runtime.state
         self._runtime_client_id: str | None = None
         self._runtime_cursor = 0
         self._theme_dark = True
@@ -139,6 +142,7 @@ class AgentTextualApp(App):
         self._pending_search = ""
         self._visible_pending_ids: list[int | str] = []
         self._selected_pending_id: int | str | None = None
+        self._reviewed_pending_edit: Any = None
 
         self._chat_search = ""
         self._visible_chat_sessions: list[Any] = []
@@ -147,6 +151,11 @@ class AgentTextualApp(App):
         self._command_completion_prefix = ""
         self._command_completion_matches: list[str] = []
         self._command_completion_index = -1
+
+    @property
+    def state(self):
+        # Remote adapters expose only a credential-free display projection.
+        return self.runtime.state
 
     def compose(self) -> ComposeResult:
         with Container(id="top_status"):
@@ -181,7 +190,7 @@ class AgentTextualApp(App):
                     yield Static("", id="chat_history")
         yield ClipboardInput(
             placeholder="Type a message and press Enter...",
-            suggester=SuggestFromList(self.COMMANDS, case_sensitive=True),
+            suggester=SuggestFromList(self.INPUT_COMMANDS, case_sensitive=True),
             id="input",
         )
         yield Footer(compact=True, show_command_palette=False)
@@ -192,7 +201,9 @@ class AgentTextualApp(App):
         self._schedule_initial_input_focus()
 
     def _connect_runtime(self) -> None:
-        self._runtime_client_id = self.runtime.attach_client(can_approve=True)
+        self._runtime_client_id = self.runtime.attach_client(
+            can_approve=getattr(self.runtime, "supports_privileged_approval", True),
+        )
         try:
             self.runtime.initialize()
         except Exception:
@@ -239,6 +250,15 @@ class AgentTextualApp(App):
                 self._show_privileged_evidence_progress(event.text)
             elif event.kind in {"debug", "tool", "raw", "error"}:
                 self._append_log(event.kind, event.text)
+            elif event.kind == "models_changed":
+                self._update_provider_models_incremental(event.text, self.runtime.provider_models(event.text))
+            elif event.kind == "providers_changed" and self._mode == "model_select":
+                self._start_model_loading_incremental()
+                for key in self.runtime.providers:
+                    self._update_provider_models_incremental(key, self.runtime.provider_models(key))
+                self._finish_model_loading()
+            elif event.kind == "history_changed" and self._mode == "chat_select":
+                self._render_chat_select_view()
         if events:
             self._refresh_state()
             if self._mode == "pending_select":
@@ -449,7 +469,7 @@ class AgentTextualApp(App):
             return
 
         if command == "\\history":
-            self._append_chat("System", self.state.chat_store.format_session_list(limit=20))
+            self._append_chat("System", self.runtime.format_session_list(limit=20))
             return
 
         if command == "\\reset":
@@ -615,6 +635,8 @@ class AgentTextualApp(App):
              "Requires a model that supports this level; unsupported choices return an API error.")
             for effort in OPENAI_REASONING_EFFORTS
         )
+        if not getattr(self.runtime, "supports_privileged_approval", True):
+            options = [option for option in options if option[0] != "elevated_commands"]
         query = self._model_settings_search.lower()
         visible = [
             option for option in options
@@ -670,6 +692,10 @@ class AgentTextualApp(App):
         except (RuntimeError, ValueError, PermissionError) as error:
             self._append_chat("Error", str(error))
             return
+        if not getattr(self.runtime, "supports_privileged_approval", True):
+            self._exit_model_settings_mode()
+            self._append_chat("System", "Setting change requested; server confirmation will update the display.")
+            return
         if key == "elevated_commands" and isinstance(value, bool):
             gate = self.state.privileged_turn
             self._exit_model_settings_mode()
@@ -708,7 +734,7 @@ class AgentTextualApp(App):
         self._append_chat("System", f"Proposal diff results set to {label}.")
 
     def _pending_entries(self) -> dict[int | str, Any]:
-        return self.runtime.pending()
+        return {identity: edit for identity, edit in self.runtime.pending().items()}
 
     def _enter_pending_select_mode(self) -> None:
         self._mode = "pending_select"
@@ -757,6 +783,7 @@ class AgentTextualApp(App):
 
         if not visible:
             self._selected_pending_id = None
+            self._reviewed_pending_edit = None
             self._set_pending_header("No pending requests match your search. Ctrl+G returns to chat.")
             self.query_one("#pending_list", Static).update(Text("No pending requests.", style="dim"))
             self.query_one("#pending_diff", Static).update(Text("", style="dim"))
@@ -789,6 +816,9 @@ class AgentTextualApp(App):
 
     def _render_pending_diff(self) -> None:
         edit = self._selected_pending_edit()
+        # Approve exactly the immutable view rendered here, not a newer cached
+        # proposal that arrived from the network just before the keypress.
+        self._reviewed_pending_edit = edit
         if edit is None:
             self.query_one("#pending_diff", Static).update(Text("No pending edit selected.", style="dim"))
             return
@@ -853,7 +883,10 @@ class AgentTextualApp(App):
         if not self._visible_pending_ids:
             return
         try:
-            index = self._visible_pending_ids.index(self._selected_pending_id)
+            index = (
+                self._visible_pending_ids.index(self._selected_pending_id)
+                if self._selected_pending_id is not None else 0
+            )
         except ValueError:
             index = 0
         self._select_pending_index(index + delta)
@@ -865,12 +898,15 @@ class AgentTextualApp(App):
             pass
 
     def _approve_selected_pending(self) -> None:
-        edit = self._selected_pending_edit()
+        edit = self._reviewed_pending_edit
         if edit is None:
             self._set_pending_header("No pending edit selected.")
             return
         try:
-            self.runtime.decide_pending(edit.id, accept=True, client_id=self._runtime_client_id)
+            self.runtime.decide_pending(
+                edit.id, accept=True, client_id=self._runtime_client_id,
+                **({"revision": edit.revision} if hasattr(edit, "revision") else {}),
+            )
             self._drain_runtime_events()
         except (KeyError, ValueError, RuntimeError, PermissionError, OSError) as e:
             self._append_chat("Error", str(e))
@@ -878,12 +914,15 @@ class AgentTextualApp(App):
         self._refresh_state()
 
     def _reject_selected_pending(self) -> None:
-        edit = self._selected_pending_edit()
+        edit = self._reviewed_pending_edit
         if edit is None:
             self._set_pending_header("No pending edit selected.")
             return
         try:
-            self.runtime.decide_pending(edit.id, accept=False, client_id=self._runtime_client_id)
+            self.runtime.decide_pending(
+                edit.id, accept=False, client_id=self._runtime_client_id,
+                **({"revision": edit.revision} if hasattr(edit, "revision") else {}),
+            )
             self._drain_runtime_events()
         except (KeyError, ValueError, RuntimeError, PermissionError) as e:
             self._append_chat("Error", str(e))
@@ -931,7 +970,7 @@ class AgentTextualApp(App):
         if self._mode != "chat_select":
             return
 
-        sessions = self.state.chat_store.list_sessions(limit=200)
+        sessions = self.runtime.list_sessions(limit=200)
         query = self._chat_search.lower()
         visible = []
         for session in sessions:
@@ -1014,7 +1053,7 @@ class AgentTextualApp(App):
             self.query_one("#chat_detail", Static).update(Text("No chat selected.", style="dim"))
             return
 
-        turns = self.state.chat_store.load_original_turns(
+        turns = self.runtime.load_original_turns(
             session.session_id, limit=DEFAULT_CHAT_TURN_LIMIT
         )
 
@@ -1107,7 +1146,7 @@ class AgentTextualApp(App):
         root.expand()
 
     def _models_with_default(self, provider_key: str, models: list[str]) -> list[str]:
-        provider = PROVIDERS[provider_key]
+        provider = self.runtime.providers[provider_key]
         unique_models = list(dict.fromkeys(models))
         if provider.default_model:
             unique_models = [provider.default_model] + [
@@ -1122,11 +1161,11 @@ class AgentTextualApp(App):
         previous_models = self._models_by_provider
         self._models_by_provider = {
             key: self._models_with_default(key, previous_models.get(key, []))
-            for key in PROVIDERS
+            for key in self.runtime.providers
         }
         self._model_provider_status = {
             key: "skipped" if not provider.supports_model_listing else "loading"
-            for key, provider in PROVIDERS.items()
+            for key, provider in self.runtime.providers.items()
         }
         self._model_tree_loaded = had_cached_models
         self._model_tree_loading = True
@@ -1151,7 +1190,7 @@ class AgentTextualApp(App):
 
         fetchable = {
             key: provider
-            for key, provider in PROVIDERS.items()
+            for key, provider in self.runtime.providers.items()
             if provider.supports_model_listing
         }
 
@@ -1160,8 +1199,7 @@ class AgentTextualApp(App):
             return
 
         def fetch_one(key: str) -> tuple[str, list[str]]:
-            provider = fetchable[key]
-            models = list_provider_models(provider, timeout=6.0, max_retries=0)
+            models = self.runtime.provider_models(key)
             return key, models
 
         max_workers = min(len(fetchable), 8)
@@ -1173,7 +1211,7 @@ class AgentTextualApp(App):
 
             for future in as_completed(future_to_key):
                 key = future_to_key[future]
-                provider = PROVIDERS[key]
+                provider = self.runtime.providers[key]
                 try:
                     finished_key, models = future.result()
                 except Exception as e:
@@ -1190,7 +1228,7 @@ class AgentTextualApp(App):
         self._from_any_thread(self._finish_model_loading)
 
     def _update_provider_models_incremental(self, provider_key: str, models: list[str]) -> None:
-        if provider_key not in PROVIDERS:
+        if provider_key not in self.runtime.providers:
             return
 
         if models:
@@ -1233,7 +1271,7 @@ class AgentTextualApp(App):
         current_model = self.state.model_config.model
         visible_matches: list[tuple[str, str]] = []
 
-        for key, provider in PROVIDERS.items():
+        for key, provider in self.runtime.providers.items():
             models = self._models_by_provider.get(key, [])
             provider_matches = query in key.lower() or query in provider.label.lower()
             filtered_models = [
@@ -1348,7 +1386,7 @@ class AgentTextualApp(App):
         self._refresh_state()
 
     def _switch_model(self, provider_key: str, model: str) -> None:
-        provider = PROVIDERS.get(provider_key)
+        provider = self.runtime.providers.get(provider_key)
         if provider is None:
             self._set_model_header(f"Unknown provider: {provider_key}")
             return
@@ -1360,10 +1398,13 @@ class AgentTextualApp(App):
             return
 
         self._exit_model_select_mode()
-        self._append_chat(
-            "System",
-            f"Model changed to {self.state.model_config.provider_label} / {self.state.model_config.model}.",
-        )
+        if not getattr(self.runtime, "supports_privileged_approval", True):
+            self._append_chat("System", "Model switch requested; awaiting server confirmation.")
+        else:
+            self._append_chat(
+                "System",
+                f"Model changed to {self.state.model_config.provider_label} / {self.state.model_config.model}.",
+            )
 
     def action_toggle_theme(self) -> None:
         self._theme_dark = not self._theme_dark
@@ -1523,9 +1564,12 @@ class AgentTextualApp(App):
             f"{self.state.model_config.provider_label} / "
             f"{self.state.model_config.model}"
         )
-        pending_count = len(self.state.edit_store.pending())
-        gate = getattr(self.state, 'privileged_turn', None)
-        elevated_count = len(gate.pending()) if gate is not None else 0
+        pending = self.runtime.pending()
+        pending_count = sum(isinstance(identity, int) for identity in pending)
+        elevated_count = len(pending) - pending_count
+        connection = getattr(self.runtime, "connection_status", None)
+        if connection:
+            model_text += f" | {connection}"
 
         self.query_one("#status_cwd", Static).update(str(self.state.cwd))
         self.query_one("#status_model", Static).update(model_text)
@@ -1585,7 +1629,7 @@ class AgentTextualApp(App):
             self._apply_command_completion(self._command_completion_matches[next_index])
             return
 
-        matches = [command for command in self.COMMANDS if command.startswith(value)]
+        matches = [command for command in self.INPUT_COMMANDS if command.startswith(value)]
         if not matches:
             self._reset_command_completion()
             return
