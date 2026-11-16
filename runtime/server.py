@@ -138,7 +138,8 @@ def create_server(
     async def lifespan(app: FastAPI):
         yield
         # Disconnecting a client does not get here. Orderly server shutdown
-        # waits for ordinary work; force-killing the host loses volatile state.
+        # waits for ordinary work; forced shutdown recovers as interrupted,
+        # never as an automatically retried tool/model request.
         await asyncio.to_thread(runtime.close)
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -180,7 +181,8 @@ def create_server(
             current = runtime.snapshot()
             return {"version": API_VERSION, "server_id": server_id, "process_id": os.getpid(),
                     "sequence": current.sequence, "processing": current.processing,
-                    "pending_count": len(runtime.pending()), "closed": current.closed}
+                    "pending_count": len(runtime.pending()), "closed": current.closed,
+                    "durable_state": runtime._store is not None}
 
     @app.post("/v1/maintenance/drain", dependencies=[Depends(local_maintenance)])
     def drain_for_restart(request: RestartRequest):
@@ -272,7 +274,7 @@ def main() -> None:
     from runtime.bootstrap import create_default_runtime
     import uvicorn
     app = create_server(
-        create_default_runtime(), token=token,
+        create_default_runtime(durable=True), token=token,
         allowed_hosts=["localhost", "127.0.0.1", "[::1]", *args.allowed_host],
     )
     uvicorn.run(app, host="127.0.0.1", port=args.port, proxy_headers=False, access_log=False)

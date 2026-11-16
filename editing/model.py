@@ -17,7 +17,7 @@ class FileEdit:
     replace: str
 
 
-EditStatus = Literal["pending", "applied", "rejected"]
+EditStatus = Literal["pending", "applying", "applied", "rejected", "outcome_unknown"]
 EditKind = Literal["edit", "create", "move", "delete", "copy"]
 
 

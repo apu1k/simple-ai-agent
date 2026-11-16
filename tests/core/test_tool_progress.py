@@ -42,6 +42,7 @@ def test_agent_passes_live_progress_but_only_returns_actual_tool_result(failure)
         return 'actual result'
     agent = Agent.__new__(Agent)
     agent.state = SimpleNamespace()
+    agent.on_execution = None
     agent._tool = messages.append
     agent._error = lambda message: None
     agent.registry = ToolRegistry()

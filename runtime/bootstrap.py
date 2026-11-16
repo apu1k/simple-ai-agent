@@ -13,7 +13,7 @@ from core.agent import Agent
 from core.tool_registry import ToolRegistry, autodiscover
 from llm.base import LLMClient
 from llm.providers import create_llm_client, PROVIDERS
-from config.settings import DEBUG_LOGS, OPERATIONAL_DATABASE
+from config.settings import DEBUG_LOGS, OPERATIONAL_DATABASE, RUNTIME_DATABASE
 from night_shifts.storage import ToolCallStore
 
 # Debug: print loaded providers (gated)
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from runtime.service import AgentRuntime
 
 
-def create_default_runtime() -> "AgentRuntime":
+def create_default_runtime(*, durable: bool = False) -> "AgentRuntime":
     """Compose the agent host independently of a frontend."""
     from runtime.service import AgentRuntime
     from tools.knowledge.runtime import start_embedding_warmup
@@ -46,7 +46,10 @@ def create_default_runtime() -> "AgentRuntime":
     config, llm = build_model_config_and_client(provider, provider.default_model)
     state = create_initial_state(config)
     start_embedding_warmup()
-    return AgentRuntime(state=state, llm=llm)
+    return AgentRuntime(
+        state=state, llm=llm,
+        persistence_path=RUNTIME_DATABASE if durable else None,
+    )
 
 
 def initialize_tools() -> None:

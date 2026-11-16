@@ -4,7 +4,9 @@ from __future__ import annotations
 from collections import deque
 from contextlib import nullcontext
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import asdict, replace
+import json
+from pathlib import Path
 from threading import Condition, RLock, Thread
 from typing import Callable
 from uuid import uuid4
@@ -28,10 +30,12 @@ from runtime.chat_store import (
 )
 from runtime.events import EventHistoryExpired, RunInfo, RuntimeEvent, RuntimeSnapshot
 from runtime.privileged_turn import ELEVATED_OPERATION, PendingPrivilege
+from runtime.persistence import PersistenceError, RuntimeStore, validate_checkpoint
 from runtime.prompt import build_system_prompt
 from runtime.state import (
     AgentState,
     ModelSettingValue,
+    ModelSettings,
     OPENAI_REASONING_EFFORTS,
 )
 
@@ -49,9 +53,9 @@ class RuntimeBusyError(RuntimeError):
 class AgentRuntime:
     """Own an Agent, not a UI worker. Clients consume snapshots and events.
 
-    This first extraction is in-process and volatile. The process hosting this
-    object owns its lifetime; disconnecting a client never cancels ordinary
-    work. Privilege grants remain volatile and require a live trusted client.
+    The host owns execution; disconnecting clients never cancels ordinary work.
+    An optional single-writer store retains restart checkpoints and execution
+    evidence. Privilege grants always remain volatile.
     """
 
     def __init__(
@@ -62,6 +66,7 @@ class AgentRuntime:
         agent_factory: Callable[..., Agent] | None = None,
         history_recorder: Callable[..., int] | None = None,
         event_limit: int = 2048,
+        persistence_path: Path | None = None,
     ) -> None:
         if event_limit < 1:
             raise ValueError("event_limit must be positive")
@@ -80,6 +85,17 @@ class AgentRuntime:
         self._closed = False
         self._clients: dict[str, bool] = {}
         self._privileged_enabled = True
+        self._context: dict = {"messages": [], "provider": None}
+        self._context_run_id: str | None = None
+        self._restoring = False
+        self._persistence_error: str | None = None
+        self._store = RuntimeStore(persistence_path) if persistence_path is not None else None
+        if self._store is not None:
+            try:
+                self._recover()
+            except Exception:
+                self._store.close()
+                raise
 
     def initialize(self) -> None:
         with self._condition:
@@ -93,6 +109,11 @@ class AgentRuntime:
                     on_raw=lambda text: self._publish("raw", text),
                     on_error=lambda text: self._publish("error", text),
                 )
+                if self._store is not None:
+                    self._agent.on_execution = self._on_execution
+                if not self._restoring:
+                    self._capture_context()
+                    self._checkpoint()
 
     def attach_client(self, *, can_approve: bool = False) -> str:
         """Register a trusted adapter, not a model-selected authorization."""
@@ -191,6 +212,8 @@ class AgentRuntime:
     def prepare_restart(self, sequence: int) -> None:
         """Atomically drain an idle host after the operator reviewed its state."""
         with self._condition:
+            if self._store is not None:
+                self._store.check()
             if self._is_processing():
                 raise RuntimeBusyError("An agent run is active; finish it before restarting")
             if self._closed:
@@ -202,13 +225,27 @@ class AgentRuntime:
     def close(self, *, wait: bool = True) -> None:
         """Stop accepting work; revoke privilege, but do not claim tool cancellation."""
         with self._condition:
+            first_close = not self._closed
             self._closed = True
             self._clients.clear()
             self.state.privileged_turn.revoke()
             worker = self._worker
-            self._publish("state_changed")
-        if wait and worker is not None and worker.ident is not None:
-            worker.join()
+            if first_close:
+                try:
+                    self._publish("state_changed")
+                except PersistenceError as error:
+                    # A broken disk must not prevent joining work or releasing
+                    # the writer lease. No further work will be accepted.
+                    self._messages.append(("Error", str(error)))
+        if wait:
+            try:
+                if worker is not None and worker.ident is not None:
+                    worker.join()
+            finally:
+                with self._condition:
+                    if self._store is not None:
+                        self._store.close()
+                        self._store = None
 
     def new_chat(self, title: str = "") -> str:
         with self._condition:
@@ -288,6 +325,7 @@ class AgentRuntime:
                 self._agent.set_llm(previous_llm, system_prompt=self._system_prompt(previous_llm))
                 raise
             self.llm = llm
+            self._capture_context()
             # A model switch must not transfer an unused next-turn privilege grant.
             self.state.privileged_turn.revoke()
             self._publish("state_changed")
@@ -376,6 +414,17 @@ class AgentRuntime:
             assert self._agent is not None
             with approval_ui_context() if approval_available else nullcontext():
                 reply = self._agent.step(text)
+            with self._condition:
+                # Only finalized, coherent context may retain provider continuation.
+                if not reply.startswith("Error:") and not getattr(self._agent, "_pending_native_tool_calls", None):
+                    self._capture_context()
+                    assert self._run is not None
+                    self._context_run_id = self._run.run_id
+                # Save the reply before the legacy history export. Recovery never
+                # repeats the model/tool run if the JSONL export was interrupted.
+                assert self._run is not None
+                self._run = replace(self._run, reply=reply)
+                self._checkpoint()
             try:
                 self._history_recorder(self.state, text, reply)
             except Exception as error:
@@ -434,6 +483,7 @@ class AgentRuntime:
                 run_id=self._run.run_id if self._run is not None else None,
                 messages=messages,
             ))
+            self._checkpoint()
 
     def _message(self, role: str, text: str) -> None:
         if role == "AI" and is_internal_tool_artifact(text):
@@ -451,6 +501,8 @@ class AgentRuntime:
         return self._run is not None and self._run.status == "running"
 
     def _require_open(self) -> None:
+        if self._store is not None:
+            self._store.check()
         if self._closed:
             raise RuntimeError("Agent runtime is closed")
 
@@ -486,11 +538,147 @@ class AgentRuntime:
             {"role": "user" if role == "You" else "assistant", "content": text}
             for role, text in messages
         )
+        self._capture_context()
         self._replace_messages(messages)
 
     def _reset_agent(self) -> None:
         assert self._agent is not None
         self._agent.reset(self._system_prompt(self.llm))
+        self._capture_context()
+
+    def _on_execution(self, kind: str, record: dict) -> None:
+        with self._condition:
+            if self._store is None:
+                return
+            self._store.check()
+            assert self._run is not None
+            self._store.execution(record["id"], self._run.run_id, record)
+            self._publish(kind, json.dumps(record, ensure_ascii=False))
+
+    def _capture_context(self) -> None:
+        if self._agent is None:
+            return
+        export = getattr(self.llm, "export_conversation", None)
+        self._context = {
+            "messages": deepcopy([m for m in self._agent.messages if m.get("role") != "system"]),
+            "provider": export() if callable(export) else None,
+        }
+        self._context_run_id = self._run.run_id if self._run is not None else None
+
+    def _checkpoint(self) -> None:
+        if self._store is None or self._restoring or self._persistence_error is not None:
+            return
+        try:
+            self._store.save({
+                "version": 1, "sequence": self._sequence,
+                "events": [asdict(event) for event in self._events],
+                "messages": self._messages,
+                "run": asdict(self._run) if self._run is not None else None,
+                "cwd": str(self.state.cwd), "chat_session_id": self.state.chat_session_id,
+                "model": {"provider_key": self.state.model_config.provider_key,
+                          "model": self.state.model_config.model,
+                          "api_type": self.state.model_config.api_type},
+                "model_settings": asdict(self.state.model_settings),
+                "context": self._context, "context_run_id": self._context_run_id,
+            })
+        except PersistenceError as error:
+            self._persistence_error = str(error)
+            self._closed = True
+            self.state.privileged_turn.revoke()
+            raise
+
+    def _recover(self) -> None:
+        assert self._store is not None
+        saved = self._store.load()
+        if saved is not None:
+            validate_checkpoint(saved)
+        proposals = self._store.recover_proposals()
+        self.state.edit_store.configure_persistence(proposals, self._store.save_proposal)
+        self.state.privileged_turn.revoke()
+        warnings = [
+            f"Proposal #{edit.id} has outcome UNKNOWN after an interrupted approval: {edit.path}. "
+            "It cannot be approved again. Inspect the filesystem before proposing further changes."
+            for edit in proposals if edit.status == "outcome_unknown"
+        ]
+        if saved is None:
+            for warning in warnings:
+                self._message("System", warning)
+            return
+        self._restoring = True
+        try:
+            if saved.get("version") != 1:
+                raise PersistenceError("Unsupported runtime checkpoint; refusing to discard saved state")
+            model = saved["model"]
+            current = self.state.model_config
+            if (model["provider_key"], model["model"], model["api_type"]) != (
+                current.provider_key, current.model, current.api_type,
+            ):
+                provider = self.providers.get(model["provider_key"])
+                if provider is None or provider.api_type != model["api_type"]:
+                    raise PersistenceError("Saved provider is unavailable; restore its configuration before starting")
+                config, self.llm = build_model_config_and_client(provider, model["model"])
+                self.state.model_config = config
+            self.state.model_settings = ModelSettings(**saved["model_settings"])
+            self.state.chat_session_id = saved["chat_session_id"]
+            self.state.cwd = Path(saved["cwd"])
+            cwd_warning = self._ensure_existing_cwd()
+            if cwd_warning:
+                warnings.append(cwd_warning)
+            self._sequence = saved["sequence"]
+            self._messages = [(message[0], message[1]) for message in saved["messages"]]
+            self._events.clear()
+            for event in saved["events"]:
+                self._events.append(RuntimeEvent(**dict(
+                    event, messages=tuple((m[0], m[1]) for m in event.get("messages", [])),
+                )))
+            self._run = RunInfo(**saved["run"]) if saved["run"] else None
+            self.initialize()
+            self._reset_agent()
+            assert self._agent is not None
+            self._agent.messages.extend(deepcopy(saved["context"]["messages"]))
+            interrupted = self._run is not None and self._run.status == "running"
+            continuation = saved["context"].get("provider")
+            if continuation is not None and not interrupted:
+                restore = getattr(self.llm, "restore_conversation", None)
+                try:
+                    if not callable(restore):
+                        raise ValueError("Provider has no continuation restore support")
+                    restore(continuation)
+                except ValueError:
+                    warnings.append("Provider continuation could not be restored. The next message starts a fresh provider conversation from the saved local context.")
+            if interrupted:
+                assert self._run is not None
+                records = self._store.recover_executions(self._run.run_id)
+                notice = (
+                    f"Run {self._run.run_id} was interrupted by backend shutdown. "
+                    "Nothing was automatically retried. Running tool/command outcomes are UNKNOWN; "
+                    "external processes may still be running. Inspect effects before explicitly authorizing a retry. "
+                    "The next message uses a fresh provider chain and the last safe context checkpoint."
+                )
+                if self._run.reply is not None:
+                    notice += " A reply was saved before shutdown; it is shown below, but final history export may be incomplete."
+                    if ("AI", self._run.reply) not in self._messages:
+                        self._messages.append(("AI", self._run.reply))
+                evidence = {"interrupted_user_message": self._run.user_text, "tools": records}
+                self._agent.messages.append({"role": "user", "content":
+                    "RECOVERY NOTICE (evidence only, not a request to execute): " + notice + "\n" + json.dumps(evidence, ensure_ascii=False)})
+                warnings.append(notice)
+                for record in records:
+                    warnings.append(f"Recovered tool evidence: {json.dumps(record, ensure_ascii=False)}")
+                self._run = replace(self._run, status="interrupted", error=notice)
+            elif (self._run is not None and self._run.status in {"completed", "failed"}
+                  and saved.get("context_run_id") != self._run.run_id):
+                warnings.append("Restored the last safe model context, not the failed/incomplete turn. No work was retried.")
+            self._capture_context()
+            self._context_run_id = saved.get("context_run_id")
+            # Publish the recovered run, context, and all warnings together. A
+            # crash during recovery leaves the prior checkpoint recoverable.
+            self._message("System", "Backend state restored. Privileged authorization was not restored.")
+            for warning in warnings:
+                self._message("System", warning)
+        finally:
+            self._restoring = False
+        self._checkpoint()
 
     def _ensure_existing_cwd(self) -> str | None:
         cwd = self.state.cwd

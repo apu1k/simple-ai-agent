@@ -23,7 +23,7 @@ class RuntimeEvent:
 class RunInfo:
     run_id: str
     user_text: str
-    status: Literal["running", "completed", "failed"] = "running"
+    status: Literal["running", "completed", "failed", "interrupted"] = "running"
     reply: str | None = None
     error: str | None = None
 

@@ -84,7 +84,10 @@ try {
     if (-not $newTextual) { throw 'Textual listener disappeared during readiness verification.' }
     $newTextual.Process.Dispose()
     Write-Host 'Backend and Textual restarted with the current code. Caddy and Authelia were left untouched.' -ForegroundColor Green
-    Write-Host 'Reopen/refresh your usual browser URL, then use \chats to load saved chat history.'
+    if ($replacement.Durable) {
+        Write-Host 'Reopen/refresh your usual browser URL. Saved backend state is recovered automatically; review any recovery notices.'
+    }
+    else { Write-Host 'Reopen/refresh your usual browser URL, then use \chats to load saved chat history.' }
 }
 catch {
     Write-Host "Restart stopped: $($_.Exception.Message)" -ForegroundColor Red

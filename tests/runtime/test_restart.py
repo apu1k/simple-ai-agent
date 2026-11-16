@@ -31,7 +31,7 @@ def test_maintenance_status_is_minimal_and_never_returns_chat_or_credentials(tmp
         assert response.json() == {
             "version": 1, "server_id": client.app.state.server_id, "process_id": os.getpid(),
             "sequence": runtime.snapshot().sequence, "processing": False,
-            "pending_count": 1, "closed": False,
+            "pending_count": 1, "closed": False, "durable_state": False,
         }
         assert response.headers["Cache-Control"] == "no-store"
         for forbidden in ("PRIVATE_CHAT_SENTINEL", "PRIVATE_FILE_SENTINEL", TOKEN, "api_key", "model_config"):

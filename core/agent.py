@@ -23,7 +23,7 @@ from config import MAX_AGENT_STEPS, MAX_BATCH_TOOL_CALLS
 from core import protocol
 from core.tool_registry import registry
 from core.tool_progress import tool_progress_listener
-from llm.base import LLMResponse, NativeToolOutput, request_retry_diagnostic
+from llm.base import LLMResponse, NativeToolCall, NativeToolOutput, request_retry_diagnostic
 from llm.request_progress import request_progress_listener
 from night_shifts.models import ToolCallRecord, ToolCallStatus
 
@@ -64,6 +64,7 @@ class Agent:
         tool_registry: "ToolRegistry | None" = None,
         agent_profile: str = "head",
         job_id: str | None = None,
+        on_execution: Callable[[str, dict], None] | None = None,
     ):
         """
         Args:
@@ -80,6 +81,7 @@ class Agent:
         self.registry = tool_registry if tool_registry is not None else registry
         self.agent_profile = agent_profile
         self.job_id = job_id
+        self.on_execution = on_execution
         self.messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
         # Callbacks — default to no-op so callers don't need to pass them all
@@ -109,7 +111,7 @@ class Agent:
 
         # Prebuild both tool-schema variants once to avoid runtime shape drift.
         self._tools_by_api_type: dict[str, list[dict]] = {}
-        self._pending_native_tool_calls = None
+        self._pending_native_tool_calls: list[tuple[BatchToolRecord, NativeToolCall]] | None = None
         self._configure_llm_runtime()
 
     # ------------------------------------------------------------------
@@ -394,12 +396,30 @@ class Agent:
         if call_id is None:
             return
         store = getattr(self.state, "tool_call_store", None)
+        if store is None:
+            return
         try:
             store.complete(call_id, status=status, result=result, error=error)
         except Exception as exc:
             self._debug(f"TOOL AUDIT COMPLETION FAILED: {exc}")
 
-    def _execute_one_tool_call(self, action: str, tool_input: dict) -> tuple[str, str, str | None]:
+    def _execute_one_tool_call(self, action: str, tool_input: dict) -> tuple[Literal["success", "failed"], str, str | None]:
+        from uuid import uuid4
+
+        identity = uuid4().hex
+        record = {"id": identity, "tool": action, "arguments": tool_input}
+        if self.on_execution is not None:
+            # Unlike the best-effort audit, a failed durable intent aborts dispatch.
+            self.on_execution("tool_started", dict(record, status="running"))
+        result = self._execute_one_tool_call_impl(action, tool_input)
+        if self.on_execution is not None:
+            status, observation, error = result
+            self.on_execution("tool_finished", dict(
+                record, status=status, observation=observation, error=error,
+            ))
+        return result
+
+    def _execute_one_tool_call_impl(self, action: str, tool_input: dict) -> tuple[Literal["success", "failed"], str, str | None]:
         """Execute one tool call and return status, observation, and error."""
         audit_id = self._start_tool_audit(action, tool_input)
         if action not in self.registry:

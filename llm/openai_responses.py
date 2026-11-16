@@ -5,6 +5,7 @@ OpenAI Responses API client.
 Implements llm/base.py LLMClient protocol.
 """
 
+from hashlib import sha256
 import json
 import sys
 from typing import TYPE_CHECKING
@@ -71,6 +72,24 @@ class OpenAIResponsesClient:
         self._last_response_id = None
         self._last_tools = None
         self._last_tool_choice = None
+
+    def export_conversation(self) -> dict:
+        """Only a finalized runtime checkpoint may retain this continuation."""
+        return {
+            "version": 1, "model": self._model,
+            "endpoint": sha256(self._base_url.encode()).hexdigest(),
+            "response_id": self._last_response_id,
+        }
+
+    def restore_conversation(self, saved: dict) -> None:
+        if (saved.get("version") != 1 or saved.get("model") != self._model
+                or saved.get("endpoint") != sha256(self._base_url.encode()).hexdigest()):
+            raise ValueError("Provider continuation no longer matches the configured endpoint/model")
+        identity = saved.get("response_id")
+        if identity is not None and (not isinstance(identity, str) or not identity or len(identity) > 512):
+            raise ValueError("Invalid saved response identifier")
+        self.reset_conversation()
+        self._last_response_id = identity
 
     def chat(
         self,

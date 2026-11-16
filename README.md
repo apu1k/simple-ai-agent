@@ -162,8 +162,13 @@ python main_textual.py
 
 Textual connects to `http://127.0.0.1:8765` by default. Multiple clients share one live
 conversation. Closing Textual disconnects only the interface; keep the server process
-running. Server restarts still lose live context, proposals, events and unfinished work;
-completed chat history remains on disk. Orderly server shutdown waits for ordinary work.
+running. The server checkpoints context, ordinary proposals, recent events and execution
+records in `.agent_runtime/runtime.sqlite3` (single writer; keep this private). Restarts
+restore state, not execution: interrupted commands are marked unknown and never retried
+automatically. Coherent OpenAI Responses continuation is restored; interrupted chains
+start fresh from safe context with visible recovery evidence. Privileged grants are never
+restored. Orderly server shutdown waits for ordinary work. The first upgrade cannot save
+state held only in the old server's memory. Embedded `--local` mode remains volatile.
 The Python entrypoints do not install or change Windows services or scheduled tasks.
 
 For another device, use Tailscale Serve to proxy private HTTPS to `127.0.0.1:8765`,

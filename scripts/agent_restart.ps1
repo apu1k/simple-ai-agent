@@ -59,7 +59,7 @@ function Get-AgentRestartStatus {
     $legacy = $response.Status -eq 404
     if ($legacy) {
         $frame = (Invoke-AgentRestartHttp -Path '/v1/snapshot' -MaxChars 16777216).Data
-        if ($frame.snapshot.run -and $frame.snapshot.run.status -notin @('running', 'completed', 'failed')) {
+        if ($frame.snapshot.run -and $frame.snapshot.run.status -notin @('running', 'completed', 'failed', 'interrupted')) {
             throw 'Unrecognized execution status; refusing restart.'
         }
         $data = [pscustomobject]@{
@@ -81,6 +81,7 @@ function Get-AgentRestartStatus {
         Legacy = $legacy; ServerId = $data.server_id; ProcessId = $data.process_id
         Sequence = $data.sequence; Processing = $data.processing
         PendingCount = $data.pending_count; Closed = $data.closed
+        Durable = (-not $legacy -and $data.durable_state -is [bool] -and $data.durable_state)
     }
 }
 
@@ -192,7 +193,14 @@ function Stop-AgentRestartProcesses {
 
 function Confirm-AgentRestart {
     param([object]$Status)
-    Write-Host 'Restarting discards live model context and pending proposals. Saved final chat history remains.' -ForegroundColor Yellow
+    if ($Status -and $Status.Durable) {
+        Write-Host 'Restarting preserves saved context and ordinary pending proposals. Privileged authorization is never restored.' -ForegroundColor Yellow
+        Write-Host 'Interrupted work is not automatically retried. External command effects must be inspected separately.' -ForegroundColor Yellow
+    }
+    else {
+        Write-Host 'Restarting discards live model context and pending proposals. Saved final chat history remains.' -ForegroundColor Yellow
+        Write-Host 'This running backend has not enabled durable recovery yet. The first upgrade cannot recover its volatile state.' -ForegroundColor Yellow
+    }
     if ($Status) {
         if ($Status.Processing) { throw 'The agent is working. Finish the run before restarting.' }
         Write-Host "Pending proposals: $($Status.PendingCount)"

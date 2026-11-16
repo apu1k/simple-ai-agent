@@ -19,6 +19,8 @@ ambiguous, conflicting, and whole-file replacements are rejected as stale.
 from __future__ import annotations
 
 import shutil
+from copy import deepcopy
+from dataclasses import replace
 from difflib import SequenceMatcher
 from functools import wraps
 from pathlib import Path
@@ -41,7 +43,10 @@ def _locked(method: Callable[Concatenate["EditStore", _P], _R]) -> Callable[Conc
     @wraps(method)
     def guarded(self: EditStore, *args: _P.args, **kwargs: _P.kwargs) -> _R:
         with self._lock:
-            return method(self, *args, **kwargs)
+            result = method(self, *args, **kwargs)
+            if method.__name__.startswith("propose"):
+                self._persist(result[0])  # type: ignore[index]
+            return result
     return guarded
 
 
@@ -50,6 +55,21 @@ class EditStore:
         self._lock = RLock()
         self._edits: dict[int, PendingEdit] = {}
         self._next_id: int = 1
+        self._save_proposal: Callable[[PendingEdit], None] | None = None
+
+    @_locked
+    def configure_persistence(
+        self, proposals: list[PendingEdit], save: Callable[[PendingEdit], None],
+    ) -> None:
+        if self._edits:
+            raise ValueError("Cannot replace a populated proposal store")
+        self._edits = {edit.id: deepcopy(edit) for edit in proposals}
+        self._next_id = max(self._edits, default=0) + 1
+        self._save_proposal = save
+
+    def _persist(self, edit: PendingEdit) -> None:
+        if self._save_proposal is not None:
+            self._save_proposal(edit)
 
     # ------------------------------------------------------------------
     # Propose content edits
@@ -334,6 +354,25 @@ class EditStore:
 
     @_locked
     def approve(self, edit_id: int) -> str:
+        edit = self._edits.get(edit_id)
+        if edit is None:
+            raise KeyError(f"Pending edit #{edit_id} does not exist.")
+        if edit.status != "pending":
+            raise ValueError(f"Pending edit #{edit_id} is already {edit.status}.")
+        # Commit intent before touching the filesystem. A crash after this point
+        # never resurrects an executable approval, even if the effect completed.
+        self._persist(replace(edit, status="applying"))
+        try:
+            message = self._apply(edit_id)
+        except Exception:
+            if self._save_proposal is not None:
+                edit.status = "outcome_unknown"
+                self._persist(edit)
+            raise
+        self._persist(edit)
+        return message
+
+    def _apply(self, edit_id: int) -> str:
         """
         Apply the pending edit/operation to disk and mark it as applied.
 
@@ -482,6 +521,7 @@ class EditStore:
         if edit.status != "pending":
             raise ValueError(f"Pending edit #{edit_id} is already {edit.status}.")
 
+        self._persist(replace(edit, status="rejected"))
         edit.status = "rejected"
         return f"Rejected pending edit #{edit_id}."
 
