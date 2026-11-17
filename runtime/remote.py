@@ -1,4 +1,4 @@
-"""Non-blocking Textual adapter for the authenticated runtime API."""
+"""Non-blocking Textual adapter with client-local conversation subscriptions."""
 from __future__ import annotations
 
 import asyncio
@@ -38,11 +38,10 @@ def validate_server_url(url: str) -> str:
 
 
 class RemoteRuntimeClient:
-    """Network I/O belongs to a client thread, never to the Textual event loop.
+    """Transport runs on its own thread. Every command captures its target chat.
 
-    Commands bind to the server epoch at enqueue time. Lost HTTP replies may
-    be retried once with the SAME ID, never against a restarted server. Closing
-    this adapter closes transport, not the independent server's execution.
+    Switching subscriptions does not cancel HTTP requests or background runs.
+    Lost replies may be retried with the SAME ID, never against a new epoch.
     """
 
     supports_privileged_approval = False
@@ -75,6 +74,15 @@ class RemoteRuntimeClient:
         self._models: dict[str, list[str]] = {}
         self._sessions: list[Any] = []
         self._turns: dict[str, list[dict[str, Any]]] = {}
+        self.supports_multi_chat = False
+        self._selected_session_id: str | None = None
+        self._selection_generation = 0
+        self._selection_ready = True
+        self._navigation_request: str | None = None
+        self._activity: dict[str, dict[str, Any]] = {}
+        self._seen: dict[str, int] = {}
+        self._chat_notices: dict[str, deque[tuple[str, str]]] = {}
+        self._notice_unread: set[str] = set()
 
     @classmethod
     def from_environment(cls) -> RemoteRuntimeClient:
@@ -110,7 +118,7 @@ class RemoteRuntimeClient:
             return identity
 
     def initialize(self) -> None:
-        pass  # The independently started server owns agent initialization.
+        pass
 
     def detach_client(self, identity: str) -> None:
         with self._lock:
@@ -155,7 +163,42 @@ class RemoteRuntimeClient:
         self._command("reload_context")
 
     def load_chat(self, session_id: str) -> None:
-        self._command("load_chat", session_id=session_id)
+        if self.supports_multi_chat:
+            self._select_chat(session_id)
+        else:
+            self._command("load_chat", session_id=session_id)
+
+    def session_activity(self, session_id: str) -> dict[str, Any]:
+        with self._lock:
+            activity = dict(self._activity.get(session_id, {}))
+            activity["unread"] = (activity.get("sequence", 0) > self._seen.get(session_id, 0)
+                                  or session_id in self._notice_unread)
+            return activity
+
+    def _select_chat(self, session_id: str) -> None:
+        if (not isinstance(session_id, str) or len(session_id) != 32
+                or any(c not in "0123456789abcdef" for c in session_id)):
+            raise ValueError("Invalid chat ID")
+        with self._lock:
+            if not self._connected:
+                raise RuntimeError("Server disconnected; reconnect before switching chats")
+            # Even reselecting the current chat supersedes a queued navigation.
+            self._navigation_request = None
+            if session_id == self._selected_session_id:
+                return
+            self._selected_session_id = session_id
+            self._selection_generation += 1
+            self._selection_ready = False
+            self._navigation_request = None
+            self._server_cursor = 0
+            self._snapshot = RuntimeSnapshot(0, (), None, "", False)
+            self._pending = {}
+            self._state = display_state()
+            self._state.chat_session_id = session_id
+            self._state.cwd = "Switching chat…"
+            self._notices = self._chat_notices.setdefault(session_id, deque(maxlen=32))
+            self._emit("conversation_changed", messages=tuple(self._notices))
+            self._emit("state_changed")
 
     def change_directory(self, path: str) -> None:
         self._command("change_directory", path=path)
@@ -172,11 +215,16 @@ class RemoteRuntimeClient:
                        client_id: str | None = None, revision: str | None = None) -> None:
         if type(identity) is not int or revision is None or ":" not in revision:
             raise PermissionError("A reviewed file proposal and revision are required")
-        epoch, raw_revision = revision.split(":", 1)
+        parts = revision.split(":")
         with self._lock:
-            if epoch != self._server_id:
+            if parts[0] != self._server_id:
                 raise RuntimeError("Server changed; review the proposal again before deciding")
-            self._command("decide_pending", identity=identity, accept=accept, revision=raw_revision)
+            if self.supports_multi_chat:
+                if len(parts) != 3 or parts[1] != self._selected_session_id:
+                    raise RuntimeError("Chat changed; review the proposal in its own chat before deciding")
+            elif len(parts) != 2:
+                raise RuntimeError("Invalid proposal review token")
+            self._command("decide_pending", identity=identity, accept=accept, revision=parts[-1])
 
     def list_sessions(self, limit: int = 200):
         self._read("/v1/sessions")
@@ -210,10 +258,16 @@ class RemoteRuntimeClient:
         with self._lock:
             if not self._connected or self._server_id is None or self._stop.is_set():
                 raise RuntimeError("Server disconnected; commands are not queued offline")
-            body = {"operation": operation, "arguments": arguments,
-                    "request_id": uuid4().hex, "server_id": self._server_id}
+            if self.supports_multi_chat and not self._selection_ready:
+                raise RuntimeError("Chat is still loading; wait before sending commands")
+            body: dict[str, Any] = {"operation": operation, "arguments": arguments,
+                                    "request_id": uuid4().hex, "server_id": self._server_id}
+            if self.supports_multi_chat:
+                body["session_id"] = self._selected_session_id
             try:
                 self._jobs.put_nowait({"kind": "command", "body": body})
+                if operation == "new_chat":
+                    self._navigation_request = body["request_id"]
             except Full:
                 raise RuntimeError("Client command queue is full") from None
 
@@ -229,7 +283,6 @@ class RemoteRuntimeClient:
             self._reads.add(path)
 
     def _emit(self, kind: str, text: str = "", *, role: str = "", messages=()) -> None:
-        # All callers hold the reentrant adapter lock.
         self._sequence += 1
         self._events.append(RuntimeEvent(
             sequence=self._sequence, kind=kind, text=text, role=role,
@@ -237,24 +290,62 @@ class RemoteRuntimeClient:
             run_id=self._snapshot.run.run_id if self._snapshot.run else None,
         ))
 
-    def _notice(self, text: str, role: str = "Error") -> None:
+    def _notice(self, text: str, role: str = "Error", *, session_id: str | None = None) -> None:
         with self._lock:
+            if self.supports_multi_chat and session_id is not None and session_id != self._selected_session_id:
+                self._chat_notices.setdefault(session_id, deque(maxlen=32)).append((role, text))
+                self._notice_unread.add(session_id)
+                self._emit("history_changed")
+                return
             self._notices.append((role, text))
             self._emit("message", text, role=role)
 
     def _ingest(self, frame: dict[str, Any]) -> None:
+        if "selection_error" in frame:
+            with self._lock:
+                if frame.get("selection") == self._selection_generation:
+                    self._notice("Could not open that chat; returning to the previous conversation.")
+                    previous = frame.get("session_id")
+                    if previous:
+                        self._select_chat(previous)
+            return
         if frame["version"] != API_VERSION:
             raise ValueError("Incompatible server protocol")
         with self._lock:
+            if frame.get("multi_chat"):
+                self.supports_multi_chat = True
+                activity = frame["activity"]
+                if activity != self._activity:
+                    refresh = (activity.keys() != self._activity.keys() or any(
+                        item.get("running") != self._activity.get(key, {}).get("running")
+                        for key, item in activity.items()
+                    ))
+                    self._activity = activity
+                    self._emit("history_changed")
+                    if refresh:
+                        self._read("/v1/sessions", force=True)
+                identity = frame["session_id"]
+                if self._selected_session_id is None:
+                    self._selected_session_id = identity
+                    self._chat_notices[identity] = self._notices
+                if identity != self._selected_session_id or frame["selection"] != self._selection_generation:
+                    return
+                self._selection_ready = True
+                self._notice_unread.discard(identity)
             changed_server = self._server_id is not None and self._server_id != frame["server_id"]
+            if changed_server:
+                self._seen.clear()
+            if self.supports_multi_chat and self._selected_session_id is not None:
+                self._seen[self._selected_session_id] = frame["snapshot"]["sequence"]
             self._server_id = frame["server_id"]
             self._server_cursor = frame["snapshot"]["sequence"]
             self._snapshot = decode_snapshot(frame["snapshot"])
             self._state = display_state(frame["state"])
-            # The locally opaque review token retains the epoch of the proposal
-            # actually displayed, even if a new server reuses its numeric ID.
             self._pending = {
-                p["id"]: PendingView(**dict(p, revision=f"{self._server_id}:{p['revision']}"))
+                p["id"]: PendingView(**dict(p, revision=(
+                    f"{self._server_id}:{self._selected_session_id}:{p['revision']}"
+                    if self.supports_multi_chat else f"{self._server_id}:{p['revision']}"
+                )))
                 for p in frame["pending"]
             }
             if frame["reset"] or changed_server:
@@ -262,7 +353,7 @@ class RemoteRuntimeClient:
                     self._models.clear()
                     self._turns.clear()
                     self._sessions.clear()
-                    self._notices.append(("System", "Server restarted. Volatile execution and proposals were not recovered."))
+                    self._notices.append(("System", "Server restarted. State refreshed; review recovery notices before continuing interrupted work."))
                 self._emit("conversation_changed", messages=self._snapshot.messages + tuple(self._notices))
                 if self._snapshot.processing:
                     self._emit("run_started")
@@ -297,7 +388,15 @@ class RemoteRuntimeClient:
             while not self._stop.is_set():
                 try:
                     parts = urlsplit(self.url)
-                    query = urlencode({"after": self._server_cursor, "server_id": self._server_id or ""})
+                    with self._lock:
+                        generation = self._selection_generation
+                        subscription: dict[str, Any] = {
+                            "after": self._server_cursor, "server_id": self._server_id or "",
+                            "selection": generation,
+                        }
+                        if self._selected_session_id is not None:
+                            subscription["session_id"] = self._selected_session_id
+                    query = urlencode(subscription)
                     url = urlunsplit(("wss" if parts.scheme == "https" else "ws", parts.netloc,
                                       "/v1/events", query, ""))
                     async with connect(url, additional_headers=headers, open_timeout=5, close_timeout=1,
@@ -310,15 +409,26 @@ class RemoteRuntimeClient:
                         async with asyncio.TaskGroup() as tasks:
                             tasks.create_task(self._receive(websocket))
                             tasks.create_task(self._send(http))
+                            if self.supports_multi_chat:
+                                tasks.create_task(self._watch_selection(websocket, generation))
                             for _ in range(4):
                                 tasks.create_task(self._refresh(http))
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    # Exceptions can retain authenticated requests/headers.
-                    # Never print their repr or provider credentials.
+                    # Do not print exceptions retaining authenticated requests.
                     self._set_connected(False)
                     await asyncio.sleep(1)
+
+    async def _watch_selection(self, websocket, generation: int) -> None:
+        while True:
+            with self._lock:
+                current = self._selection_generation
+                identity = self._selected_session_id
+            if current != generation:
+                await websocket.send(json.dumps({"session_id": identity, "selection": current}))
+                generation = current
+            await asyncio.sleep(0.03)
 
     async def _receive(self, websocket) -> None:
         async for raw in websocket:
@@ -335,13 +445,11 @@ class RemoteRuntimeClient:
             try:
                 await self._post(http, job["body"])
             except asyncio.CancelledError:
-                if job["kind"] == "command":
-                    self._notice(f"Request {job['body']['request_id'][:12]}: acknowledgement interrupted. Outcome unknown; inspect state before retrying.")
+                self._notice(f"Request {job['body']['request_id'][:12]}: acknowledgement interrupted. Outcome unknown; inspect state before retrying.",
+                             session_id=job["body"].get("session_id"))
                 raise
 
     async def _refresh(self, http: httpx.AsyncClient) -> None:
-        # Catalogue/history reads may take seconds. Keep them bounded and
-        # concurrent, without delaying message submissions or file approvals.
         while True:
             try:
                 job = self._read_jobs.get_nowait()
@@ -358,24 +466,29 @@ class RemoteRuntimeClient:
                 if not isinstance(data, dict):
                     break
                 if response.status_code == 200:
-                    if data.get("server_id") == body["server_id"] and "result" in data:
+                    if (data.get("server_id") == body["server_id"] and "result" in data
+                            and ("session_id" not in body or data.get("session_id") == body["session_id"])):
+                        with self._lock:
+                            if (self.supports_multi_chat and body["operation"] == "new_chat"
+                                    and self._navigation_request == body["request_id"] and self._connected
+                                    and self._server_id == body["server_id"]):
+                                self._select_chat(data["result"])
                         return
                     break
                 if response.status_code >= 400:
                     detail = data.get("detail", "Command rejected")
                     if not isinstance(detail, str):
                         detail = "Invalid command arguments"
-                    self._notice(f"Request {body['request_id'][:12]}: {detail}")
+                    self._notice(f"Request {body['request_id'][:12]}: {detail}", session_id=body.get("session_id"))
                     return
-                # Redirects and malformed successes are not acknowledgements.
-                # Never follow a redirect with a bearer token or command body.
-                break
+                break  # Redirects are not acknowledgements; never follow them.
             except httpx.TransportError:
                 if attempt == 0:
                     await asyncio.sleep(0.2)
             except ValueError:
                 break
-        self._notice(f"Request {body['request_id'][:12]}: no acknowledgement. Outcome unknown; inspect state before retrying.")
+        self._notice(f"Request {body['request_id'][:12]}: no acknowledgement. Outcome unknown; inspect state before retrying.",
+                     session_id=body.get("session_id"))
 
     async def _fetch(self, http: httpx.AsyncClient, path: str) -> None:
         try:

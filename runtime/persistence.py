@@ -8,13 +8,25 @@ import sys
 from pathlib import Path
 import sqlite3
 from threading import RLock
-from typing import Any, Iterator
+from typing import Any, ContextManager, Iterator, Protocol
 
 from editing.model import FileEdit, PendingEdit
 
 
 class PersistenceError(RuntimeError):
     pass
+
+
+class RuntimeStateStore(Protocol):
+    def check(self) -> None: ...
+    def load(self) -> dict[str, Any] | None: ...
+    def save(self, checkpoint: dict[str, Any]) -> None: ...
+    def save_proposal(self, proposal: PendingEdit) -> None: ...
+    def recover_proposals(self) -> list[PendingEdit]: ...
+    def execution(self, identity: str, run_id: str, payload: dict[str, Any]) -> None: ...
+    def recover_executions(self, run_id: str) -> list[dict[str, Any]]: ...
+    def transaction(self) -> ContextManager[sqlite3.Connection]: ...
+    def close(self) -> None: ...
 
 
 class RuntimeStore:
@@ -53,14 +65,14 @@ class RuntimeStore:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.execute("PRAGMA synchronous=FULL")
             version = self._db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1):
+            if version not in (0, 1, 2):
                 raise PersistenceError("Unsupported runtime database version; refusing to overwrite state")
             with self.transaction() as db:
                 db.execute("CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL)")
                 db.execute("CREATE TABLE IF NOT EXISTS proposals (id INTEGER PRIMARY KEY, payload TEXT NOT NULL)")
                 db.execute("CREATE TABLE IF NOT EXISTS executions (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, payload TEXT NOT NULL)")
                 db.execute("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
-                db.execute("PRAGMA user_version=1")
+                db.execute(f"PRAGMA user_version={max(version, 1)}")
         except Exception:
             self.close()
             raise
@@ -76,6 +88,9 @@ class RuntimeStore:
             assert self._db is not None
             try:
                 with self._db:
+                    # sqlite3's implicit transactions do not include leading
+                    # DDL. Explicit BEGIN keeps schema/data migration atomic too.
+                    self._db.execute("BEGIN IMMEDIATE")
                     yield self._db
             except Exception as error:
                 self._failed = True
@@ -83,6 +98,8 @@ class RuntimeStore:
 
     def load(self) -> dict[str, Any] | None:
         with self.transaction() as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_meta'").fetchone():
+                raise PersistenceError("Multi-chat state requires the conversation manager; refusing a single-chat downgrade")
             row = db.execute("SELECT payload FROM checkpoint WHERE id=1").fetchone()
             if row is None:
                 return None

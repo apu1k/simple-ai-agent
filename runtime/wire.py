@@ -1,4 +1,4 @@
-"""Explicit, credential-free wire views for the single-runtime API."""
+"""Explicit, credential-free per-conversation wire views."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -12,8 +12,8 @@ from runtime.events import RunInfo, RuntimeEvent, RuntimeSnapshot
 API_VERSION = 1
 
 
-def proposal_revision(edit: Any) -> str:
-    encoded = json.dumps(asdict(edit), default=str, sort_keys=True, separators=(",", ":"))
+def proposal_revision(edit: Any, session_id: str | None = None) -> str:
+    encoded = json.dumps([session_id, asdict(edit)], default=str, sort_keys=True, separators=(",", ":"))
     return sha256(encoded.encode("utf-8")).hexdigest()
 
 
@@ -53,7 +53,7 @@ def public_frame(runtime: Any, server_id: str, cursor: int | None = None) -> dic
         pending = [
             asdict(PendingView(
                 id=edit.id, path=str(edit.path), kind=edit.kind, status=edit.status,
-                diff=edit.diff, revision=proposal_revision(edit),
+                diff=edit.diff, revision=proposal_revision(edit, state.chat_session_id),
             ))
             for edit in runtime.pending().values() if isinstance(edit.id, int)
         ]

@@ -25,7 +25,7 @@ if DEBUG_LOGS:
     print("===========================", file=sys.stderr)
 from runtime.chat_store import ChatStore
 from runtime.prompt import build_system_prompt
-from runtime.state import AgentState, ModelConfig
+from runtime.state import AgentState, ModelConfig, ModelSettings
 from runtime.tool_profiles import AgentProfile, build_profile_registry
 
 if TYPE_CHECKING:
@@ -49,6 +49,42 @@ def create_default_runtime(*, durable: bool = False) -> "AgentRuntime":
     return AgentRuntime(
         state=state, llm=llm,
         persistence_path=RUNTIME_DATABASE if durable else None,
+    )
+
+
+def create_conversation_manager(*, durable: bool = True, max_parallel_runs: int = 4):
+    """Share infrastructure, never mutable model clients or conversation state."""
+    from dataclasses import replace
+    from runtime.conversations import ConversationManager
+    from runtime.service import AgentRuntime
+    from tools.knowledge.runtime import start_embedding_warmup
+
+    if not PROVIDERS:
+        raise ValueError("No providers configured.")
+    default_provider = PROVIDERS.get("openai") or next(iter(PROVIDERS.values()))
+    if not default_provider.default_model:
+        raise ValueError("Configure a default model before starting the backend")
+    initialize_tools()
+    history = ChatStore(background_indexing_enabled=True)
+    audit = ToolCallStore(OPERATIONAL_DATABASE)
+    audit.purge_expired()
+    start_embedding_warmup()
+
+    def factory(identity, store, source):
+        provider = PROVIDERS[source.model_config.provider_key] if source else default_provider
+        model = source.model_config.model if source else provider.default_model
+        config, llm = build_model_config_and_client(provider, model)
+        state = AgentState(
+            cwd=source.cwd if source else Path.cwd(), model_config=config,
+            model_settings=replace(source.model_settings) if source else ModelSettings(),
+            chat_store=history, chat_session_id=identity, tool_call_store=audit,
+        )
+        return AgentRuntime(state=state, llm=llm, persistence_store=store)
+
+    return ConversationManager(
+        history=history, runtime_factory=factory,
+        persistence_path=RUNTIME_DATABASE if durable else None,
+        max_parallel_runs=max_parallel_runs,
     )
 
 

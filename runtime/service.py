@@ -30,7 +30,7 @@ from runtime.chat_store import (
 )
 from runtime.events import EventHistoryExpired, RunInfo, RuntimeEvent, RuntimeSnapshot
 from runtime.privileged_turn import ELEVATED_OPERATION, PendingPrivilege
-from runtime.persistence import PersistenceError, RuntimeStore, validate_checkpoint
+from runtime.persistence import PersistenceError, RuntimeStateStore, RuntimeStore, validate_checkpoint
 from runtime.prompt import build_system_prompt
 from runtime.state import (
     AgentState,
@@ -67,6 +67,7 @@ class AgentRuntime:
         history_recorder: Callable[..., int] | None = None,
         event_limit: int = 2048,
         persistence_path: Path | None = None,
+        persistence_store: RuntimeStateStore | None = None,
     ) -> None:
         if event_limit < 1:
             raise ValueError("event_limit must be positive")
@@ -76,6 +77,7 @@ class AgentRuntime:
         self._history_recorder = history_recorder or record_final_turn
         self._agent: Agent | None = None
         self._condition = Condition(RLock())
+        self._file_decision_lock = RLock()
         self._events: deque[RuntimeEvent] = deque(maxlen=event_limit)
         self._sequence = 0
         self._messages: list[tuple[str, str]] = []
@@ -89,7 +91,12 @@ class AgentRuntime:
         self._context_run_id: str | None = None
         self._restoring = False
         self._persistence_error: str | None = None
-        self._store = RuntimeStore(persistence_path) if persistence_path is not None else None
+        if persistence_path is not None and persistence_store is not None:
+            raise ValueError("Provide a persistence path or store, not both")
+        self._store: RuntimeStateStore | None = (
+            persistence_store if persistence_store is not None
+            else RuntimeStore(persistence_path) if persistence_path is not None else None
+        )
         if self._store is not None:
             try:
                 self._recover()
@@ -390,7 +397,10 @@ class AgentRuntime:
                 self._message("Approval", message)
             else:
                 operation = self.state.edit_store.approve if accept else self.state.edit_store.reject
-                message = operation(identity)
+                # Shared by all runtimes on a multi-chat host. Revalidation and
+                # application must not race another chat's filesystem approval.
+                with self._file_decision_lock:
+                    message = operation(identity)
                 self._message("System", message)
                 if accept:
                     cwd_message = self._ensure_existing_cwd()
@@ -405,7 +415,7 @@ class AgentRuntime:
             edit = self.state.edit_store.pending().get(identity)
             if edit is None:
                 raise ValueError("Proposal is no longer pending")
-            if proposal_revision(edit) != revision:
+            if proposal_revision(edit, self.state.chat_session_id) != revision:
                 raise ValueError("Proposal changed; review it again before deciding")
             return self.decide_pending(identity, accept=accept)
 

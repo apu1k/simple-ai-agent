@@ -240,9 +240,12 @@ class AgentTextualApp(App):
             if event.kind == "message":
                 self._append_chat(event.role, event.text)
             elif event.kind == "conversation_changed":
+                self._reviewed_pending_edit = None
+                self._selected_pending_id = None
                 self._messages = list(event.messages)
                 self._render_chat()
                 self._finish_agent_step()
+                self._set_processing(self.runtime.snapshot().processing)
             elif event.kind == "run_started":
                 self._set_processing(True)
             elif event.kind == "run_finished":
@@ -319,7 +322,10 @@ class AgentTextualApp(App):
         if not text:
             return
 
-        if self._processing and text.lower() not in {"\\pending", "\\settings"}:
+        allowed_while_running = {"\\pending", "\\settings"}
+        if getattr(self.runtime, "supports_multi_chat", False):
+            allowed_while_running.update({"\\chats", "\\new_chat", "\\history", "\\help", "\\state", "\\pwd", "\\theme", "\\quit"})
+        if self._processing and text.lower() not in allowed_while_running:
             return
 
         input_widget.value = ""
@@ -946,7 +952,7 @@ class AgentTextualApp(App):
         self.query_one("#chat_header", Static).update(text)
 
     def _enter_chat_select_mode(self) -> None:
-        if self._processing:
+        if self._processing and not getattr(self.runtime, "supports_multi_chat", False):
             self._append_chat("System", "Cannot switch chats while AI is processing.")
             return
 
@@ -1028,7 +1034,17 @@ class AgentTextualApp(App):
             # stay compact so scroll math can map one session to one row.
             title = str(session.title or "").strip()
             title_text = f" {title[:10]}" if title else ""
-            line = f"{marker} {session.session_id[:10]} {session.turn_count}t{title_text}\n"
+            activity_reader = getattr(self.runtime, "session_activity", None)
+            activity = activity_reader(session.session_id) if activity_reader else {}
+            badges = []
+            if activity.get("running"):
+                badges.append("RUN")
+            if activity.get("pending_count"):
+                badges.append(f"{activity['pending_count']} pending")
+            if activity.get("unread"):
+                badges.append("NEW")
+            badge_text = f" [{' | '.join(badges)}]" if badges else ""
+            line = f"{marker} {session.session_id[:10]} {session.turn_count}t{title_text}{badge_text}\n"
 
             if selected:
                 text.append(line, style="bold reverse")
@@ -1520,7 +1536,11 @@ class AgentTextualApp(App):
         elif self._mode == "chat_select":
             input_widget.placeholder = "Search chats... Enter loads selected chat, Ctrl+G cancels"
         elif processing:
-            input_widget.placeholder = "AI is processing... you can type, then press Enter when done."
+            input_widget.placeholder = (
+                "AI is processing... F3 / \\chats switches chats; \\new_chat starts another."
+                if getattr(self.runtime, "supports_multi_chat", False)
+                else "AI is processing... you can type, then press Enter when done."
+            )
         else:
             input_widget.placeholder = "Type a message and press Enter..."
         input_widget.focus()
@@ -1584,7 +1604,9 @@ class AgentTextualApp(App):
         if connection:
             model_text += f" | {connection}"
 
-        self.query_one("#status_cwd", Static).update(str(self.state.cwd))
+        chat_id = self.state.chat_session_id
+        chat_label = f"chat: {chat_id[:10]} | " if chat_id else ""
+        self.query_one("#status_cwd", Static).update(chat_label + str(self.state.cwd))
         self.query_one("#status_model", Static).update(model_text)
         gate = getattr(self.state, "privileged_turn", None)
         privilege = gate.status if gate is not None else "disabled"

@@ -29,7 +29,7 @@ def until(predicate, timeout=10):
 
 
 @contextmanager
-def process_host(root):
+def process_host(root, module="tests.runtime.recovery_fixture"):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -41,7 +41,7 @@ def process_host(root):
     env.pop("__PYVENV_LAUNCHER__", None)
     env["PYTHONPATH"] = os.pathsep.join([str(ROOT), sysconfig.get_path("purelib"), sysconfig.get_path("platlib")])
     process = subprocess.Popen(
-        [executable, "-m", "tests.runtime.recovery_fixture", "--root", str(root), "--port", str(port)],
+        [executable, "-m", module, "--root", str(root), "--port", str(port)],
         cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
     )
     client = httpx.Client(base_url=f"http://127.0.0.1:{port}", headers=HEADERS, timeout=2, trust_env=False)
