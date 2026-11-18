@@ -212,6 +212,24 @@ def test_privileged_progress_is_full_width_plain_text_and_not_a_model_answer(tmp
     asyncio.run(run_test())
 
 
+def test_anthropic_reasoning_effort_selection(tmp_path):
+    async def run_test():
+        app = make_app(tmp_path)
+        async with app.run_test(size=(120, 40)) as pilot:
+            for choice, effort in (("xhigh", "xhigh"), ("Default", None)):
+                app._handle_command("\\settings")
+                app.query_one("#input", Input).value = f"Anthropic reasoning effort: {choice}"
+                await pilot.pause()
+                assert app._visible_model_setting_matches == [("anthropic_reasoning_effort", effort)]
+                await pilot.press("enter")
+                await pilot.pause()
+                assert app._mode == "chat"
+                assert app.state.model_settings.anthropic_reasoning_effort == effort
+                assert app.state.model_settings.openai_reasoning_effort is None
+                assert f"anthropic_reasoning_effort (Anthropic only): {effort or 'default'}" in app._state_text()
+    asyncio.run(run_test())
+
+
 def test_reasoning_search_tree_selection_and_default(tmp_path):
     async def run_test():
         app = make_app(tmp_path)

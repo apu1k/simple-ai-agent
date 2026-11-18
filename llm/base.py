@@ -52,9 +52,10 @@ class NativeToolCall:
 
 @dataclass
 class NativeToolOutput:
-    """A tool output for stateful native tool APIs (e.g., Responses)."""
+    """A tool output for APIs that accept structured tool continuation."""
     call_id: str
     output: str
+    is_error: bool = False
 
 
 @dataclass
@@ -146,7 +147,6 @@ class LLMClient(Protocol):
         """Return the API type used by this client.
         
         Returns:
-            Either "chat_completions" or "responses".
-            Default is "chat_completions" for backward compatibility.
+            Defaults to "chat_completions" for backward compatibility.
         """
         return "chat_completions"

@@ -66,6 +66,29 @@ def test_explicit_chat_required_and_deduplication_includes_chat_identity(tmp_pat
         manager.close()
 
 
+def test_remote_anthropic_effort_is_validated_and_projected(tmp_path):
+    manager, _ = make_manager(tmp_path)
+    identity = manager.default_chat_id
+    ledger = CommandLedger(manager, EPOCH)
+
+    def set_effort(value):
+        return ledger.execute(CommandRequest(
+            request_id=uuid4().hex, server_id=EPOCH, session_id=identity,
+            operation="set_model_setting", arguments={"key": "anthropic_reasoning_effort", "value": value},
+        ))[0]
+
+    try:
+        assert set_effort("xhigh") == 200
+        assert set_effort("none") == 409
+        adapter = connect_adapter(manager)
+        assert adapter.state.model_settings.anthropic_reasoning_effort == "xhigh"
+        assert adapter.state.model_settings.openai_reasoning_effort is None
+        assert set_effort(None) == 200
+        assert manager.get(identity).state.model_settings.anthropic_reasoning_effort is None
+    finally:
+        manager.close()
+
+
 def test_websocket_selection_is_local_and_background_work_continues(tmp_path):
     manager, agents = make_manager(tmp_path)
     first, second = manager.default_chat_id, manager.new_chat()

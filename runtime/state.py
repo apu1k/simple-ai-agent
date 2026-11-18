@@ -23,11 +23,15 @@ from night_shifts.storage import ToolCallStore
 from runtime.privileged_turn import PrivilegedTurn
 
 
-ApiType = Literal["chat_completions", "responses", "completions", "gemini_vertex"]
+ApiType = Literal["chat_completions", "responses", "completions", "gemini_vertex", "anthropic_messages"]
 IncludeDiffSetting = bool | Literal["model"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 OPENAI_REASONING_EFFORTS: tuple[ReasoningEffort, ...] = (
     "none", "minimal", "low", "medium", "high", "xhigh", "max",
+)
+AnthropicEffort = Literal["low", "medium", "high", "xhigh", "max"]
+ANTHROPIC_REASONING_EFFORTS: tuple[AnthropicEffort, ...] = (
+    "low", "medium", "high", "xhigh", "max",
 )
 ModelSettingValue = IncludeDiffSetting | ReasoningEffort | None
 
@@ -47,6 +51,9 @@ class ModelSettings:
     # None omits the parameter (API default); "none" explicitly disables reasoning
     # where supported. Runtime-only; direct OpenAI Responses/Chat Completions only.
     openai_reasoning_effort: ReasoningEffort | None = None
+
+    # None leaves effort and thinking at the Claude model's defaults.
+    anthropic_reasoning_effort: AnthropicEffort | None = None
 
 
 @dataclass

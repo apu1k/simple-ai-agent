@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Callable
 from core.agent import Agent
 from core.tool_registry import ToolRegistry, autodiscover
 from llm.base import LLMClient
-from llm.providers import create_llm_client, PROVIDERS
+from llm.providers import create_llm_client, ProviderConfig, PROVIDERS
 from config.settings import DEBUG_LOGS, OPERATIONAL_DATABASE, RUNTIME_DATABASE
 from night_shifts.storage import ToolCallStore
 
@@ -32,14 +32,27 @@ if TYPE_CHECKING:
     from runtime.service import AgentRuntime
 
 
+def _startup_provider() -> ProviderConfig:
+    if not PROVIDERS:
+        raise ValueError("No providers configured.")
+    preferred = PROVIDERS.get("openai") or next(iter(PROVIDERS.values()))
+    has_credentials = (
+        preferred.project and preferred.location if preferred.api_type == "gemini_vertex"
+        else preferred.api_key
+    )
+    if preferred.default_model and has_credentials:
+        return preferred
+    # Allow backend startup with only a Claude key even with older example TOML.
+    return next((p for p in PROVIDERS.values()
+                 if p.api_type == "anthropic_messages" and p.api_key and p.default_model), preferred)
+
+
 def create_default_runtime(*, durable: bool = False) -> "AgentRuntime":
     """Compose the agent host independently of a frontend."""
     from runtime.service import AgentRuntime
     from tools.knowledge.runtime import start_embedding_warmup
 
-    if not PROVIDERS:
-        raise ValueError("No providers configured.")
-    provider = PROVIDERS.get("openai") or next(iter(PROVIDERS.values()))
+    provider = _startup_provider()
     if not provider.default_model:
         raise ValueError(f"Provider '{provider.label}' has no default_model configured.")
     initialize_tools()
@@ -59,9 +72,7 @@ def create_conversation_manager(*, durable: bool = True, max_parallel_runs: int 
     from runtime.service import AgentRuntime
     from tools.knowledge.runtime import start_embedding_warmup
 
-    if not PROVIDERS:
-        raise ValueError("No providers configured.")
-    default_provider = PROVIDERS.get("openai") or next(iter(PROVIDERS.values()))
+    default_provider = _startup_provider()
     if not default_provider.default_model:
         raise ValueError("Configure a default model before starting the backend")
     initialize_tools()
@@ -121,8 +132,6 @@ def build_model_config_and_client(provider, model) -> tuple[ModelConfig, LLMClie
         project=provider.project,
         location=provider.location,
     )
-
-    from llm.providers import ProviderConfig
 
     effective_provider = ProviderConfig(
         key=config.provider_key,

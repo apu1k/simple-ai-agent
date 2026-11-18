@@ -6,6 +6,7 @@ Converts ToolSpec objects to provider-specific tool definition formats.
 Supports:
 - OpenAI Chat Completions API (nested function structure)
 - OpenAI Responses API (flat function structure)
+- Anthropic Messages API (input_schema)
 """
 
 from core.tool_registry import ToolRegistry, ToolSpec
@@ -70,6 +71,13 @@ def build_tools_list(registry: ToolRegistry, api_type: str = "chat_completions")
     if api_type == "responses":
         return [
             tool_spec_to_responses_function(spec)
+            for spec in registry.all().values()
+        ]
+
+    if api_type == "anthropic_messages":
+        return [
+            {"name": spec.name, "description": spec.description or "",
+             "input_schema": _to_json_schema_parameters(spec)}
             for spec in registry.all().values()
         ]
 

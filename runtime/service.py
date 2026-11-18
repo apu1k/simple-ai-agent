@@ -33,7 +33,9 @@ from runtime.privileged_turn import ELEVATED_OPERATION, PendingPrivilege
 from runtime.persistence import PersistenceError, RuntimeStateStore, RuntimeStore, validate_checkpoint
 from runtime.prompt import build_system_prompt
 from runtime.state import (
+    ANTHROPIC_REASONING_EFFORTS,
     AgentState,
+    AnthropicEffort,
     ModelSettingValue,
     ModelSettings,
     OPENAI_REASONING_EFFORTS,
@@ -370,6 +372,10 @@ class AgentRuntime:
                 self.state.model_settings.openai_flex = value
             elif key == "openai_reasoning_effort" and (value is None or value in OPENAI_REASONING_EFFORTS):
                 self.state.model_settings.openai_reasoning_effort = value
+            elif key == "anthropic_reasoning_effort" and (value is None or value in ANTHROPIC_REASONING_EFFORTS):
+                from typing import cast
+
+                self.state.model_settings.anthropic_reasoning_effort = cast("AnthropicEffort | None", value)
             else:
                 raise ValueError(f"Invalid model setting: {key}={value!r}")
             self._publish("state_changed")

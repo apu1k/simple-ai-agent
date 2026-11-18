@@ -109,7 +109,7 @@ class Agent:
         self._debug(f"LLM CLIENT CLASS: {self.llm.__class__.__name__}")
         self._debug(f"LLM CLIENT MODULE: {self.llm.__class__.__module__}")
 
-        # Prebuild both tool-schema variants once to avoid runtime shape drift.
+        # Prebuild tool-schema variants once to avoid runtime shape drift.
         self._tools_by_api_type: dict[str, list[dict]] = {}
         self._pending_native_tool_calls: list[tuple[BatchToolRecord, NativeToolCall]] | None = None
         self._configure_llm_runtime()
@@ -144,12 +144,11 @@ class Agent:
             self._tools_by_api_type = {
                 "chat_completions": build_tools_list(self.registry, api_type="chat_completions"),
                 "responses": build_tools_list(self.registry, api_type="responses"),
+                "anthropic_messages": build_tools_list(self.registry, api_type="anthropic_messages"),
             }
-            self._debug(
-                "PREBUILT TOOLS: "
-                f"chat_completions={len(self._tools_by_api_type['chat_completions'])}, "
-                f"responses={len(self._tools_by_api_type['responses'])}"
-            )
+            self._debug("PREBUILT TOOLS: " + ", ".join(
+                f"{api}={len(tools)}" for api, tools in self._tools_by_api_type.items()
+            ))
 
     def set_llm(self, llm: "LLMClient", system_prompt: str | None = None) -> None:
         """Swap LLM client and refresh all llm-dependent runtime caches.
@@ -259,6 +258,12 @@ class Agent:
                     "type='function' and top-level 'name' (without nested 'function'). "
                     f"first_tool_keys={first_keys}"
                 )
+            return
+
+        if api_type == "anthropic_messages":
+            if any(not isinstance(t.get("name"), str) or not isinstance(t.get("input_schema"), dict)
+                   for t in tools):
+                raise ValueError("Anthropic tools must have a name and an input_schema object.")
             return
 
         raise ValueError(f"Unsupported api_type for tool assertions: {api_type}")
@@ -610,7 +615,9 @@ class Agent:
                             out = r.error or r.observation or "Tool failed."
                         else:
                             out = r.observation or "Skipped due to earlier failure in fail-fast batch."
-                        tool_outputs.append(NativeToolOutput(call_id=tc.id, output=out))
+                        tool_outputs.append(NativeToolOutput(
+                            call_id=tc.id, output=out, is_error=r.status != "success",
+                        ))
 
                     with request_progress_listener(self._tool):
                         reply = self.llm.submit_tool_outputs(tool_outputs)
@@ -764,6 +771,13 @@ class Agent:
                 self._debug(f"AVAILABLE TOOLS: {self.registry.names()}")
                 if native_tool_calls and self._api_type == "chat_completions":
                     self._append_chat_completions_native_tool_call(reply, native_tool_calls)
+                elif native_tool_calls and self._api_type == "anthropic_messages":
+                    # Store only the visible text and tool summary. The client
+                    # retains the original signed blocks for this turn alone.
+                    summary = self._format_native_tool_call_summary(native_tool_calls)
+                    self.messages.append({
+                        "role": "assistant", "content": f"{reply}\n\n{summary}".strip(),
+                    })
                 elif native_tool_calls and getattr(self.llm, 'supports_native_tool_outputs', False):
                     # Stateful native-tool APIs such as Responses keep the
                     # function-call request in provider state. Do not add a
@@ -863,7 +877,12 @@ class Agent:
                     # function_call_output submission only. Avoid adding legacy
                     # TOOL RESULT text to local memory for native Responses.
                     pending_native_tool_calls = list(zip(records, native_tool_calls, strict=False))
-                    self._pending_native_tool_calls = pending_native_tool_calls
+                    if self._api_type == "anthropic_messages":
+                        # Preserve visible observations for later turns, but
+                        # never carry a failed continuation into a new turn.
+                        self._append_tool_records_for_local_memory(records)
+                    else:
+                        self._pending_native_tool_calls = pending_native_tool_calls
                     continue
 
                 # Backward compatibility: keep legacy per-tool TOOL RESULT shape

@@ -9,7 +9,7 @@ The project is independent and is not affiliated with any university, research i
 ## Highlights
 
 - Textual terminal UI with chat, model switching, chat history, and pending-change review
-- OpenAI Responses API, OpenAI-compatible Chat Completions, and Google Gemini through Vertex AI
+- OpenAI Responses API, OpenAI-compatible Chat Completions, Anthropic Claude Messages API, and Google Gemini through Vertex AI
 - Native tool calling where supported, with a JSON protocol fallback
 - Bounded, fail-fast tool batches
 - Exact-match file edits that remain pending until explicitly approved
@@ -83,7 +83,23 @@ default_model = "gpt-4.1-mini"
 supports_model_listing = true
 ```
 
-Google Gemini through Vertex AI and Application Default Credentials (ADC):
+### Anthropic Claude (Messages API)
+
+Set these variables in the **backend's** `.env` (keep the real key out of chat and TOML):
+
+```dotenv
+ANTHROPIC_API_KEY=your-key
+ANTHROPIC_BASE_URL=https://api.anthropic.com/v1/messages
+ANTHROPIC_DEFAULT_MODEL=claude-opus-5-5
+```
+
+When `ANTHROPIC_API_KEY` is present, **Anthropic Claude** is registered automatically if you haven't already configured an Anthropic provider in `providers.toml`. For explicit configuration, see the `anthropic_messages` entry in `providers.example.toml`. The base URL and default model are optional; the stock endpoint and `claude-opus-5-5` are used by default. For the base URL, a service root or a URL ending in `/v1` or `/v1/messages` is accepted.
+
+After installing the updated requirements and restarting the backend (or the local app), select **Anthropic Claude** in `\models`. The picker uses Anthropic's Models API; you can also select the default or enter a model ID manually. Claude uses native tool calls, with the same app-level review and approval rules as other providers.
+
+In `\settings`, choose **Anthropic reasoning effort**: **Default**, `low`, `medium`, `high`, `xhigh`, or `max`. Default omits the effort parameter; it doesn't disable thinking. Claude Opus 5.5 supports all five levels and defaults to `medium`. Not every model supports every level; the app shows Anthropic's error rather than silently changing your selection. This setting is independent of OpenAI reasoning effort and does not change the approved Night Shift worker policy.
+
+### Google Gemini through Vertex AI and Application Default Credentials (ADC)
 
 ```toml
 [[providers]]
@@ -130,7 +146,7 @@ OPENAI_COMPATIBLE_BASE_URL=http://localhost:1234/v1
 OPENAI_COMPATIBLE_DEFAULT_MODEL=your-model
 ```
 
-The app starts with the `openai` provider when present, otherwise the first configured provider. That provider must define a default model.
+The app prefers the `openai` provider when present, otherwise the first configured provider. If that choice lacks credentials or a default model, a configured Anthropic provider with both can be used for startup.
 
 Never commit `.env`, `providers.toml`, credentials, or private chat data.
 

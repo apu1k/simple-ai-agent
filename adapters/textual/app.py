@@ -27,7 +27,7 @@ from runtime.events import EventHistoryExpired
 if TYPE_CHECKING:
     from runtime.remote import RemoteRuntimeClient
     from runtime.service import AgentRuntime
-from runtime.state import ModelSettingValue, OPENAI_REASONING_EFFORTS
+from runtime.state import ANTHROPIC_REASONING_EFFORTS, ModelSettingValue, OPENAI_REASONING_EFFORTS
 
 
 class ClipboardInput(Input):
@@ -654,6 +654,15 @@ class AgentTextualApp(App):
              "Requires a model that supports this level; unsupported choices return an API error.")
             for effort in OPENAI_REASONING_EFFORTS
         )
+        options.append(
+            ("anthropic_reasoning_effort", None, "Anthropic reasoning effort: Default",
+             "Leave effort and thinking at the Claude model's API defaults.")
+        )
+        options.extend(
+            ("anthropic_reasoning_effort", effort, f"Anthropic reasoning effort: {effort}",
+             "Claude Messages API only; available levels vary by model.")
+            for effort in ANTHROPIC_REASONING_EFFORTS
+        )
         if not getattr(self.runtime, "supports_privileged_approval", True):
             options = [option for option in options if option[0] != "elevated_commands"]
         query = self._model_settings_search.lower()
@@ -685,8 +694,8 @@ class AgentTextualApp(App):
         if visible:
             self.query_one("#model_settings_header", Static).update(
                 "Select an item, or narrow to one and press Enter. "
-                "Flex and reasoning effort apply only to direct OpenAI Responses/Chat Completions. "
-                "Supported levels vary by model; other providers are unchanged."
+                "OpenAI Flex and effort apply to direct OpenAI requests. "
+                "Anthropic effort applies to Claude Messages. Supported levels vary by model."
             )
         else:
             root.add_leaf("No settings match your search.")
@@ -745,6 +754,10 @@ class AgentTextualApp(App):
                 "Responses/Chat Completions requests only. Supported levels vary by model; "
                 "unsupported choices return an API error. Other providers are unchanged.",
             )
+        elif key == "anthropic_reasoning_effort":
+            self._exit_model_settings_mode()
+            label = "API default" if value is None else value
+            self._append_chat("System", f"Anthropic reasoning effort set to {label}. Applies only to Claude Messages requests.")
         self._refresh_state()
 
     def _set_include_diff_setting(self, value: bool | Literal["model"]) -> None:
@@ -1628,6 +1641,8 @@ class AgentTextualApp(App):
             f"openai_flex (OpenAI only): {self.state.model_settings.openai_flex}\n"
             f"openai_reasoning_effort (OpenAI only): "
             f"{self.state.model_settings.openai_reasoning_effort or 'default'}\n"
+            f"anthropic_reasoning_effort (Anthropic only): "
+            f"{self.state.model_settings.anthropic_reasoning_effort or 'default'}\n"
             f"elevated commands: "
             f"{getattr(getattr(self.state, 'privileged_turn', None), 'status', 'disabled')}\n"
             f"chat_session: {session_text}"

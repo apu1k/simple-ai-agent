@@ -8,9 +8,10 @@ import sys
 from pathlib import Path
 import sqlite3
 from threading import RLock
-from typing import Any, ContextManager, Iterator, Protocol
+from typing import Any, ContextManager, Iterator, Protocol, get_args
 
 from editing.model import FileEdit, PendingEdit
+from runtime.state import ANTHROPIC_REASONING_EFFORTS, ApiType
 
 
 class PersistenceError(RuntimeError):
@@ -195,10 +196,12 @@ def validate_checkpoint(saved: dict[str, Any]) -> None:
         model, settings, context = saved["model"], saved["model_settings"], saved["context"]
         require(isinstance(model, dict) and isinstance(settings, dict) and isinstance(context, dict))
         require(all(isinstance(model[key], str) and bool(model[key]) for key in ("provider_key", "model")))
-        require(model["api_type"] in ("responses", "chat_completions", "completions", "gemini_vertex"))
+        require(model["api_type"] in get_args(ApiType))
         require(type(settings["include_diff"]) is bool or settings["include_diff"] == "model")
         require(type(settings["openai_flex"]) is bool)
         require(settings["openai_reasoning_effort"] in (None, "none", "minimal", "low", "medium", "high", "xhigh", "max"))
+        # Version 1 checkpoints written before Claude support lack this field.
+        require(settings.get("anthropic_reasoning_effort") in (None, *ANTHROPIC_REASONING_EFFORTS))
         require(isinstance(context["messages"], list))
         require(all(isinstance(message, dict) and message.get("role") in ("user", "assistant", "tool")
                     for message in context["messages"]))

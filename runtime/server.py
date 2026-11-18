@@ -49,7 +49,7 @@ class ModelArgs(Arguments):
 
 
 class SettingArgs(Arguments):
-    key: Literal["include_diff", "openai_flex", "openai_reasoning_effort"]
+    key: Literal["include_diff", "openai_flex", "openai_reasoning_effort", "anthropic_reasoning_effort"]
     value: bool | Literal["model", "none", "minimal", "low", "medium", "high", "xhigh", "max"] | None
 
 

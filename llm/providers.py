@@ -17,7 +17,18 @@ from typing import Literal
 from config.settings import PROVIDERS_EXAMPLE_FILE, PROVIDERS_FILE
 
 
-ApiType = Literal["chat_completions", "responses", "completions", "gemini_vertex"]
+ApiType = Literal["chat_completions", "responses", "completions", "gemini_vertex", "anthropic_messages"]
+
+_ANTHROPIC_PROVIDER = {
+    "key": "anthropic",
+    "label": "Anthropic Claude",
+    "api_type": "anthropic_messages",
+    "api_key_env": "ANTHROPIC_API_KEY",
+    "base_url_env": "ANTHROPIC_BASE_URL",
+    "default_model_env": "ANTHROPIC_DEFAULT_MODEL",
+    "default_model": "claude-opus-5-5",
+    "supports_model_listing": True,
+}
 
 
 @dataclass(frozen=True)
@@ -74,6 +85,10 @@ def create_llm_client(provider: ProviderConfig, model: str):
     if effective.api_type == "gemini_vertex":
         from llm.gemini_vertex import GeminiVertexClient
         return GeminiVertexClient(effective)
+
+    if effective.api_type == "anthropic_messages":
+        from llm.anthropic_messages import AnthropicMessagesClient
+        return AnthropicMessagesClient(effective)
 
     raise ValueError(f"Unsupported api_type: '{effective.api_type}'")
 
@@ -221,7 +236,7 @@ def _build_provider(data: dict, index: int) -> ProviderConfig:
     key = _required_str(data, "key", index)
     label = _required_str(data, "label", index)
     api_type_raw = _required_str(data, "api_type", index)
-    if api_type_raw not in {"chat_completions", "responses", "completions", "gemini_vertex"}:
+    if api_type_raw not in {"chat_completions", "responses", "completions", "gemini_vertex", "anthropic_messages"}:
         raise ValueError(f"Provider #{index} has invalid api_type: '{api_type_raw}'")
     api_type: ApiType = api_type_raw  # type: ignore
 
@@ -285,6 +300,13 @@ def load_providers() -> dict[str, ProviderConfig]:
 
     if not providers:
         raise ValueError(f"No providers configured in {path}.")
+
+    # Existing local TOML files predate Claude support. Activate the built-in
+    # entry from the environment without replacing any explicit configuration.
+    if "anthropic" not in providers:
+        anthropic = _build_provider(_ANTHROPIC_PROVIDER, len(providers_data) + 1)
+        if anthropic.api_key and not any(p.api_type == "anthropic_messages" for p in providers.values()):
+            providers[anthropic.key] = anthropic
 
     return providers
 

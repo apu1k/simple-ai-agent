@@ -73,17 +73,18 @@ def public_frame(runtime: Any, server_id: str, cursor: int | None = None) -> dic
 
 
 def display_state(data: dict[str, Any] | None = None) -> SimpleNamespace:
+    from runtime.state import ModelSettings
+
     data = data or {
         "cwd": "Connecting to agent server…", "chat_session_id": None,
         "model_config": {"provider_key": "", "provider_label": "Disconnected",
                          "model": "", "api_type": ""},
-        "model_settings": {"include_diff": False, "openai_flex": False,
-                           "openai_reasoning_effort": None},
+        "model_settings": {},
     }
     return SimpleNamespace(
         cwd=data["cwd"], chat_session_id=data["chat_session_id"],
         model_config=SimpleNamespace(**data["model_config"]),
-        model_settings=SimpleNamespace(**data["model_settings"]),
+        model_settings=SimpleNamespace(**{**asdict(ModelSettings()), **data["model_settings"]}),
         privileged_turn=SimpleNamespace(
             status="disabled (network client)", armed_operation=None,
         ),

@@ -1,4 +1,5 @@
 openai
+anthropic>=2.10,<3
 google-genai
 python-dotenv
 rich

@@ -115,7 +115,21 @@ def _list_gemini_vertex_models(
     })
 
 
+def _list_anthropic_models(
+    provider: "ProviderConfig",
+    *,
+    timeout: float,
+    max_retries: int,
+) -> list[str]:
+    from llm.anthropic_messages import create_anthropic_client
+
+    with create_anthropic_client(provider, timeout=timeout, max_retries=max_retries) as client:
+        # The SDK page iterator fetches subsequent pages automatically.
+        return sorted({model.id for model in client.models.list() if model.id})
+
+
 _LISTERS: dict[str, ModelLister] = {
+    "anthropic_messages": _list_anthropic_models,
     "chat_completions": _list_openai_models,
     "responses": _list_openai_models,
     "completions": _list_openai_models,

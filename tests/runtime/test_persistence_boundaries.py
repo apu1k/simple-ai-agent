@@ -47,6 +47,22 @@ def test_valid_json_that_is_not_a_checkpoint_cannot_be_silently_reinitialized(tm
     assert_not_discarded(tmp_path, payload)
 
 
+def test_pre_anthropic_checkpoint_gets_default_effort(tmp_path):
+    seed(tmp_path)
+
+    def omit_effort(saved):
+        del saved["model_settings"]["anthropic_reasoning_effort"]
+        return saved
+
+    rewrite(tmp_path, omit_effort)
+    runtime, _ = durable(tmp_path)
+    try:
+        assert runtime.state.model_settings.anthropic_reasoning_effort is None
+        assert runtime.snapshot().run.reply == "answer: safe turn"
+    finally:
+        runtime.close()
+
+
 def break_field(saved, field):
     if field == "run_status":
         saved["run"]["status"] = "not-a-real-status"
@@ -58,12 +74,16 @@ def break_field(saved, field):
         saved["context"]["messages"] = [{"role": "unexpected-role", "content": "bad"}]
     elif field == "settings":
         saved["model_settings"]["openai_flex"] = "yes"
+    elif field == "anthropic_effort":
+        saved["model_settings"]["anthropic_reasoning_effort"] = "none"
     elif field == "session":
         saved["chat_session_id"] = "not-a-session"
     return saved
 
 
-@pytest.mark.parametrize("field", ["run_status", "sequence", "event_gap", "transcript", "settings", "session"])
+@pytest.mark.parametrize("field", [
+    "run_status", "sequence", "event_gap", "transcript", "settings", "anthropic_effort", "session",
+])
 def test_malformed_state_fields_fail_before_any_recovery_write(tmp_path, field):
     seed(tmp_path)
     payload = rewrite(tmp_path, lambda saved: break_field(saved, field))

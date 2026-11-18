@@ -43,6 +43,7 @@ def test_completed_state_events_settings_and_proposals_survive_restart(tmp_path)
     runtime.set_model_setting("include_diff", "model")
     runtime.set_model_setting("openai_flex", True)
     runtime.set_model_setting("openai_reasoning_effort", "high")
+    runtime.set_model_setting("anthropic_reasoning_effort", "xhigh")
     approver = runtime.attach_client(can_approve=True)
     runtime.set_model_setting("elevated_commands", True, client_id=approver)
     cursor = runtime.snapshot().sequence
@@ -56,6 +57,7 @@ def test_completed_state_events_settings_and_proposals_survive_restart(tmp_path)
         assert restored.state.model_settings.include_diff == "model"
         assert restored.state.model_settings.openai_flex is True
         assert restored.state.model_settings.openai_reasoning_effort == "high"
+        assert restored.state.model_settings.anthropic_reasoning_effort == "xhigh"
         assert restored.state.privileged_turn.status == "disabled"
         assert restored.events_since(cursor)
         assert restored.snapshot().sequence > cursor
