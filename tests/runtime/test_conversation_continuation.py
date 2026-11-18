@@ -1,4 +1,4 @@
-"""Real Responses client logic with an offline provider: chains stay chat-local."""
+"""Legacy Responses provider chains stay chat-local with an offline endpoint."""
 from collections import defaultdict
 from types import SimpleNamespace
 
@@ -16,14 +16,17 @@ def test_provider_continuations_switch_reload_and_recover_independently(tmp_path
     calls = defaultdict(list)
     clients = {}
     history = ChatStore(tmp_path / "history")
+    # Direct OpenAI now uses local replay for new chats. Keep this fixture on
+    # the legacy provider-side path; the SDK create method is mocked below.
+    endpoint = "https://responses.example.invalid/v1"
 
     def factory(identity, store, source):
         state = AgentState(
             cwd=tmp_path, chat_store=history, chat_session_id=identity,
-            model_config=ModelConfig("fixture", "Fixture", "offline-model", "offline-key", None, "responses"),
+            model_config=ModelConfig("fixture", "Fixture", "offline-model", "offline-key", endpoint, "responses"),
         )
         llm = OpenAIResponsesClient(ProviderConfig(
-            key="fixture", label="Fixture", api_key="offline-key", base_url=None,
+            key="fixture", label="Fixture", api_key="offline-key", base_url=endpoint,
             api_type="responses", default_model="offline-model", supports_model_listing=False,
         ))
 
@@ -59,7 +62,12 @@ def test_provider_continuations_switch_reload_and_recover_independently(tmp_path
         manager.execute(second, "load_chat", {"session_id": first})
         turn(manager, first, "second A")
         assert calls[first][-1]["previous_response_id"] == f"resp_{first}_1"
+        before_a = clients[first].export_conversation()
         before_b = clients[second].export_conversation()
+        manager.execute(first, "compact_context", {})
+        assert len(calls[first]) == 2
+        assert clients[first].export_conversation() == before_a
+        assert "provider-side chain" in manager.get(first).snapshot().messages[-1][1]
         manager.execute(first, "reload_context", {})
         assert len(calls[first]) == 2  # Reload itself never contacts the provider.
         assert clients[second].export_conversation() == before_b

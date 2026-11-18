@@ -21,10 +21,12 @@ from core.context_compaction import (
     is_user_input,
     mask_tool_results,
     plan_compaction,
+    provider_messages,
     tool_result_summary,
     usage_input_tokens,
 )
 from core.tool_registry import ToolRegistry
+from llm.responses_transcript import RESULT_OVERRIDES_KEY, RESULT_STATUSES_KEY, SEQUENCE_KEY, entry, for_responses
 
 BIG = "x" * 4_000  # ~1,000 estimated tokens
 SUMMARY = 'TOOL RESULT: read_file path="notes.txt" (returned)'
@@ -148,6 +150,35 @@ def test_mask_tool_results_handles_chat_completions_tool_messages():
     assert masked["content"] == "read_file (result)"
     assert masked["tool_call_id"] == "call_1" and masked["name"] == "read_file"
     assert result.messages[1] == messages[1]
+
+
+def test_responses_compaction_matches_call_ids_and_only_replaces_eligible_bodies():
+    calls = {**entry("output", "scope", [
+        {"type": "reasoning", "encrypted_content": "opaque"},
+        {"type": "function_call", "call_id": "read", "name": "read_file", "arguments": '{"path":"notes.txt"}'},
+        {"type": "function_call", "call_id": "edit", "name": "propose_file_edit", "arguments": '{"path":"p.py"}'},
+        {"type": "function_call", "call_id": "small", "name": "pwd", "arguments": "{}"},
+    ]), SEQUENCE_KEY: 1}
+    result = {**entry("results", "scope", [
+        {"type": "function_call_output", "call_id": "read", "output": BIG},
+        {"type": "function_call_output", "call_id": "edit", "output": BIG},
+        {"type": "function_call_output", "call_id": "small", "output": "./"},
+    ]), SEQUENCE_KEY: 2, RESULT_STATUSES_KEY: {"read": "success", "edit": "skipped"}}
+
+    masked = mask_tool_results([calls, result], end=2, min_result_chars=1_000)
+    assert masked.masked_count == 2 and masked.saved_chars > 7_000
+    assert masked.messages[0] is calls and masked.messages[1]["content"] is result["content"]
+    replayed = for_responses(provider_messages(masked.messages), "scope")
+    assert replayed[:-3] == calls["content"]
+    assert replayed[-3:] == [
+        {**result["content"][0], "output": 'read_file path="notes.txt" (returned)'},
+        {**result["content"][1], "output": 'propose_file_edit path="p.py" (skipped)'},
+        result["content"][2],
+    ]
+    assert RESULT_OVERRIDES_KEY not in result and result["content"][0]["output"] == BIG
+    assert mask_tool_results(masked.messages, end=2, min_result_chars=1).masked_count == 0
+    unpaired = {**result, "content": result["content"][:-1]}
+    assert mask_tool_results([calls, unpaired], end=2, min_result_chars=1).masked_count == 0
 
 
 def test_plan_compaction_respects_trigger_and_min_savings():

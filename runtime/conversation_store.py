@@ -7,7 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from editing.model import FileEdit, PendingEdit
-from llm.responses_transcript import EXECUTION_REFS_KEY, SEQUENCE_KEY, execution_output
+from llm.responses_transcript import (
+    EXECUTION_REFS_KEY,
+    REPLAY_KEY,
+    RESULT_OVERRIDES_KEY,
+    RESULT_STATUSES_KEY,
+    SEQUENCE_KEY,
+    execution_output,
+)
 from runtime.chat_store import ChatStore
 from runtime.persistence import PersistenceError, RuntimeStore, _encode, validate_checkpoint
 
@@ -115,19 +122,35 @@ class ChatRuntimeStore:
                 if owner is None:
                     raise PersistenceError("Checkpoint refers to missing transcript evidence")
                 payload = json.loads(owner[1])
-                if payload.get("role") != message["role"] or SEQUENCE_KEY in payload:
+                if payload.get("role") != message["role"] or SEQUENCE_KEY in payload or RESULT_OVERRIDES_KEY in payload:
                     raise PersistenceError("Invalid stored transcript entry")
+                bodies: dict[str, str] = {}
                 for result in payload.get("content", []) if isinstance(payload.get("content"), list) else []:
-                    if isinstance(result, dict) and result.get("type") == "function_call_output" and EXECUTION_REFS_KEY in result:
+                    if not isinstance(result, dict) or result.get("type") != "function_call_output":
+                        continue
+                    if EXECUTION_REFS_KEY in result:
                         if "output" in result:
                             raise PersistenceError("Ambiguous stored tool result")
-                        result["output"] = self._transcript_execution_output(db, owner[0], result.pop(EXECUTION_REFS_KEY))
-                        if result["output"] is None:
+                        stored = self._transcript_execution_result(db, owner[0], result.pop(EXECUTION_REFS_KEY))
+                        if stored is None:
                             raise PersistenceError("Transcript refers to missing or unfinished execution evidence")
+                        result["output"], status = stored
+                        # Older replay rows did not store status alongside the results.
+                        payload.setdefault(RESULT_STATUSES_KEY, {}).setdefault(result["call_id"], status)
+                    if isinstance(result.get("call_id"), str) and isinstance(result.get("output"), str):
+                        bodies[result["call_id"]] = result["output"]
+                if RESULT_OVERRIDES_KEY in message:
+                    overrides = message[RESULT_OVERRIDES_KEY]
+                    if payload.get(REPLAY_KEY, {}).get("kind") != "results" or any(
+                        call_id not in bodies or len(body) >= len(bodies[call_id])
+                        for call_id, body in overrides.items()
+                    ):
+                        raise PersistenceError("Checkpoint has an invalid Responses result override")
+                    payload[RESULT_OVERRIDES_KEY] = overrides
                 messages[index] = {**payload, SEQUENCE_KEY: message[SEQUENCE_KEY]}
             return checkpoint
 
-    def _transcript_execution_output(self, db, run_id: str, identity: str) -> str | None:
+    def _transcript_execution_result(self, db, run_id: str, identity: str) -> tuple[str, str] | None:
         row = db.execute(
             "SELECT payload FROM chat_executions WHERE chat_id=? AND run_id=? AND id=?",
             (self.identity, run_id, identity),
@@ -135,20 +158,23 @@ class ChatRuntimeStore:
         if row is None:
             return None
         record = json.loads(row[0])
-        if record.get("status") not in {"success", "failed"}:
+        status = record.get("status")
+        if status not in {"success", "failed"}:
             return None
-        return execution_output(record["status"], record.get("observation"), record.get("error"))
+        return execution_output(status, record.get("observation"), record.get("error")), status
 
     def stage_transcript(self, run_id: str, message: dict) -> int:
         """Retain an original even if the run never advances the safe checkpoint."""
+        if RESULT_OVERRIDES_KEY in message:
+            raise PersistenceError("Cannot stage a replay override as original transcript evidence")
         with self.transaction() as db:
             payload = {key: value for key, value in message.items() if key != EXECUTION_REFS_KEY}
             references = message.get(EXECUTION_REFS_KEY)
             if references is not None:
                 results = []
                 for result, identity in zip(message["content"], references, strict=True):
-                    stored = self._transcript_execution_output(db, run_id, identity) if identity else None
-                    if stored == result["output"]:
+                    stored = self._transcript_execution_result(db, run_id, identity) if identity else None
+                    if stored is not None and stored[0] == result["output"]:
                         copy = {key: value for key, value in result.items() if key != "output"}
                         copy[EXECUTION_REFS_KEY] = identity
                         results.append(copy)

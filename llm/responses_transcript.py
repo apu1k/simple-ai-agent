@@ -8,6 +8,8 @@ from typing import Any, Sequence
 REPLAY_KEY = "_responses_replay"
 SEQUENCE_KEY = "_transcript_sequence"
 EXECUTION_REFS_KEY = "_execution_refs"
+RESULT_STATUSES_KEY = "_responses_result_statuses"
+RESULT_OVERRIDES_KEY = "_responses_result_overrides"
 
 
 def replay_scope(endpoint: str, provider: str, model: str) -> str:
@@ -58,6 +60,18 @@ def validate_output(items: list[dict], status: str | None) -> None:
 
 def is_entry(message: dict) -> bool:
     return REPLAY_KEY in message
+
+
+def project_result_bodies(message: dict) -> dict:
+    """Apply replay-only overrides; the original result items stay untouched."""
+    overrides = message.get(RESULT_OVERRIDES_KEY)
+    if not overrides:
+        return message
+    return {**message, "content": [
+        {**item, "output": overrides[item["call_id"]]}
+        if item.get("type") == "function_call_output" and item.get("call_id") in overrides else item
+        for item in message["content"]
+    ]}
 
 
 def directive_text(messages: Sequence[dict], scope: str) -> str | None:

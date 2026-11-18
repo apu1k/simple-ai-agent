@@ -47,7 +47,8 @@ from llm.anthropic_transcript import plain_messages
 from llm.base import LLMResponse, NativeToolCall, NativeToolOutput, request_retry_diagnostic
 from llm.request_progress import request_progress_listener
 from llm.responses_transcript import (
-    EXECUTION_REFS_KEY, SEQUENCE_KEY, directive_text, entry, execution_output, portable_messages,
+    EXECUTION_REFS_KEY, RESULT_STATUSES_KEY, SEQUENCE_KEY,
+    directive_text, entry, execution_output, portable_messages,
 )
 from night_shifts.models import ToolCallRecord, ToolCallStatus
 
@@ -131,6 +132,7 @@ class Agent:
         self.job_id = job_id
         self.on_execution = on_execution
         self.on_transcript: Callable[[dict], int] | None = None
+        self.on_compaction: Callable[[list[dict]], None] | None = None
         self.messages: list[dict] = [{"role": "system", "content": system_prompt}]
         self.compaction_settings: CompactionSettings | None = (
             default_compaction_settings()
@@ -313,7 +315,7 @@ class Agent:
         force=True is the manual command: it ignores the size thresholds and
         also works when automatic compaction is disabled.
         """
-        if self.has_provider_managed_context or self.uses_local_responses_replay:
+        if self.has_provider_managed_context:
             return None
         settings = self.compaction_settings
         if settings is None:
@@ -327,6 +329,8 @@ class Agent:
         result = plan_compaction(self.messages, settings, reported, force=force)
         if result is None:
             return None
+        if self.on_compaction is not None:
+            self.on_compaction(result.messages)
         # Mutate in place: callers may hold a reference to this list.
         self.messages[:] = result.messages
         self._compacted_usage = usage
@@ -1052,6 +1056,9 @@ class Agent:
                         for output in outputs
                     ])
                     message[EXECUTION_REFS_KEY] = [record.execution_id for record in records]
+                    message[RESULT_STATUSES_KEY] = {
+                        output.call_id: record.status for output, record in zip(outputs, records, strict=True)
+                    }
                     self._append_message(message)
                     continue
 

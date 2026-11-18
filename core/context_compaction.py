@@ -10,12 +10,22 @@ from dataclasses import dataclass
 from typing import Any
 
 from llm.anthropic_transcript import NATIVE_KEY
-from llm.responses_transcript import EXECUTION_REFS_KEY, SEQUENCE_KEY
+from llm.responses_transcript import (
+    EXECUTION_REFS_KEY,
+    REPLAY_KEY,
+    RESULT_OVERRIDES_KEY,
+    RESULT_STATUSES_KEY,
+    SEQUENCE_KEY,
+    project_result_bodies,
+)
 
 TOOL_RESULT_PREFIX = "TOOL RESULT ("
 TOOL_RESULT_SUMMARY_KEY = "_tool_result_summary"
 INTERNAL_USER_KEY = "_internal_user"
-_LOCAL_KEYS = {TOOL_RESULT_SUMMARY_KEY, INTERNAL_USER_KEY, EXECUTION_REFS_KEY, SEQUENCE_KEY}
+_LOCAL_KEYS = {
+    TOOL_RESULT_SUMMARY_KEY, INTERNAL_USER_KEY, EXECUTION_REFS_KEY, SEQUENCE_KEY,
+    RESULT_OVERRIDES_KEY, RESULT_STATUSES_KEY,
+}
 CONTEXT_COMPACTION_PREFIX = "CONTEXT COMPACTION: "
 CHARS_PER_TOKEN = 4
 
@@ -73,14 +83,14 @@ def tool_result_summary(name: Any, arguments: Any, status: str) -> str:
 def provider_messages(messages: list[dict]) -> list[dict]:
     """Remove local compaction metadata without changing provider content."""
     return [
-        {key: value for key, value in message.items() if key not in _LOCAL_KEYS}
+        {key: value for key, value in project_result_bodies(message).items() if key not in _LOCAL_KEYS}
         if _LOCAL_KEYS.intersection(message) else message
         for message in messages
     ]
 
 
 def _content_chars(message: dict) -> int:
-    content = message.get("content")
+    content = project_result_bodies(message).get("content")
     if isinstance(content, str):
         size = len(content)
     elif content is None:
@@ -121,6 +131,7 @@ def is_user_input(message: dict) -> bool:
     return (
         message.get("role") == "user" and isinstance(message.get("content"), str)
         and message.get(INTERNAL_USER_KEY) is not True and TOOL_RESULT_SUMMARY_KEY not in message
+        and REPLAY_KEY not in message
     )
 
 
@@ -165,14 +176,56 @@ def _native_replacement(previous: dict, message: dict, minimum: int) -> list[dic
     return replacement if any(a is not b for a, b in zip(results, replacement, strict=True)) else None
 
 
+def _responses_replacement(previous: dict, message: dict, minimum: int) -> tuple[dict, int]:
+    """Shorten completed native exchanges without rewriting the transcript row."""
+    replay = message.get(REPLAY_KEY, {})
+    scope = replay.get("scope")
+    calls, results = previous.get("content"), message.get("content")
+    if (replay.get("kind") != "results" or not scope
+            or previous.get(REPLAY_KEY) != {"kind": "output", "scope": scope}
+            or previous.get("role") != "assistant" or message.get("role") != "user"
+            or not isinstance(calls, list) or not isinstance(results, list)):
+        return message, 0
+    function_calls = [item for item in calls if isinstance(item, dict) and item.get("type") == "function_call"]
+    call_ids = [item.get("call_id") for item in function_calls]
+    if (not call_ids or not all(isinstance(call_id, str) and call_id for call_id in call_ids)
+            or len(set(call_ids)) != len(call_ids) or not all(
+                isinstance(item, dict) and item.get("type") == "function_call_output" for item in results
+            ) or [item.get("call_id") for item in results] != call_ids):
+        return message, 0
+    overrides = dict(message.get(RESULT_OVERRIDES_KEY, {}))
+    statuses = message.get(RESULT_STATUSES_KEY, {})
+    count = 0
+    for call, result in zip(function_calls, results, strict=True):
+        call_id = call["call_id"]
+        if call_id in overrides:
+            continue
+        arguments = call.get("arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except ValueError:
+                arguments = None
+        summary = tool_result_summary(call.get("name"), arguments, statuses.get(call_id, "unknown"))
+        if _shorter(result.get("output"), summary, minimum):
+            overrides[call_id] = summary
+            count += 1
+    return ({**message, RESULT_OVERRIDES_KEY: overrides}, count) if count else (message, 0)
+
+
 def mask_tool_results(messages: list[dict], end: int, min_result_chars: int) -> CompactionResult:
     """Shorten only explicitly marked or structurally native results."""
     result: list[dict] = []
     masked = saved = 0
     for index, message in enumerate(messages):
         replacement: str | list[dict] | None = None
-        # Durable Responses originals are immutable. A replay projection for
-        # them is a separate feature; never modify the resolved row in place.
+        if index < end and REPLAY_KEY in message:
+            updated, count = _responses_replacement(messages[index - 1], message, min_result_chars) if index else (message, 0)
+            if count:
+                saved += _content_chars(message) - _content_chars(updated)
+                masked += count
+            result.append(updated)
+            continue
         if index < end and SEQUENCE_KEY not in message:
             summary = message.get(TOOL_RESULT_SUMMARY_KEY)
             role = message.get("role")

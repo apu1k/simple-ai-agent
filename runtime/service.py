@@ -22,7 +22,7 @@ from core.tool_progress import (
 from editing.model import PendingEdit
 from llm.base import LLMClient
 from llm.request_progress import REQUEST_PROGRESS_PREFIX
-from llm.responses_transcript import SEQUENCE_KEY
+from llm.responses_transcript import RESULT_OVERRIDES_KEY, SEQUENCE_KEY
 from runtime.bootstrap import build_model_config_and_client, create_agent
 from runtime.chat_store import (
     DEFAULT_CHAT_TURN_LIMIT,
@@ -125,6 +125,7 @@ class AgentRuntime:
                     self._agent.on_execution = self._on_execution
                 if callable(getattr(self._store, "stage_transcript", None)):
                     self._agent.on_transcript = self._on_transcript
+                    self._agent.on_compaction = self._on_compaction
                 if not self._restoring:
                     self._capture_context()
                     self._checkpoint()
@@ -286,8 +287,8 @@ class AgentRuntime:
     def compact_context(self) -> None:
         """Manually mask old tool output now, regardless of the size threshold.
 
-        Keeps the chat, provider continuation and proposals. An active remote
-        provider chain is left unchanged. A successful compaction reports
+        Keeps the chat and proposals. A legacy provider-side chain is left
+        unchanged. Local Responses replay needs no API call. A successful compaction reports
         itself through the agent's progress callback,
         which _on_tool turns into a System message.
         """
@@ -300,11 +301,8 @@ class AgentRuntime:
                     "System",
                     "Context compaction skipped: OpenAI Responses is using a provider-side chain. "
                     "Local edits would not shrink it. Use \\reload_context only if you want "
-                    "to start a fresh chain from the last 32 saved final turns.",
+                    "to rebuild from the last 32 saved final turns, without old tool exchanges.",
                 )
-                return
-            if getattr(self._agent, "uses_local_responses_replay", False) is True:
-                self._message("System", "Context compaction is not yet available for local Responses replay.")
                 return
             compact = getattr(self._agent, "compact_context", None)
             result = compact(force=True) if callable(compact) else None
@@ -315,7 +313,7 @@ class AgentRuntime:
                     "turns and small results are always kept.",
                 )
                 return
-            self._capture_context()
+            self._capture_context(preserve_run_id=True)
             self._checkpoint()
 
     def reload_context(self) -> None:
@@ -626,18 +624,45 @@ class AgentRuntime:
                 raise PersistenceError("No active durable run for the transcript entry")
             return stage(self._run.run_id, message)
 
-    def _capture_context(self) -> None:
+    def _on_compaction(self, messages: list[dict]) -> None:
+        """Keep replay overrides even if the next turn fails or is interrupted.
+
+        Only annotate references already in the safe checkpoint. Do not
+        promote staged messages or change which run produced that context.
+        """
+        overrides = {m[SEQUENCE_KEY]: m[RESULT_OVERRIDES_KEY] for m in messages
+                     if SEQUENCE_KEY in m and RESULT_OVERRIDES_KEY in m}
+        if not overrides:
+            return
+        with self._condition:
+            previous = self._context
+            updated = [
+                {**m, RESULT_OVERRIDES_KEY: overrides[m[SEQUENCE_KEY]]}
+                if m.get(SEQUENCE_KEY) in overrides else m for m in previous["messages"]
+            ]
+            if updated == previous["messages"]:
+                return
+            self._context = {**previous, "messages": updated}
+            try:
+                self._checkpoint()
+            except Exception:
+                self._context = previous
+                raise
+
+    def _capture_context(self, *, preserve_run_id: bool = False) -> None:
         if self._agent is None:
             return
         export = getattr(self.llm, "export_conversation", None)
         self._context = {
             "messages": [
-                {"role": m["role"], SEQUENCE_KEY: m[SEQUENCE_KEY]} if SEQUENCE_KEY in m else deepcopy(m)
+                {key: deepcopy(m[key]) for key in ("role", SEQUENCE_KEY, RESULT_OVERRIDES_KEY) if key in m}
+                if SEQUENCE_KEY in m else deepcopy(m)
                 for m in self._agent.messages if m.get("role") != "system"
             ],
             "provider": export() if callable(export) else None,
         }
-        self._context_run_id = self._run.run_id if self._run is not None else None
+        if not preserve_run_id:
+            self._context_run_id = self._run.run_id if self._run is not None else None
 
     def _checkpoint(self) -> None:
         if self._store is None or self._restoring or self._persistence_error is not None:

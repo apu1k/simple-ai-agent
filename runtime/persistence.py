@@ -11,7 +11,7 @@ from threading import RLock
 from typing import Any, ContextManager, Iterator, Protocol, get_args
 
 from editing.model import FileEdit, PendingEdit
-from llm.responses_transcript import SEQUENCE_KEY
+from llm.responses_transcript import RESULT_OVERRIDES_KEY, SEQUENCE_KEY
 from runtime.state import ANTHROPIC_REASONING_EFFORTS, ApiType
 
 
@@ -212,6 +212,13 @@ def validate_checkpoint(saved: dict[str, Any]) -> None:
                 current = message[SEQUENCE_KEY]
                 require(type(current) is int and current > sequence)
                 sequence = current
+            if RESULT_OVERRIDES_KEY in message:
+                overrides = message[RESULT_OVERRIDES_KEY]
+                require(SEQUENCE_KEY in message and message["role"] == "user")
+                require(isinstance(overrides, dict) and bool(overrides) and all(
+                    isinstance(call_id, str) and bool(call_id) and isinstance(body, str) and bool(body)
+                    for call_id, body in overrides.items()
+                ))
         require(context["provider"] is None or isinstance(context["provider"], dict))
         run = saved["run"]
         if run is not None:
