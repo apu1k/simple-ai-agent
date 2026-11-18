@@ -68,12 +68,15 @@ def test_responses_reset_conversation_clears_previous_response_id():
     client = OpenAIResponsesClient(_provider())
     fake_openai = _FakeOpenAIClient()
     client._client = fake_openai
+    assert not client.has_provider_managed_context
 
     client.chat([
         {"role": "system", "content": "sys"},
         {"role": "user", "content": "first"},
     ])
+    assert client.has_provider_managed_context
     client.reset_conversation()
+    assert not client.has_provider_managed_context
     client.chat([
         {"role": "system", "content": "sys"},
         {"role": "user", "content": "fresh"},

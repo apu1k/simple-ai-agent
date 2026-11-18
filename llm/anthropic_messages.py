@@ -3,10 +3,13 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+import json
+import sys
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlsplit, urlunsplit
 
 from anthropic import Anthropic, DefaultHttpxClient
+from anthropic.types import MessageParam, Usage
 
 from llm.anthropic_transcript import (
     NATIVE_KEY,
@@ -135,7 +138,8 @@ class AnthropicMessagesClient:
         self._model = provider.default_model
         self._settings: ModelSettings | None = None
         self._pending: _PendingTools | None = None
-        self.last_usage = None
+        self.last_usage: Usage | None = None
+        self._last_request_id: str | None = None
 
     def configure_model_settings(self, settings: ModelSettings | None) -> None:
         self._settings = settings
@@ -192,13 +196,37 @@ class AnthropicMessagesClient:
         blocks = tool_result_blocks(self._pending.call_ids, tool_outputs)
         return {"role": "user", "content": blocks, NATIVE_KEY: self._model}
 
+    def log_request_usage(self, *, compacted: bool) -> None:
+        """Write cache accounting only; never include prompt or tool payloads."""
+        usage = self.last_usage
+        if usage is None:
+            return
+        creation = usage.cache_creation
+        record = {
+            "request_id": self._last_request_id,
+            "input_tokens": usage.input_tokens,
+            "cache_read_input_tokens": usage.cache_read_input_tokens,
+            "cache_creation_input_tokens": usage.cache_creation_input_tokens,
+            "cache_write_5m_tokens": creation.ephemeral_5m_input_tokens if creation else None,
+            "cache_write_1h_tokens": creation.ephemeral_1h_input_tokens if creation else None,
+            "compacted_before_request": compacted,
+        }
+        try:
+            print("ANTHROPIC CACHE " + json.dumps(record), file=sys.stderr, flush=True)
+        except (OSError, ValueError):
+            # Diagnostics must never turn a successful provider call into a failure.
+            pass
+
     def _request(self, messages: list[dict], options: dict) -> str | LLMResponse:
         self._pending = None
         self.last_usage = None
         # Stream through the SDK to support high-effort, long-running requests.
         # Only the final assembled message is consumed by the agent runtime.
-        with self._client.messages.stream(messages=_with_cache_breakpoint(messages), **options) as stream:
+        self._last_request_id = None
+        prepared = cast(list[MessageParam], _with_cache_breakpoint(messages))
+        with self._client.messages.stream(messages=prepared, **options) as stream:
             response = stream.get_final_message()
+            self._last_request_id = stream.request_id
         self.last_usage = response.usage
         if response.stop_reason == "max_tokens":
             raise ValueError("Claude reached its output token limit. Try a lower Anthropic effort or a smaller request.")

@@ -8,7 +8,7 @@ from anthropic import BadRequestError
 
 from core.agent import Agent
 from core.tool_registry import ToolRegistry, ToolSpec
-from core.context_compaction import MASK_MARKER, mask_tool_results
+from core.context_compaction import TOOL_RESULT_SUMMARY_KEY, CompactionSettings, mask_tool_results
 from llm import anthropic_messages
 from llm.anthropic_transcript import NATIVE_KEY, plain_messages
 from llm.base import NativeToolOutput
@@ -62,7 +62,9 @@ def _stream(*blocks, stop="end_turn"):
         {"type": "message_stop"},
     ])
     payload = "".join(f"event: {event['type']}\ndata: {json.dumps(event)}\n\n" for event in events)
-    return lambda request: httpx2.Response(200, headers={"content-type": "text/event-stream"}, text=payload)
+    return lambda request: httpx2.Response(200, headers={
+        "content-type": "text/event-stream", "request-id": "req_cache_fixture",
+    }, text=payload)
 
 
 def _text(text):
@@ -230,8 +232,38 @@ def test_compaction_masks_native_tool_results_without_breaking_pairs():
     masked = result.messages[2]
     assert masked[NATIVE_KEY] == _MODEL
     assert masked["content"][0]["tool_use_id"] == "toolu_1"
-    assert masked["content"][0]["content"].startswith(MASK_MARKER)
+    assert masked["content"][0]["content"] == "echo (returned)"
     assert result.messages[1] is pair[0]
+
+
+def test_cache_diagnostic_only_marks_first_request_after_compaction(http, tmp_path, capsys):
+    requests, responses = http
+    responses.extend([_stream(_text("First.")), _stream(_text("Second."))])
+    state = AgentState(tmp_path, ModelConfig("anthropic", "Anthropic Claude", _MODEL,
+                                             None, None, "anthropic_messages"))
+    client = create_llm_client(_PROVIDER, _MODEL)
+    agent = Agent("Fixture prompt", state, client, tool_registry=ToolRegistry(),
+                  compaction_settings=CompactionSettings(keep_recent_turns=1))
+    agent.messages.extend([
+        {"role": "user", "content": "older turn"},
+        {"role": "user", "content": "X" * 4000,
+         TOOL_RESULT_SUMMARY_KEY: 'TOOL RESULT: read_file path="notes.txt" (returned)'},
+        {"role": "assistant", "content": "Done."},
+        {"role": "user", "content": "recent turn"},
+        {"role": "assistant", "content": "Done."},
+    ])
+    assert agent.compact_context(force=True) is not None
+    assert agent.step("private user text") == "First."
+    assert agent.step("next") == "Second."
+    text = capsys.readouterr().err
+    records = [json.loads(line.removeprefix("ANTHROPIC CACHE ")) for line in text.splitlines()
+               if line.startswith("ANTHROPIC CACHE ")]
+    assert [record["compacted_before_request"] for record in records] == [True, False]
+    assert records[0]["request_id"] == "req_cache_fixture"
+    assert records[0]["input_tokens"] == 20
+    assert "private user text" not in text and "notes.txt" not in text
+    assert TOOL_RESULT_SUMMARY_KEY.encode() not in requests[0].content
+    assert b"notes.txt" in requests[0].content
 
 
 def test_truncated_tool_call_is_not_exposed_to_the_agent(http):

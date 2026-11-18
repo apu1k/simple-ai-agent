@@ -31,9 +31,13 @@ from config import (
 from core import protocol
 from core.context_compaction import (
     CONTEXT_COMPACTION_PREFIX,
+    INTERNAL_USER_KEY,
+    TOOL_RESULT_SUMMARY_KEY,
     CompactionResult,
     CompactionSettings,
     plan_compaction,
+    provider_messages,
+    tool_result_summary,
     usage_input_tokens,
 )
 from core.tool_registry import registry
@@ -121,6 +125,7 @@ class Agent:
         # Usage object already acted on; it describes the pre-compaction
         # context and must not trigger another compaction.
         self._compacted_usage: object | None = None
+        self._compaction_pending = False
 
         # Callbacks — default to no-op so callers don't need to pass them all
         self._debug = on_debug or (lambda msg: None)
@@ -196,6 +201,7 @@ class Agent:
         aligned with the active client.
         """
         self.llm = llm
+        self._compaction_pending = False
         self._configure_llm_runtime()
 
         if system_prompt is not None:
@@ -240,7 +246,7 @@ class Agent:
 
     def _messages_with_context(self) -> list[dict]:
         """Return messages with runtime context merged into the single leading system message."""
-        history = self.messages
+        history = provider_messages(self.messages)
         if self._api_type != "anthropic_messages":
             # Claude-native tool blocks can only be replayed to Claude.
             history = plain_messages(history)
@@ -263,6 +269,11 @@ class Agent:
             *history[1:],
         ]
 
+    @property
+    def has_provider_managed_context(self) -> bool:
+        """A local rewrite cannot change an active provider-side chain."""
+        return getattr(self.llm, "has_provider_managed_context", False) is True
+
     def compact_context(self, *, force: bool = False) -> CompactionResult | None:
         """Layer 0: mask old tool output when the context has grown large.
 
@@ -271,6 +282,8 @@ class Agent:
         force=True is the manual command: it ignores the size thresholds and
         also works when automatic compaction is disabled.
         """
+        if self.has_provider_managed_context:
+            return None
         settings = self.compaction_settings
         if settings is None:
             if not force:
@@ -286,6 +299,7 @@ class Agent:
         # Mutate in place: callers may hold a reference to this list.
         self.messages[:] = result.messages
         self._compacted_usage = usage
+        self._compaction_pending = True
         self._tool(
             f"{CONTEXT_COMPACTION_PREFIX}elided "
             f"{result.masked_count} old tool result(s), ~{result.saved_tokens:,} tokens freed "
@@ -340,10 +354,13 @@ class Agent:
 
         raise ValueError(f"Unsupported api_type for tool assertions: {api_type}")
 
-    def _append_tool_result(self, action: str, result: str) -> None:
+    def _append_tool_result(self, record: BatchToolRecord) -> None:
         self.messages.append({
             "role": "user",
-            "content": f"TOOL RESULT ({action}): {result}",
+            "content": f"TOOL RESULT ({record.action}): {record.observation or record.error or ''}",
+            TOOL_RESULT_SUMMARY_KEY: "TOOL RESULT: " + tool_result_summary(
+                record.action, record.tool_input, record.status,
+            ),
         })
 
     def _is_effectively_empty(self, parsed: protocol.ParsedResponse, raw_reply: str | None) -> bool:
@@ -359,10 +376,16 @@ class Agent:
             return False
         return True
 
-    def _append_tool_batch_result(self, result: str) -> None:
+    def _append_tool_batch_result(self, result: str, records: list[BatchToolRecord] | None = None) -> None:
+        summary = "TOOL RESULT (batch):"
+        if records:
+            summary += "\n" + "\n".join(
+                tool_result_summary(record.action, record.tool_input, record.status) for record in records
+            )
         self.messages.append({
             "role": "user",
             "content": f"TOOL RESULT (batch): {result}",
+            TOOL_RESULT_SUMMARY_KEY: summary,
         })
 
     def _format_native_tool_call_summary(self, native_tool_calls: list) -> str:
@@ -404,10 +427,9 @@ class Agent:
         paths that replay local history.
         """
         if len(records) == 1:
-            r = records[0]
-            self._append_tool_result(r.action, r.observation or r.error or "")
+            self._append_tool_result(records[0])
         else:
-            self._append_tool_batch_result(self._format_batch_tool_report(records))
+            self._append_tool_batch_result(self._format_batch_tool_report(records), records)
 
     def _append_chat_completions_native_tool_call(self, content: str, native_tool_calls: list) -> None:
         """Append native Chat Completions tool calls in OpenAI message format.
@@ -457,6 +479,7 @@ class Agent:
                 "tool_call_id": tc.id,
                 "name": tc.name,
                 "content": content,
+                TOOL_RESULT_SUMMARY_KEY: tool_result_summary(r.action, r.tool_input, r.status),
             })
 
     def _start_tool_audit(self, action: str, tool_input: dict) -> str | None:
@@ -644,6 +667,7 @@ class Agent:
             if step == MAX_STEPS - 1:
                 self.messages.append({
                     "role": "user",
+                    INTERNAL_USER_KEY: True,
                     "content": (
                         f"IMPORTANT: You are on step {step} out of {MAX_STEPS}. "
                         "You must now produce your final answer. "
@@ -717,6 +741,11 @@ class Agent:
                 self._error(err)
                 return err
             
+            log_usage = getattr(self.llm, "log_request_usage", None)
+            if callable(log_usage):
+                log_usage(compacted=self._compaction_pending)
+            self._compaction_pending = False
+
             # Handle LLMResponse with native tool calls
             parsed: protocol.ParsedResponse
             native_tool_calls = None
@@ -801,6 +830,7 @@ class Agent:
                     self.messages.append({
                         "role": "user",
                         "content": retry_instruction,
+                        INTERNAL_USER_KEY: True,
                     })
                     empty_retry_count += 1
                     continue
@@ -818,6 +848,7 @@ class Agent:
                     self.messages.append({"role": "assistant", "content": reply})
                     self.messages.append({
                         "role": "user",
+                        INTERNAL_USER_KEY: True,
                         "content": (
                             "Your previous response was invalid.\n"
                             f"Parser error: {parsed.error}\n\n"
@@ -998,6 +1029,7 @@ class Agent:
         self.messages = [{"role": "system", "content": system_prompt}]
         self._pending_native_tool_calls = None
         self._compacted_usage = None
+        self._compaction_pending = False
 
         reset_conversation = getattr(self.llm, "reset_conversation", None)
         if callable(reset_conversation):

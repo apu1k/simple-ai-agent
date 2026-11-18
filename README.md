@@ -281,16 +281,16 @@ Embedding and index data stay local unless you explicitly configure otherwise. T
 
 ## Context compaction
 
-Tool output (file reads, searches, command output) makes up most of a long conversation. Before each new user message, the agent checks the size of its context. Once it reaches the trigger, large tool results older than the most recent user turns are replaced by a short placeholder such as:
+In long conversations, the agent can replace large, old tool results with short factual records. The model sees the tool name, known file targets, and recorded status—not a direction to rerun the tool or a claim that a proposed edit took effect. For example:
 
 ```
-TOOL RESULT (read_file): [output elided by context compaction: 12,345 chars. Re-run the tool if the details are needed.]
+TOOL RESULT: read_file path="notes.txt" (returned)
 ```
 
 - Message order, roles and tool-call ids are kept, so a tool call is never separated from its result.
 - Compaction runs rarely and in large chunks, because every change to older messages invalidates the provider prompt cache once.
 - A System message in the chat reports each compaction and how many tokens it freed.
-- Full tool output is not lost: it remains in the tool-call audit store and logs.
+- Compaction leaves the backend's durable execution journal unchanged. Unmarked user text, including ambiguous text-form results in older chats, is not rewritten.
 - `\compact` runs it immediately, ignoring the trigger and minimum savings. It also works when automatic compaction is disabled.
 
 Settings in `config/settings.py`:
@@ -303,7 +303,9 @@ Settings in `config/settings.py`:
 | `CONTEXT_COMPACTION_MIN_RESULT_CHARS` | `1_000` | Smaller tool results are kept |
 | `CONTEXT_COMPACTION_MIN_SAVINGS_TOKENS` | `20_000` | Automatic compaction is skipped unless it frees at least this much |
 
-Limits: with the OpenAI Responses API the conversation lives on the provider side and tool results are not kept locally, so there is nothing to elide. Growth inside a single long Anthropic tool loop is not compacted.
+Limits: with an active OpenAI Responses chain, local compaction is skipped rather than claiming to shrink the provider-side history. `\reload_context` still explicitly starts a fresh chain from saved final turns. Growth inside a single long Anthropic tool loop is not compacted.
+
+Successful Claude requests from the agent write an `ANTHROPIC CACHE` line to backend stderr with the request ID, token counts, and whether compaction preceded that request. The line contains no prompt or tool output. Cache lifetimes are unchanged.
 
 ## Development
 

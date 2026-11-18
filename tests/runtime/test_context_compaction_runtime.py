@@ -4,12 +4,13 @@ from types import SimpleNamespace
 import pytest
 
 from core.agent import Agent
-from core.context_compaction import MASK_MARKER, CompactionSettings
+from core.context_compaction import TOOL_RESULT_SUMMARY_KEY, CompactionSettings
 from core.tool_registry import ToolRegistry
 from runtime.service import AgentRuntime
 from tests.runtime_helpers import make_runtime
 
 BIG = "x" * 4_000
+SUMMARY = 'TOOL RESULT: read_file path="notes.txt" (returned)'
 
 
 @pytest.fixture
@@ -36,7 +37,8 @@ def seed_tool_turns(agent, count):
     for index in range(count):
         agent.messages.extend([
             {"role": "user", "content": f"q{index}"},
-            {"role": "user", "content": f"TOOL RESULT (read_file): {BIG}"},
+            {"role": "user", "content": f"TOOL RESULT (read_file): {BIG}",
+             TOOL_RESULT_SUMMARY_KEY: SUMMARY},
             {"role": "assistant", "content": f"a{index}"},
         ])
 
@@ -51,7 +53,7 @@ def test_manual_compaction_masks_old_output_reports_and_captures_context(compact
 
     # Config defaults keep the last 3 turns; only q0's result is elided.
     tool_results = [m["content"] for m in agent.messages if m["content"].startswith("TOOL RESULT")]
-    assert [MASK_MARKER in content for content in tool_results] == [True, False, False, False]
+    assert tool_results == [SUMMARY, *([f"TOOL RESULT (read_file): {BIG}"] * 3)]
     role, text = runtime.snapshot().messages[-1]
     assert role == "System"
     assert text.startswith("Context compaction: elided 1 old tool result(s)")
@@ -86,5 +88,19 @@ def test_automatic_compaction_during_a_run_is_shown_as_system_message(compaction
     assert ("You", "next") in messages and ("AI", "done") in messages
     assert any(role == "System" and text.startswith("Context compaction: elided 1 old tool result(s)")
                for role, text in messages)
-    assert MASK_MARKER in agent.messages[2]["content"]
-    assert MASK_MARKER not in agent.messages[5]["content"]
+    assert agent.messages[2]["content"] == SUMMARY
+    assert agent.messages[5]["content"] == f"TOOL RESULT (read_file): {BIG}"
+
+
+def test_compaction_keeps_provider_chain_and_does_not_claim_savings(compaction_runtime):
+    runtime, agent = compaction_runtime
+    agent.llm.has_provider_managed_context = True
+    seed_tool_turns(agent, 4)
+    before = list(agent.messages)
+    assert agent.compact_context(force=True) is None
+    runtime.compact_context()
+    assert agent.messages == before
+    assert agent.llm.has_provider_managed_context is True
+    role, message = runtime.snapshot().messages[-1]
+    assert role == "System" and "Local edits would not shrink it" in message
+    assert "\\reload_context" in message

@@ -13,18 +13,22 @@ from types import SimpleNamespace
 from core.agent import Agent
 from core.context_compaction import (
     CONTEXT_COMPACTION_PREFIX,
-    MASK_MARKER,
+    INTERNAL_USER_KEY,
+    TOOL_RESULT_SUMMARY_KEY,
     CompactionSettings,
     estimate_tokens,
     find_cut_index,
     is_user_input,
     mask_tool_results,
     plan_compaction,
+    tool_result_summary,
     usage_input_tokens,
 )
 from core.tool_registry import ToolRegistry
 
 BIG = "x" * 4_000  # ~1,000 estimated tokens
+SUMMARY = 'TOOL RESULT: read_file path="notes.txt" (returned)'
+BATCH_SUMMARY = 'TOOL RESULT (batch):\nread_file path="notes.txt" (returned)'
 
 SETTINGS = CompactionSettings(
     trigger_tokens=2_000,
@@ -38,7 +42,8 @@ def _turn(text: str, tool: str = "read_file", body: str = BIG) -> list[dict]:
     return [
         {"role": "user", "content": text},
         {"role": "assistant", "content": f"NATIVE TOOL CALL REQUEST:\n- name={tool}"},
-        {"role": "user", "content": f"TOOL RESULT ({tool}): {body}"},
+        {"role": "user", "content": f"TOOL RESULT ({tool}): {body}",
+         TOOL_RESULT_SUMMARY_KEY: BATCH_SUMMARY if tool == "batch" else SUMMARY},
         {"role": "assistant", "content": f"answer to {text}"},
     ]
 
@@ -59,10 +64,11 @@ def _history() -> list[dict]:
 
 def test_is_user_input_ignores_runtime_injected_messages():
     assert is_user_input({"role": "user", "content": "hello"})
-    assert not is_user_input({"role": "user", "content": "TOOL RESULT (ls): ..."})
-    assert not is_user_input({"role": "user", "content": "IMPORTANT: You are on step 31 out of 32."})
-    assert not is_user_input({"role": "user", "content": "Your previous response was empty."})
-    assert not is_user_input({"role": "user", "content": "RECOVERY NOTICE (evidence only)"})
+    assert is_user_input({"role": "user", "content": "TOOL RESULT (ls): ..."})
+    assert not is_user_input(_turn("fixture")[2])
+    for text in ("IMPORTANT: You are on step", "Your previous response was empty.", "RECOVERY NOTICE"):
+        assert is_user_input({"role": "user", "content": text})
+        assert not is_user_input({"role": "user", "content": text, INTERNAL_USER_KEY: True})
     assert not is_user_input({"role": "assistant", "content": "hello"})
     assert not is_user_input({"role": "user", "content": [{"type": "text", "text": "x"}]})
 
@@ -87,9 +93,8 @@ def test_mask_tool_results_masks_only_old_large_results_and_keeps_structure():
     assert [m["role"] for m in result.messages] == [m["role"] for m in messages]
 
     first, second, third = (result.messages[i]["content"] for i in (3, 7, 11))
-    assert first.startswith("TOOL RESULT (read_file): " + MASK_MARKER)
-    assert second.startswith("TOOL RESULT (batch): " + MASK_MARKER)
-    assert "4,0" in first  # original size is reported
+    assert first == SUMMARY
+    assert second == BATCH_SUMMARY
     assert third == messages[11]["content"]  # recent turn untouched
     assert result.saved_chars > 7_000
 
@@ -97,8 +102,9 @@ def test_mask_tool_results_masks_only_old_large_results_and_keeps_structure():
 def test_mask_tool_results_skips_small_results_and_is_idempotent():
     messages = [
         {"role": "user", "content": "q"},
-        {"role": "user", "content": "TOOL RESULT (pwd): C:\\data"},
-        {"role": "user", "content": f"TOOL RESULT (read_file): {BIG}"},
+        {"role": "user", "content": "TOOL RESULT (pwd): C:\\data",
+         TOOL_RESULT_SUMMARY_KEY: "TOOL RESULT: pwd (returned)"},
+        _turn("fixture")[2],
     ]
     once = mask_tool_results(messages, end=3, min_result_chars=1_000)
     assert once.masked_count == 1
@@ -107,6 +113,25 @@ def test_mask_tool_results_skips_small_results_and_is_idempotent():
     twice = mask_tool_results(once.messages, end=3, min_result_chars=50)
     assert twice.masked_count == 0
     assert twice.messages == once.messages
+
+
+def test_user_pasted_tool_output_and_ambiguous_legacy_results_are_not_rewritten():
+    pasted = {"role": "user", "content": f"TOOL RESULT (read_file): {BIG}"}
+    messages = [pasted, *_history()]
+    result = plan_compaction(messages, SETTINGS, force=True)
+    assert result is not None and result.messages[0] is pasted
+
+
+def test_tool_summaries_keep_only_allowlisted_targets_and_do_not_claim_effects():
+    assert tool_result_summary("propose_file_edit", {
+        "path": "notes.txt", "edits": [{"replace": "secret content"}],
+    }, "success") == 'propose_file_edit path="notes.txt" (returned)'
+    assert tool_result_summary("run_shell_command", {"args": ["secret"]}, "failed") == (
+        "run_shell_command (failed)"
+    )
+    assert tool_result_summary("delete_path", {"path": "notes.txt"}, "skipped") == (
+        'delete_path path="notes.txt" (skipped)'
+    )
 
 
 def test_mask_tool_results_handles_chat_completions_tool_messages():
@@ -120,7 +145,7 @@ def test_mask_tool_results_handles_chat_completions_tool_messages():
     result = mask_tool_results(messages, end=3, min_result_chars=1_000)
 
     masked = result.messages[2]
-    assert masked["content"].startswith(MASK_MARKER)
+    assert masked["content"] == "read_file (result)"
     assert masked["tool_call_id"] == "call_1" and masked["name"] == "read_file"
     assert result.messages[1] == messages[1]
 
@@ -151,7 +176,7 @@ def test_plan_compaction_force_ignores_trigger_and_min_savings_but_keeps_recent_
 
     forced = plan_compaction(messages, strict, force=True)
     assert forced is not None and forced.masked_count == 2
-    assert MASK_MARKER not in forced.messages[11]["content"]  # last turn kept
+    assert forced.messages[11] is messages[11]  # last turn kept
 
     # Nothing left to elide: force still reports no compaction.
     assert plan_compaction(forced.messages, strict, force=True) is None
@@ -222,8 +247,9 @@ def test_agent_compacts_between_turns_before_the_request():
     sent = llm.requests[0]
     tool_results = [m["content"] for m in sent if str(m["content"]).startswith("TOOL RESULT")]
     # keep_recent_turns=1 counted before "fourth" is appended: "third" survives.
-    assert sum(MASK_MARKER in c for c in tool_results) == 2
-    assert MASK_MARKER not in tool_results[-1]
+    assert tool_results[:2] == [SUMMARY, BATCH_SUMMARY]
+    assert tool_results[-1] == f"TOOL RESULT (read_file): {BIG}"
+    assert all(TOOL_RESULT_SUMMARY_KEY not in m and INTERNAL_USER_KEY not in m for m in sent)
     assert any(line.startswith(CONTEXT_COMPACTION_PREFIX) for line in log)
 
 
@@ -236,8 +262,8 @@ def test_agent_manual_compaction_works_when_automatic_compaction_is_disabled():
     result = agent.compact_context(force=True)
     # Config defaults keep the last 3 turns: only "first" is elided.
     assert result is not None and result.masked_count == 1
-    assert agent.messages[3]["content"].startswith("TOOL RESULT (read_file): " + MASK_MARKER)
-    assert MASK_MARKER not in agent.messages[7]["content"]
+    assert agent.messages[3]["content"] == SUMMARY
+    assert agent.messages[7]["content"] == f"TOOL RESULT (batch): {BIG}"
     assert sum(line.startswith(CONTEXT_COMPACTION_PREFIX) for line in log) == 1
     assert agent.compact_context(force=True) is None
 
@@ -246,7 +272,7 @@ def test_agent_compaction_can_be_disabled():
     llm, log = _RecordingLLM(), []
     agent = _agent(llm, None, log)
     agent.step("fourth")
-    assert not any(MASK_MARKER in str(m["content"]) for m in agent.messages)
+    assert not any(m["content"] in (SUMMARY, BATCH_SUMMARY) for m in agent.messages)
     assert not any(line.startswith("CONTEXT COMPACTION:") for line in log)
 
 

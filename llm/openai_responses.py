@@ -67,6 +67,10 @@ class OpenAIResponsesClient:
         """Return the API type for this client."""
         return "responses"
 
+    @property
+    def has_provider_managed_context(self) -> bool:
+        return self._last_response_id is not None
+
     def reset_conversation(self) -> None:
         """Clear stateful Responses API continuation state."""
         self._last_response_id = None

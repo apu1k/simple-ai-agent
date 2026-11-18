@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from config import MAX_AGENT_STEPS, MAX_BATCH_TOOL_CALLS
 from core.agent import Agent, MAX_STEPS
+from core.context_compaction import TOOL_RESULT_SUMMARY_KEY
 from core.tool_registry import ToolRegistry, ToolSpec
 from editing.store import EditStore
 from llm.base import LLMResponse, NativeToolCall
@@ -269,6 +270,9 @@ def test_single_tool_call_keeps_legacy_tool_result_shape():
     tool_results = [m for m in agent.messages if m["role"] == "user" and m["content"].startswith("TOOL RESULT")]
     assert any(m["content"].startswith("TOOL RESULT (t_ok_single):") for m in tool_results)
     assert not any(m["content"].startswith("TOOL RESULT (batch):") for m in tool_results)
+    assert [m[TOOL_RESULT_SUMMARY_KEY] for m in tool_results] == [
+        "TOOL RESULT: t_ok_single (returned)",
+    ]
 
 
 def test_batch_fail_fast_stops_remaining_and_reports_skipped():
@@ -311,6 +315,10 @@ def test_batch_fail_fast_stops_remaining_and_reports_skipped():
     assert "FAILED" in report
     assert "t_never_batch" in report
     assert "SKIPPED" in report
+    summary = next(m[TOOL_RESULT_SUMMARY_KEY] for m in agent.messages if m["content"] == report)
+    assert summary.splitlines() == [
+        "TOOL RESULT (batch):", "t_ok_batch (returned)", "t_fail_batch (failed)", "t_never_batch (skipped)",
+    ]
 
 
 def test_single_tool_failure_keeps_legacy_tool_result_shape():

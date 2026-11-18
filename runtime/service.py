@@ -12,7 +12,7 @@ from typing import Callable
 from uuid import uuid4
 
 from core.agent import Agent
-from core.context_compaction import CONTEXT_COMPACTION_PREFIX
+from core.context_compaction import CONTEXT_COMPACTION_PREFIX, INTERNAL_USER_KEY
 from core.tool_artifacts import is_internal_tool_artifact
 from core.tool_progress import (
     PRIVILEGED_APPROVAL_PREFIX,
@@ -277,14 +277,23 @@ class AgentRuntime:
     def compact_context(self) -> None:
         """Manually mask old tool output now, regardless of the size threshold.
 
-        Keeps the chat, provider continuation and proposals. A successful
-        compaction reports itself through the agent's progress callback,
+        Keeps the chat, provider continuation and proposals. An active remote
+        provider chain is left unchanged. A successful compaction reports
+        itself through the agent's progress callback,
         which _on_tool turns into a System message.
         """
         with self._condition:
             self._require_idle()
             self.initialize()
             assert self._agent is not None
+            if getattr(self._agent, "has_provider_managed_context", False) is True:
+                self._message(
+                    "System",
+                    "Context compaction skipped: OpenAI Responses is using a provider-side chain. "
+                    "Local edits would not shrink it. Use \\reload_context only if you want "
+                    "to start a fresh chain from the last 32 saved final turns.",
+                )
+                return
             compact = getattr(self._agent, "compact_context", None)
             result = compact(force=True) if callable(compact) else None
             if result is None:
@@ -702,8 +711,11 @@ class AgentRuntime:
                     if ("AI", self._run.reply) not in self._messages:
                         self._messages.append(("AI", self._run.reply))
                 evidence = {"interrupted_user_message": self._run.user_text, "tools": records}
-                self._agent.messages.append({"role": "user", "content":
-                    "RECOVERY NOTICE (evidence only, not a request to execute): " + notice + "\n" + json.dumps(evidence, ensure_ascii=False)})
+                self._agent.messages.append({
+                    "role": "user", INTERNAL_USER_KEY: True,
+                    "content": "RECOVERY NOTICE (evidence only, not a request to execute): "
+                    + notice + "\n" + json.dumps(evidence, ensure_ascii=False),
+                })
                 warnings.append(notice)
                 for record in records:
                     warnings.append(f"Recovered tool evidence: {json.dumps(record, ensure_ascii=False)}")
