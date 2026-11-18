@@ -274,9 +274,36 @@ Embedding and index data stay local unless you explicitly configure otherwise. T
 - `\pending` — review and resolve pending operations
 - `\pwd` / `\cd <path>` — inspect or change the working directory
 - `\state` — show runtime state
+- `\compact` — elide large old tool output now (see [Context compaction](#context-compaction))
 - `\reset` — reset the active conversation
 - `\theme` — switch the color theme
 - `\quit` — quit
+
+## Context compaction
+
+Tool output (file reads, searches, command output) makes up most of a long conversation. Before each new user message, the agent checks the size of its context. Once it reaches the trigger, large tool results older than the most recent user turns are replaced by a short placeholder such as:
+
+```
+TOOL RESULT (read_file): [output elided by context compaction: 12,345 chars. Re-run the tool if the details are needed.]
+```
+
+- Message order, roles and tool-call ids are kept, so a tool call is never separated from its result.
+- Compaction runs rarely and in large chunks, because every change to older messages invalidates the provider prompt cache once.
+- A System message in the chat reports each compaction and how many tokens it freed.
+- Full tool output is not lost: it remains in the tool-call audit store and logs.
+- `\compact` runs it immediately, ignoring the trigger and minimum savings. It also works when automatic compaction is disabled.
+
+Settings in `config/settings.py`:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `CONTEXT_COMPACTION_ENABLED` | `True` | Automatic compaction before each turn |
+| `CONTEXT_COMPACTION_TRIGGER_TOKENS` | `100_000` | Context size that triggers it: the larger of a local estimate (characters / 4) and the provider-reported input tokens |
+| `CONTEXT_COMPACTION_KEEP_RECENT_TURNS` | `3` | Tool results of the last N user turns are never elided |
+| `CONTEXT_COMPACTION_MIN_RESULT_CHARS` | `1_000` | Smaller tool results are kept |
+| `CONTEXT_COMPACTION_MIN_SAVINGS_TOKENS` | `20_000` | Automatic compaction is skipped unless it frees at least this much |
+
+Limits: with the OpenAI Responses API the conversation lives on the provider side and tool results are not kept locally, so there is nothing to elide. Growth inside a single long Anthropic tool loop is not compacted.
 
 ## Development
 

@@ -175,6 +175,19 @@ def test_remote_reload_context_uses_an_empty_epoch_bound_command_and_rejects_off
     assert len(job["body"]["request_id"]) == 32
 
 
+def test_remote_compact_context_sends_an_empty_epoch_bound_command():
+    adapter = RemoteRuntimeClient("http://127.0.0.1:8765", TOKEN)
+    with pytest.raises(RuntimeError, match="disconnected"):
+        adapter.compact_context()
+    adapter._server_id = uuid4().hex
+    adapter._set_connected(True)
+    adapter.compact_context()
+    job = adapter._jobs.get_nowait()
+    assert job["body"]["operation"] == "compact_context"
+    assert job["body"]["arguments"] == {}
+    assert job["body"]["server_id"] == adapter._server_id
+
+
 def test_backend_restart_reconnects_but_old_review_token_cannot_approve_reused_id(tmp_path):
     adapter = None
     identity = None

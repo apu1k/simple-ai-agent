@@ -70,6 +70,7 @@ def test_busy_guard_is_server_side_for_all_context_mutations(tmp_path):
             runtime.new_chat,
             runtime.reset_context,
             runtime.reload_context,
+            runtime.compact_context,
             lambda: runtime.load_chat("missing"),
             lambda: runtime.change_directory(".."),
             lambda: runtime.switch_model("missing", "missing"),

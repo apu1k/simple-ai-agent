@@ -8,7 +8,9 @@ from anthropic import BadRequestError
 
 from core.agent import Agent
 from core.tool_registry import ToolRegistry, ToolSpec
+from core.context_compaction import MASK_MARKER, mask_tool_results
 from llm import anthropic_messages
+from llm.anthropic_transcript import NATIVE_KEY, plain_messages
 from llm.base import NativeToolOutput
 from llm.model_listing import list_models
 from llm.providers import ProviderConfig, create_llm_client, load_providers
@@ -134,7 +136,17 @@ def test_no_retry_without_effort_when_provider_rejects_it(http):
     assert len(requests) == 1
 
 
-def test_agent_native_tool_batch_replays_signed_blocks_but_keeps_them_out_of_history(http, tmp_path):
+def _without_cache_control(messages):
+    cleaned = []
+    for message in messages:
+        content = message["content"]
+        if isinstance(content, list):
+            content = [{k: v for k, v in block.items() if k != "cache_control"} for block in content]
+        cleaned.append({**message, "content": content})
+    return cleaned
+
+
+def test_agent_native_tool_batch_replays_identical_prefix_on_next_turn(http, tmp_path):
     requests, responses = http
     signed = {"type": "thinking", "thinking": "not for the transcript", "signature": "opaque-signature"}
     redacted = {"type": "redacted_thinking", "data": "opaque-data"}
@@ -162,14 +174,64 @@ def test_agent_native_tool_batch_replays_signed_blocks_but_keeps_them_out_of_his
     assert ok == {"type": "tool_result", "tool_use_id": "toolu_1", "content": "OK", "is_error": False}
     assert error["type"] == "tool_result" and error["tool_use_id"] == "toolu_2" and error["is_error"] is True
     # Exactly one rolling breakpoint on the newest turn; earlier ones never accumulate.
-    assert error["cache_control"] == {"type": "ephemeral"}
+    cache_marker = {"type": "ephemeral"}
+    assert error["cache_control"] == cache_marker
     assert "cache_control" not in json.dumps(second["messages"][:-1])
     assert first["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
-    for context in (agent.messages, third["messages"]):
-        dumped = json.dumps(context)
-        assert "opaque-signature" not in dumped and "opaque-data" not in dumped
-        assert "not for the transcript" not in dumped
-        assert "Tool batch execution report" in dumped
+    # The next turn resends the tool loop byte-for-byte, so Claude reads the
+    # cache written during the loop instead of rewriting everything after
+    # the system prompt.
+    sent = second["messages"]
+    assert third["messages"][:len(sent)] == _without_cache_control(sent)
+    assert third["messages"][len(sent):] == [
+        {"role": "assistant", "content": "Done."},
+        {"role": "user", "content": [{"type": "text", "text": "Follow up", "cache_control": cache_marker}]},
+    ]
+    assert third["system"] == second["system"]
+    native = [message for message in agent.messages if NATIVE_KEY in message]
+    assert [message[NATIVE_KEY] for message in native] == [_MODEL, _MODEL]
+    assert all(NATIVE_KEY not in message for message in third["messages"])
+    # Other providers only ever see the legacy text form.
+    dumped = json.dumps(plain_messages(agent.messages))
+    assert "opaque-signature" not in dumped and "opaque-data" not in dumped
+    assert "NATIVE TOOL CALL REQUEST" in dumped and "TOOL RESULT (toolu_1): OK" in dumped
+    assert NATIVE_KEY not in dumped
+
+
+def _native_pair(model, call_id="toolu_1"):
+    signed = {"type": "thinking", "thinking": "t", "signature": "sig"}
+    return [
+        {"role": "assistant", NATIVE_KEY: model,
+         "content": [signed, _tool(call_id, "echo", value="x")]},
+        {"role": "user", NATIVE_KEY: model, "content": [
+            {"type": "tool_result", "tool_use_id": call_id, "content": "x", "is_error": False}]},
+    ]
+
+
+def test_native_history_degrades_to_text_for_other_models_and_incomplete_pairs():
+    history = [{"role": "user", "content": "Run it"}, *_native_pair(_MODEL), {"role": "assistant", "content": "Done."}]
+    _, same = anthropic_messages._message_params(history, _MODEL)
+    assert same[1]["content"][0]["signature"] == "sig" and same[2]["content"][0]["type"] == "tool_result"
+    _, other = anthropic_messages._message_params(history, "claude-other")
+    assert "sig" not in json.dumps(other)
+    assert other[1]["content"].startswith("NATIVE TOOL CALL REQUEST")
+    assert other[2] == {"role": "user", "content": "TOOL RESULT (toolu_1): x"}
+    # An interrupted loop may leave a tool_use without its result.
+    dangling = [{"role": "user", "content": "Run it"}, _native_pair(_MODEL)[0], {"role": "user", "content": "Next"}]
+    _, converted = anthropic_messages._message_params(dangling, _MODEL)
+    assert all(isinstance(message["content"], str) for message in converted)
+
+
+def test_compaction_masks_native_tool_results_without_breaking_pairs():
+    pair = _native_pair(_MODEL)
+    pair[1]["content"][0]["content"] = "x" * 5000
+    result = mask_tool_results([{"role": "user", "content": "Run it"}, *pair], 3, 1000)
+    assert result.masked_count == 1 and result.saved_chars > 4000
+    masked = result.messages[2]
+    assert masked[NATIVE_KEY] == _MODEL
+    assert masked["content"][0]["tool_use_id"] == "toolu_1"
+    assert masked["content"][0]["content"].startswith(MASK_MARKER)
+    assert result.messages[1] is pair[0]
 
 
 def test_truncated_tool_call_is_not_exposed_to_the_agent(http):

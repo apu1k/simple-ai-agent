@@ -131,8 +131,8 @@ class ConversationManager:
                     raise RuntimeBusyError("The backend parallel-run limit has been reached")
             if operation == "decide_pending":
                 return runtime.decide_file_pending(**arguments)
-            if operation not in {"submit", "reset_context", "reload_context", "change_directory",
-                                 "switch_model", "set_model_setting"}:
+            if operation not in {"submit", "reset_context", "reload_context", "compact_context",
+                                 "change_directory", "switch_model", "set_model_setting"}:
                 raise ValueError("Unknown conversation operation")
             return getattr(runtime, operation)(**arguments)
 

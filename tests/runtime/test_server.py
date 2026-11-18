@@ -210,6 +210,17 @@ def test_full_ledger_refuses_new_ids_without_forgetting_previous_decisions(tmp_p
         runtime.close()
 
 
+def test_compact_context_command_is_strict_and_reports_through_the_runtime(host):
+    client, runtime, agent, epoch = host
+    before = runtime.snapshot()
+    assert command(client, epoch, "compact_context", {"limit": 1}).status_code == 422
+    assert runtime.snapshot() == before
+    response = command(client, epoch, "compact_context")
+    assert response.status_code == 200
+    role, text = runtime.snapshot().messages[-1]
+    assert role == "System" and text.startswith("Context compaction: nothing to elide")
+
+
 def test_clean_context_reload_command_is_strict_shared_and_deduplicated(host):
     client, runtime, agent, epoch = host
     assert command(client, epoch, "reload_context").status_code == 409

@@ -97,6 +97,25 @@ def test_reload_context_command_replaces_both_clients_with_clean_last_32_turns(c
         runtime.close()
 
 
+def test_compact_command_is_listed_and_reports_through_the_runtime(tmp_path):
+    runtime, agent = make_runtime(tmp_path)
+
+    async def run_test():
+        app = AgentTextualApp(runtime=runtime)
+        async with app.run_test():
+            assert "\\compact" in app.INPUT_COMMANDS
+            app._handle_command("\\help")
+            assert "\\compact: elide large tool output" in app._messages[-1][1]
+            app._handle_command("\\compact")
+            assert app._messages[-1][0] == "System"
+            assert app._messages[-1][1].startswith("Context compaction: nothing to elide")
+
+    try:
+        asyncio.run(run_test())
+    finally:
+        runtime.close()
+
+
 def test_chat_preview_shows_latest_32_turns_and_matching_heading(chat_history):
     store, session = chat_history
     widgets = {

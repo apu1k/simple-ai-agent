@@ -61,7 +61,7 @@ class DecisionArgs(Arguments):
 
 ARGUMENTS: dict[str, type[Arguments]] = {
     "submit": MessageArgs, "new_chat": NewChatArgs, "reset_context": Arguments,
-    "reload_context": Arguments,
+    "reload_context": Arguments, "compact_context": Arguments,
     "load_chat": SessionArgs, "change_directory": DirectoryArgs,
     "switch_model": ModelArgs, "set_model_setting": SettingArgs,
     "decide_pending": DecisionArgs,
@@ -72,8 +72,9 @@ class CommandRequest(Arguments):
     request_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     server_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     session_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
-    operation: Literal["submit", "new_chat", "reset_context", "reload_context", "load_chat", "change_directory",
-                       "switch_model", "set_model_setting", "decide_pending"]
+    operation: Literal["submit", "new_chat", "reset_context", "reload_context", "compact_context",
+                       "load_chat", "change_directory", "switch_model", "set_model_setting",
+                       "decide_pending"]
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -96,6 +96,7 @@ class AgentTextualApp(App):
         "\\new_chat",
         "\\history",
         "\\reload_context",
+        "\\compact",
         "\\reset",
         "\\pwd",
         "\\cd",
@@ -448,9 +449,11 @@ class AgentTextualApp(App):
             self._append_chat(
                 "System",
                 "Supported Textual commands: \\help, \\models, \\settings, \\pending, \\chats, \\new_chat, "
-                "\\history, \\reload_context, \\reset, \\pwd, \\cd, \\state, \\theme, \\quit\n"
+                "\\history, \\reload_context, \\compact, \\reset, \\pwd, \\cd, \\state, \\theme, \\quit\n"
                 "\\reload_context: reload the last 32 saved turns without intermediate tool exchanges; "
                 "start a fresh provider conversation on the next message.\n"
+                "\\compact: elide large tool output older than the last 3 turns now; "
+                "the chat and provider conversation are kept.\n"
                 "\\reset: clear model context entirely (does not reload saved turns).",
             )
             return
@@ -486,6 +489,14 @@ class AgentTextualApp(App):
         if command == "\\reload_context":
             try:
                 self.runtime.reload_context()
+                self._drain_runtime_events()
+            except (RuntimeError, ValueError) as error:
+                self._append_chat("Error", str(error))
+            return
+
+        if command == "\\compact":
+            try:
+                self.runtime.compact_context()
                 self._drain_runtime_events()
             except (RuntimeError, ValueError) as error:
                 self._append_chat("Error", str(error))

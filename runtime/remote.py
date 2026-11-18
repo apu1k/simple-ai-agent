@@ -162,6 +162,9 @@ class RemoteRuntimeClient:
     def reload_context(self) -> None:
         self._command("reload_context")
 
+    def compact_context(self) -> None:
+        self._command("compact_context")
+
     def load_chat(self, session_id: str) -> None:
         if self.supports_multi_chat:
             self._select_chat(session_id)

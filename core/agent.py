@@ -19,10 +19,26 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Literal
 
-from config import MAX_AGENT_STEPS, MAX_BATCH_TOOL_CALLS
+from config import (
+    CONTEXT_COMPACTION_ENABLED,
+    CONTEXT_COMPACTION_KEEP_RECENT_TURNS,
+    CONTEXT_COMPACTION_MIN_RESULT_CHARS,
+    CONTEXT_COMPACTION_MIN_SAVINGS_TOKENS,
+    CONTEXT_COMPACTION_TRIGGER_TOKENS,
+    MAX_AGENT_STEPS,
+    MAX_BATCH_TOOL_CALLS,
+)
 from core import protocol
+from core.context_compaction import (
+    CONTEXT_COMPACTION_PREFIX,
+    CompactionResult,
+    CompactionSettings,
+    plan_compaction,
+    usage_input_tokens,
+)
 from core.tool_registry import registry
 from core.tool_progress import tool_progress_listener
+from llm.anthropic_transcript import plain_messages
 from llm.base import LLMResponse, NativeToolCall, NativeToolOutput, request_retry_diagnostic
 from llm.request_progress import request_progress_listener
 from night_shifts.models import ToolCallRecord, ToolCallStatus
@@ -38,6 +54,17 @@ MAX_STEPS = MAX_AGENT_STEPS
 MAX_RETRIES = 2
 MAX_EMPTY_RETRIES = 2
 FAIL_FAST_BATCH = True
+
+
+def default_compaction_settings() -> CompactionSettings | None:
+    if not CONTEXT_COMPACTION_ENABLED:
+        return None
+    return CompactionSettings(
+        trigger_tokens=CONTEXT_COMPACTION_TRIGGER_TOKENS,
+        keep_recent_turns=CONTEXT_COMPACTION_KEEP_RECENT_TURNS,
+        min_result_chars=CONTEXT_COMPACTION_MIN_RESULT_CHARS,
+        min_savings_tokens=CONTEXT_COMPACTION_MIN_SAVINGS_TOKENS,
+    )
 
 
 @dataclass
@@ -65,6 +92,7 @@ class Agent:
         agent_profile: str = "head",
         job_id: str | None = None,
         on_execution: Callable[[str, dict], None] | None = None,
+        compaction_settings: CompactionSettings | None | Literal["default"] = "default",
     ):
         """
         Args:
@@ -75,6 +103,8 @@ class Agent:
             on_tool:        Optional callback for tool call log messages.
             on_raw:         Optional callback for raw LLM response strings.
             on_error:       Optional callback for error messages.
+            compaction_settings: Layer 0 context compaction thresholds;
+                            "default" uses config, None disables it.
         """
         self.state = state
         self.llm = llm
@@ -83,6 +113,14 @@ class Agent:
         self.job_id = job_id
         self.on_execution = on_execution
         self.messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        self.compaction_settings: CompactionSettings | None = (
+            default_compaction_settings()
+            if isinstance(compaction_settings, str)
+            else compaction_settings
+        )
+        # Usage object already acted on; it describes the pre-compaction
+        # context and must not trigger another compaction.
+        self._compacted_usage: object | None = None
 
         # Callbacks — default to no-op so callers don't need to pass them all
         self._debug = on_debug or (lambda msg: None)
@@ -202,14 +240,18 @@ class Agent:
 
     def _messages_with_context(self) -> list[dict]:
         """Return messages with runtime context merged into the single leading system message."""
-        if not self.messages:
+        history = self.messages
+        if self._api_type != "anthropic_messages":
+            # Claude-native tool blocks can only be replayed to Claude.
+            history = plain_messages(history)
+        if not history:
             return [{"role": "system", "content": self._runtime_context()}]
 
-        first = self.messages[0]
+        first = history[0]
         if first.get("role") != "system":
             return [
                 {"role": "system", "content": self._runtime_context()},
-                *self.messages,
+                *history,
             ]
 
         base_content = first.get("content", "")
@@ -218,8 +260,38 @@ class Agent:
 
         return [
             {"role": "system", "content": merged_content},
-            *self.messages[1:],
+            *history[1:],
         ]
+
+    def compact_context(self, *, force: bool = False) -> CompactionResult | None:
+        """Layer 0: mask old tool output when the context has grown large.
+
+        Must only run between turns, never inside a tool loop. Message
+        structure is preserved; only large old tool-result bodies change.
+        force=True is the manual command: it ignores the size thresholds and
+        also works when automatic compaction is disabled.
+        """
+        settings = self.compaction_settings
+        if settings is None:
+            if not force:
+                return None
+            settings = default_compaction_settings() or CompactionSettings()
+        usage = getattr(self.llm, "last_usage", None)
+        reported = None
+        if usage is not None and usage is not self._compacted_usage:
+            reported = usage_input_tokens(usage)
+        result = plan_compaction(self.messages, settings, reported, force=force)
+        if result is None:
+            return None
+        # Mutate in place: callers may hold a reference to this list.
+        self.messages[:] = result.messages
+        self._compacted_usage = usage
+        self._tool(
+            f"{CONTEXT_COMPACTION_PREFIX}elided "
+            f"{result.masked_count} old tool result(s), ~{result.saved_tokens:,} tokens freed "
+            f"(local context now ~{result.context_tokens:,} tokens)."
+        )
+        return result
 
     def _assert_tools_shape(self, api_type: str, tools: list[dict] | None) -> None:
         """Fail fast when tool payload shape does not match target API."""
@@ -309,6 +381,19 @@ class Agent:
                 args = str(tc.arguments)
             lines.append(f"- id={tc.id} name={tc.name} arguments={args}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _native_tool_outputs(pairs: list[tuple[BatchToolRecord, NativeToolCall]]) -> list[NativeToolOutput]:
+        outputs: list[NativeToolOutput] = []
+        for r, tc in pairs:
+            if r.status == "success":
+                out = r.observation or ""
+            elif r.status == "failed":
+                out = r.error or r.observation or "Tool failed."
+            else:
+                out = r.observation or "Skipped due to earlier failure in fail-fast batch."
+            outputs.append(NativeToolOutput(call_id=tc.id, output=out, is_error=r.status != "success"))
+        return outputs
 
     def _append_tool_records_for_local_memory(self, records: list[BatchToolRecord]) -> None:
         """Append executed tool results to local conversation memory.
@@ -545,6 +630,10 @@ class Agent:
         or the step limit is reached.
         """
         self._debug(f"USER INPUT: {user_input}")
+        try:
+            self.compact_context()
+        except Exception as e:  # Compaction must never block a turn.
+            self._error(f"Context compaction failed and was skipped: {e}")
         self.messages.append({"role": "user", "content": user_input})
 
         retry_count = 0
@@ -607,17 +696,7 @@ class Agent:
                     pending_native_tool_calls
                     and getattr(self.llm, 'supports_native_tool_outputs', False)
                 ):
-                    tool_outputs: list[NativeToolOutput] = []
-                    for r, tc in pending_native_tool_calls:
-                        if r.status == "success":
-                            out = r.observation or ""
-                        elif r.status == "failed":
-                            out = r.error or r.observation or "Tool failed."
-                        else:
-                            out = r.observation or "Skipped due to earlier failure in fail-fast batch."
-                        tool_outputs.append(NativeToolOutput(
-                            call_id=tc.id, output=out, is_error=r.status != "success",
-                        ))
+                    tool_outputs = self._native_tool_outputs(pending_native_tool_calls)
 
                     with request_progress_listener(self._tool):
                         reply = self.llm.submit_tool_outputs(tool_outputs)
@@ -641,6 +720,7 @@ class Agent:
             # Handle LLMResponse with native tool calls
             parsed: protocol.ParsedResponse
             native_tool_calls = None
+            native_transcript = False
             if isinstance(reply, LLMResponse):
                 if reply.tool_calls:
                     native_tool_calls = reply.tool_calls
@@ -772,12 +852,18 @@ class Agent:
                 if native_tool_calls and self._api_type == "chat_completions":
                     self._append_chat_completions_native_tool_call(reply, native_tool_calls)
                 elif native_tool_calls and self._api_type == "anthropic_messages":
-                    # Store only the visible text and tool summary. The client
-                    # retains the original signed blocks for this turn alone.
-                    summary = self._format_native_tool_call_summary(native_tool_calls)
-                    self.messages.append({
-                        "role": "assistant", "content": f"{reply}\n\n{summary}".strip(),
-                    })
+                    # Store the provider's exact blocks, including signed
+                    # thinking: the next user turn must resend an identical
+                    # prefix to read Claude's prompt cache instead of rewriting it.
+                    transcript = getattr(self.llm, "transcript_tool_call_message", None)
+                    if callable(transcript):
+                        self.messages.append(transcript())
+                        native_transcript = True
+                    else:
+                        summary = self._format_native_tool_call_summary(native_tool_calls)
+                        self.messages.append({
+                            "role": "assistant", "content": f"{reply}\n\n{summary}".strip(),
+                        })
                 elif native_tool_calls and getattr(self.llm, 'supports_native_tool_outputs', False):
                     # Stateful native-tool APIs such as Responses keep the
                     # function-call request in provider state. Do not add a
@@ -878,9 +964,13 @@ class Agent:
                     # TOOL RESULT text to local memory for native Responses.
                     pending_native_tool_calls = list(zip(records, native_tool_calls, strict=False))
                     if self._api_type == "anthropic_messages":
-                        # Preserve visible observations for later turns, but
+                        # Later turns replay these results from local history;
                         # never carry a failed continuation into a new turn.
-                        self._append_tool_records_for_local_memory(records)
+                        if native_transcript:
+                            self.messages.append(self.llm.transcript_tool_result_message(
+                                self._native_tool_outputs(pending_native_tool_calls)))
+                        else:
+                            self._append_tool_records_for_local_memory(records)
                     else:
                         self._pending_native_tool_calls = pending_native_tool_calls
                     continue
@@ -907,6 +997,7 @@ class Agent:
             gate.revoke()
         self.messages = [{"role": "system", "content": system_prompt}]
         self._pending_native_tool_calls = None
+        self._compacted_usage = None
 
         reset_conversation = getattr(self.llm, "reset_conversation", None)
         if callable(reset_conversation):

@@ -1,12 +1,20 @@
 """API-key client for Anthropic's native Messages and tool-use protocols."""
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
 from anthropic import Anthropic, DefaultHttpxClient
 
+from llm.anthropic_transcript import (
+    NATIVE_KEY,
+    as_text,
+    is_native,
+    replayable_native_indices,
+    tool_result_blocks,
+)
 from llm.base import LLMResponse, NativeToolCall, NativeToolOutput
 
 if TYPE_CHECKING:
@@ -45,11 +53,21 @@ def create_anthropic_client(provider: ProviderConfig, **kwargs) -> Anthropic:
     )
 
 
-def _message_params(messages: list[dict]) -> tuple[str, list[dict]]:
-    """Separate the system prompt and translate legacy OpenAI tool history to text."""
+def _message_params(messages: list[dict], model: str | None = None) -> tuple[str, list[dict]]:
+    """Separate the system prompt and translate legacy OpenAI tool history to text.
+
+    Claude-native tool-loop entries from ``model`` are replayed unchanged so
+    the request prefix matches the prompt cache written during the tool loop.
+    """
     system: list[str] = []
     converted: list[dict] = []
-    for message in messages:
+    replayable = replayable_native_indices(messages, model)
+    for index, message in enumerate(messages):
+        if is_native(message):
+            if index in replayable:
+                converted.append({"role": message["role"], "content": deepcopy(message["content"])})
+                continue
+            message = as_text(message)
         role, content = message["role"], message.get("content")
         if role == "system":
             if content:
@@ -133,7 +151,7 @@ class AnthropicMessagesClient:
     ) -> str | LLMResponse:
         self.reset_conversation()
         self.last_usage = None
-        system, conversation = _message_params(messages)
+        system, conversation = _message_params(messages, self._model)
         effort = self._settings.anthropic_reasoning_effort if self._settings else None
         options: dict = {
             "model": self._model,
@@ -157,15 +175,22 @@ class AnthropicMessagesClient:
         pending = self._pending
         if pending is None:
             raise ValueError("There is no pending Anthropic tool request.")
-        outputs = {output.call_id: output for output in tool_outputs}
-        if len(outputs) != len(tool_outputs) or outputs.keys() != set(pending.call_ids):
-            raise ValueError("Anthropic requires exactly one result per pending tool call.")
-        blocks = [
-            {"type": "tool_result", "tool_use_id": call_id,
-             "content": outputs[call_id].output, "is_error": outputs[call_id].is_error}
-            for call_id in pending.call_ids
-        ]
+        blocks = tool_result_blocks(pending.call_ids, tool_outputs)
         return self._request([*pending.messages, {"role": "user", "content": blocks}], pending.options)
+
+    def transcript_tool_call_message(self) -> dict:
+        """History entry for the pending tool request: the exact blocks sent back."""
+        if self._pending is None:
+            raise ValueError("There is no pending Anthropic tool request.")
+        content = deepcopy(self._pending.messages[-1]["content"])
+        return {"role": "assistant", "content": content, NATIVE_KEY: self._model}
+
+    def transcript_tool_result_message(self, tool_outputs: list[NativeToolOutput]) -> dict:
+        """History entry identical to the tool_result message submit_tool_outputs sends."""
+        if self._pending is None:
+            raise ValueError("There is no pending Anthropic tool request.")
+        blocks = tool_result_blocks(self._pending.call_ids, tool_outputs)
+        return {"role": "user", "content": blocks, NATIVE_KEY: self._model}
 
     def _request(self, messages: list[dict], options: dict) -> str | LLMResponse:
         self._pending = None
@@ -199,7 +224,8 @@ class AnthropicMessagesClient:
             if response.stop_reason != "tool_use" or not ids or len(set(ids)) != len(ids):
                 raise ValueError("Anthropic returned an inconsistent tool-use response.")
             # Include all original blocks, in order, including signed/redacted
-            # thinking. Keep them in memory only for the active tool loop.
+            # thinking. The agent stores the same blocks in local history so
+            # later turns resend an identical, cacheable prefix.
             assistant = {
                 "role": "assistant",
                 "content": [block.model_dump(mode="json", exclude_unset=True) for block in response.content],

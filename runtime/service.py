@@ -12,6 +12,7 @@ from typing import Callable
 from uuid import uuid4
 
 from core.agent import Agent
+from core.context_compaction import CONTEXT_COMPACTION_PREFIX
 from core.tool_artifacts import is_internal_tool_artifact
 from core.tool_progress import (
     PRIVILEGED_APPROVAL_PREFIX,
@@ -273,6 +274,29 @@ class AgentRuntime:
             self._reset_agent()
             self._message("System", "Conversation context reset.")
 
+    def compact_context(self) -> None:
+        """Manually mask old tool output now, regardless of the size threshold.
+
+        Keeps the chat, provider continuation and proposals. A successful
+        compaction reports itself through the agent's progress callback,
+        which _on_tool turns into a System message.
+        """
+        with self._condition:
+            self._require_idle()
+            self.initialize()
+            assert self._agent is not None
+            compact = getattr(self._agent, "compact_context", None)
+            result = compact(force=True) if callable(compact) else None
+            if result is None:
+                self._message(
+                    "System",
+                    "Context compaction: nothing to elide. Tool results of the last "
+                    "turns and small results are always kept.",
+                )
+                return
+            self._capture_context()
+            self._checkpoint()
+
     def reload_context(self) -> None:
         """Replay saved final turns in a fresh provider chain, not a new local chat."""
         with self._condition:
@@ -472,6 +496,8 @@ class AgentRuntime:
             self._publish("tool", text)
             if text.startswith(REQUEST_PROGRESS_PREFIX):
                 self._message("System", text[len(REQUEST_PROGRESS_PREFIX):])
+            elif text.startswith(CONTEXT_COMPACTION_PREFIX):
+                self._message("System", "Context compaction: " + text[len(CONTEXT_COMPACTION_PREFIX):])
             elif text.startswith(PRIVILEGED_APPROVAL_PREFIX):
                 identity = text[len(PRIVILEGED_APPROVAL_PREFIX):]
                 self._message(
