@@ -99,6 +99,8 @@ After installing the updated requirements and restarting the backend (or the loc
 
 In `\settings`, choose **Anthropic reasoning effort**: **Default**, `low`, `medium`, `high`, `xhigh`, or `max`. Default omits the effort parameter; it doesn't disable thinking. Claude Opus 5.5 supports all five levels and defaults to `medium`. Not every model supports every level; the app shows Anthropic's error rather than silently changing your selection. This setting is independent of OpenAI reasoning effort and does not change the approved Night Shift worker policy.
 
+The output limit (`max_tokens`, covering thinking plus reply) is 64,000 tokens at `xhigh` and `max`, as Anthropic recommends, and 32,768 otherwise when effort is set or for Claude Opus 5.5. Requests use prompt caching: the tools and system prompt, plus a rolling breakpoint on the newest turn, are cached so long conversations and tool loops reuse their prefix at the reduced cached-input price. If Claude declines a request or the conversation exceeds its context window, the app shows a clear error instead of an empty reply.
+
 ### Google Gemini through Vertex AI and Application Default Credentials (ADC)
 
 ```toml

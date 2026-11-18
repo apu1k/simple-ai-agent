@@ -85,9 +85,12 @@ def test_chat_uses_native_endpoint_and_appends_no_openai_settings(http, base):
     assert str(request.url) == "https://api.anthropic.com/v1/messages"
     assert request.headers["authorization"] == "Bearer test-key-only"
     payload = json.loads(request.content)
+    cache = {"type": "ephemeral"}
     assert payload == {
         "model": "claude-chosen", "max_tokens": 4096, "stream": True,
-        "system": "Be useful", "messages": [{"role": "user", "content": "Hello"}],
+        "system": [{"type": "text", "text": "Be useful", "cache_control": cache}],
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "Hello", "cache_control": cache}]}],
     }
 
 
@@ -105,7 +108,18 @@ def test_all_effort_levels_use_output_config_without_forcing_thinking(http):
     assert [payload.get("output_config") for payload in payloads] == [
         {"effort": level} if level is not None else None for level in levels
     ]
+    assert [payload["max_tokens"] for payload in payloads] == [32768, 32768, 32768, 64000, 64000, 32768]
     assert all("thinking" not in payload for payload in payloads)
+
+
+@pytest.mark.parametrize(("stop", "message"), [("refusal", "declined"),
+                                               ("model_context_window_exceeded", "context window")])
+def test_refusal_and_context_overflow_are_reported_clearly(http, stop, message):
+    _, responses = http
+    responses.append(_stream(_text("Partial"), stop=stop))
+    client = create_llm_client(_PROVIDER, _MODEL)
+    with pytest.raises(ValueError, match=message):
+        client.chat([{"role": "user", "content": "Hi"}])
 
 
 def test_no_retry_without_effort_when_provider_rejects_it(http):
@@ -147,6 +161,10 @@ def test_agent_native_tool_batch_replays_signed_blocks_but_keeps_them_out_of_his
     ok, error = results["content"]
     assert ok == {"type": "tool_result", "tool_use_id": "toolu_1", "content": "OK", "is_error": False}
     assert error["type"] == "tool_result" and error["tool_use_id"] == "toolu_2" and error["is_error"] is True
+    # Exactly one rolling breakpoint on the newest turn; earlier ones never accumulate.
+    assert error["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in json.dumps(second["messages"][:-1])
+    assert first["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
     for context in (agent.messages, third["messages"]):
         dumped = json.dumps(context)
         assert "opaque-signature" not in dumped and "opaque-data" not in dumped

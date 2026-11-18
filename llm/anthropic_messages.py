@@ -17,6 +17,10 @@ _DEFAULT_BASE_URL = "https://api.anthropic.com"
 _REQUEST_TIMEOUT = 180.0
 _DEFAULT_MAX_TOKENS = 4096
 _REASONING_MAX_TOKENS = 32768
+# Anthropic recommends starting around 64k at xhigh/max: max_tokens is a hard
+# limit on thinking plus reply, and long agentic turns need the headroom.
+_HIGH_EFFORT_MAX_TOKENS = 64000
+_CACHE_CONTROL = {"type": "ephemeral"}
 
 
 def _sdk_base_url(base_url: str | None) -> str:
@@ -65,6 +69,29 @@ def _message_params(messages: list[dict]) -> tuple[str, list[dict]]:
     return "\n\n".join(system), converted
 
 
+def _max_tokens(model: str, effort: str | None) -> int:
+    if effort in {"xhigh", "max"}:
+        return _HIGH_EFFORT_MAX_TOKENS
+    if effort is not None or model.startswith("claude-opus-5-5"):
+        return _REASONING_MAX_TOKENS
+    return _DEFAULT_MAX_TOKENS
+
+
+def _with_cache_breakpoint(messages: list[dict]) -> list[dict]:
+    """Mark the newest turn so the next request can reuse the cached prefix.
+
+    Applied to a per-request copy only: stored tool-loop history must not
+    accumulate stale breakpoints (Anthropic allows at most four per request).
+    """
+    if not messages:
+        return messages
+    *earlier, last = messages
+    content = last["content"]
+    blocks = [{"type": "text", "text": content}] if isinstance(content, str) else list(content)
+    blocks[-1] = {**blocks[-1], "cache_control": _CACHE_CONTROL}
+    return [*earlier, {**last, "content": blocks}]
+
+
 def _tool_choice(choice: str | dict) -> dict:
     if isinstance(choice, dict):
         if choice.get("type") == "function":
@@ -111,14 +138,11 @@ class AnthropicMessagesClient:
         options: dict = {
             "model": self._model,
             "timeout": _REQUEST_TIMEOUT,
-            "max_tokens": (
-                _REASONING_MAX_TOKENS
-                if effort is not None or self._model.startswith("claude-opus-5-5")
-                else _DEFAULT_MAX_TOKENS
-            ),
+            "max_tokens": _max_tokens(self._model, effort),
         }
         if system:
-            options["system"] = system
+            # Breakpoint after tools + system: the stable prefix of every request.
+            options["system"] = [{"type": "text", "text": system, "cache_control": _CACHE_CONTROL}]
         if effort is not None:
             # Anthropic validates model-specific support. Don't turn thinking
             # off, force a thinking mode, or retry with a different effort.
@@ -148,11 +172,15 @@ class AnthropicMessagesClient:
         self.last_usage = None
         # Stream through the SDK to support high-effort, long-running requests.
         # Only the final assembled message is consumed by the agent runtime.
-        with self._client.messages.stream(messages=messages, **options) as stream:
+        with self._client.messages.stream(messages=_with_cache_breakpoint(messages), **options) as stream:
             response = stream.get_final_message()
         self.last_usage = response.usage
         if response.stop_reason == "max_tokens":
             raise ValueError("Claude reached its output token limit. Try a lower Anthropic effort or a smaller request.")
+        if response.stop_reason == "refusal":
+            raise ValueError("Claude declined this request (stop_reason=refusal). Rephrase it or start a new conversation.")
+        if response.stop_reason == "model_context_window_exceeded":
+            raise ValueError("The conversation exceeds Claude's context window. Reload the context or start a new conversation.")
         if response.stop_reason is None:
             raise ValueError("Anthropic returned an incomplete message stream.")
 
