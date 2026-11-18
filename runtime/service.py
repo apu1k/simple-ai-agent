@@ -22,6 +22,7 @@ from core.tool_progress import (
 from editing.model import PendingEdit
 from llm.base import LLMClient
 from llm.request_progress import REQUEST_PROGRESS_PREFIX
+from llm.responses_transcript import SEQUENCE_KEY
 from runtime.bootstrap import build_model_config_and_client, create_agent
 from runtime.chat_store import (
     DEFAULT_CHAT_TURN_LIMIT,
@@ -111,6 +112,7 @@ class AgentRuntime:
         with self._condition:
             self._require_open()
             if self._agent is None:
+                self._enable_responses_replay(self.llm)
                 self._agent = self._agent_factory(
                     state=self.state,
                     llm=self.llm,
@@ -121,9 +123,16 @@ class AgentRuntime:
                 )
                 if self._store is not None:
                     self._agent.on_execution = self._on_execution
+                if callable(getattr(self._store, "stage_transcript", None)):
+                    self._agent.on_transcript = self._on_transcript
                 if not self._restoring:
                     self._capture_context()
                     self._checkpoint()
+
+    def _enable_responses_replay(self, llm: LLMClient) -> None:
+        enable = getattr(llm, "enable_local_replay", None)
+        if callable(enable) and callable(getattr(self._store, "stage_transcript", None)):
+            enable()
 
     def attach_client(self, *, can_approve: bool = False) -> str:
         """Register a trusted adapter, not a model-selected authorization."""
@@ -294,6 +303,9 @@ class AgentRuntime:
                     "to start a fresh chain from the last 32 saved final turns.",
                 )
                 return
+            if getattr(self._agent, "uses_local_responses_replay", False) is True:
+                self._message("System", "Context compaction is not yet available for local Responses replay.")
+                return
             compact = getattr(self._agent, "compact_context", None)
             result = compact(force=True) if callable(compact) else None
             if result is None:
@@ -356,6 +368,7 @@ class AgentRuntime:
             if provider is None:
                 raise ValueError(f"Unknown provider: {provider_key}")
             config, llm = build_model_config_and_client(provider, model)
+            self._enable_responses_replay(llm)
             self.initialize()
             assert self._agent is not None
             previous_config, previous_llm = self.state.model_config, self.llm
@@ -569,7 +582,7 @@ class AgentRuntime:
     def _system_prompt(self, llm: LLMClient) -> str:
         assert self._agent is not None
         return build_system_prompt(
-            self.state,
+            None if getattr(llm, "local_replay_configured", False) is True else self.state,
             use_native_tools=getattr(llm, "supports_native_tools", False),
             tool_registry=self._agent.registry,
         )
@@ -606,12 +619,22 @@ class AgentRuntime:
             self._store.execution(record["id"], self._run.run_id, record)
             self._publish(kind, json.dumps(record, ensure_ascii=False))
 
+    def _on_transcript(self, message: dict) -> int:
+        with self._condition:
+            stage = getattr(self._store, "stage_transcript", None)
+            if self._run is None or self._run.status != "running" or not callable(stage):
+                raise PersistenceError("No active durable run for the transcript entry")
+            return stage(self._run.run_id, message)
+
     def _capture_context(self) -> None:
         if self._agent is None:
             return
         export = getattr(self.llm, "export_conversation", None)
         self._context = {
-            "messages": deepcopy([m for m in self._agent.messages if m.get("role") != "system"]),
+            "messages": [
+                {"role": m["role"], SEQUENCE_KEY: m[SEQUENCE_KEY]} if SEQUENCE_KEY in m else deepcopy(m)
+                for m in self._agent.messages if m.get("role") != "system"
+            ],
             "provider": export() if callable(export) else None,
         }
         self._context_run_id = self._run.run_id if self._run is not None else None

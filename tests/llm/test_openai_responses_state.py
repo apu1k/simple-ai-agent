@@ -140,6 +140,24 @@ def test_responses_submit_tool_outputs_resends_cached_tools_and_tool_choice():
     assert second_kwargs["store"] is True
 
 
+def test_durable_client_keeps_a_legacy_chain_until_explicit_reset():
+    legacy = OpenAIResponsesClient(_provider())
+    legacy._client = _FakeOpenAIClient()
+    legacy.chat([{"role": "user", "content": "legacy request"}])
+
+    client = OpenAIResponsesClient(_provider())
+    fake_openai = _FakeOpenAIClient()
+    client._client = fake_openai
+    client.enable_local_replay()
+    assert client.uses_local_replay
+    client.restore_conversation(legacy.export_conversation())
+    assert client.has_provider_managed_context and not client.uses_local_replay
+    client.chat([{"role": "user", "content": "continue legacy"}])
+    assert fake_openai.responses.calls[-1]["previous_response_id"] == "resp_1"
+    client.reset_conversation()
+    assert client.uses_local_replay
+
+
 def test_responses_reset_conversation_clears_cached_tools():
     client = OpenAIResponsesClient(_provider())
     fake_openai = _FakeOpenAIClient()

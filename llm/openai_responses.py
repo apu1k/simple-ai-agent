@@ -8,11 +8,13 @@ Implements llm/base.py LLMClient protocol.
 from hashlib import sha256
 import json
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
+from urllib.parse import urlsplit
 
 from openai import OpenAI
 from llm.base import LLMResponse, NativeToolCall, NativeToolOutput
 from llm.providers import ProviderConfig
+from llm.responses_transcript import entry, for_responses, output_items, replay_scope, validate_output
 from llm.openai_flex import create_openai_request, flex_request_options
 from llm.openai_reasoning import reasoning_request_options
 from llm.worker_limits import WorkerRequestLimits
@@ -34,6 +36,8 @@ class OpenAIResponsesClient:
             self._client = OpenAI(api_key=provider.api_key)
         self._model = provider.default_model
         self._base_url = str(self._client.base_url)
+        self.replay_scope = replay_scope(self._base_url, provider.key, self._model)
+        self._local_replay_enabled = False
         self._model_settings: ModelSettings | None = None
         self._last_response_id: str | None = None
         self._last_tools: list[dict] | None = None
@@ -63,6 +67,10 @@ class OpenAIResponsesClient:
         return True
 
     @property
+    def local_replay_configured(self) -> bool:
+        return self._local_replay_enabled
+
+    @property
     def api_type(self) -> str:
         """Return the API type for this client."""
         return "responses"
@@ -70,6 +78,54 @@ class OpenAIResponsesClient:
     @property
     def has_provider_managed_context(self) -> bool:
         return self._last_response_id is not None
+
+    def enable_local_replay(self) -> None:
+        """Use stateless replay on the direct OpenAI endpoint when durably hosted."""
+        url = urlsplit(self._base_url)
+        self._local_replay_enabled = url.scheme == "https" and url.hostname == "api.openai.com"
+
+    @property
+    def uses_local_replay(self) -> bool:
+        # Restored legacy chains keep running until an explicit context reset
+        # or model switch. They cannot be retroactively reconstructed losslessly.
+        return self._local_replay_enabled and self._last_response_id is None
+
+    def chat_replay(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None,
+        tool_choice: str | dict | None,
+        on_output: Callable[[dict], None],
+    ) -> str | LLMResponse:
+        """Send local items only, then record the returned items before dispatch."""
+        if not self.uses_local_replay:
+            raise ValueError("Local Responses replay is not enabled for this conversation")
+        instructions = messages[0]["content"] if messages and messages[0].get("role") == "system" else ""
+        kwargs = {
+            "model": self._model, "instructions": instructions,
+            "input": for_responses(messages, self.replay_scope), "store": False,
+            "include": ["reasoning.encrypted_content"], "timeout": REQUEST_TIMEOUT_SECONDS,
+        }
+        if tools is not None:
+            kwargs["tools"] = tools
+        if tool_choice is not None:
+            kwargs["tool_choice"] = tool_choice
+        kwargs.update(flex_request_options(self._base_url, self._model_settings))
+        kwargs.update(reasoning_request_options(self._base_url, self._model_settings, "responses"))
+        if self._worker_limits is not None:
+            kwargs["max_output_tokens"] = self._worker_limits.max_output_tokens
+            kwargs["timeout"] = self._worker_limits.timeout(REQUEST_TIMEOUT_SECONDS)
+        self._debug_log_response_request_tools("chat_replay", kwargs)
+        self.last_usage = None
+        response = create_openai_request(
+            self._client, "responses", kwargs, allow_flex_retries=self._worker_limits is None,
+        )
+        self.last_usage = getattr(response, "usage", None)
+        items = output_items(response)
+        on_output(entry("output", self.replay_scope, items))
+        validate_output(items, getattr(response, "status", None))
+        return self._parse_response(response)
 
     def reset_conversation(self) -> None:
         """Clear stateful Responses API continuation state."""

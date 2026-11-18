@@ -17,7 +17,8 @@ from __future__ import annotations
 import json
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Literal
+from typing import TYPE_CHECKING, Callable, Literal, Protocol, cast
+from uuid import uuid4
 
 from config import (
     CONTEXT_COMPACTION_ENABLED,
@@ -45,6 +46,9 @@ from core.tool_progress import tool_progress_listener
 from llm.anthropic_transcript import plain_messages
 from llm.base import LLMResponse, NativeToolCall, NativeToolOutput, request_retry_diagnostic
 from llm.request_progress import request_progress_listener
+from llm.responses_transcript import (
+    EXECUTION_REFS_KEY, SEQUENCE_KEY, directive_text, entry, execution_output, portable_messages,
+)
 from night_shifts.models import ToolCallRecord, ToolCallStatus
 
 if TYPE_CHECKING:
@@ -58,6 +62,15 @@ MAX_STEPS = MAX_AGENT_STEPS
 MAX_RETRIES = 2
 MAX_EMPTY_RETRIES = 2
 FAIL_FAST_BATCH = True
+
+
+class _LocalResponsesClient(Protocol):
+    replay_scope: str
+
+    def chat_replay(
+        self, messages: list[dict], *, tools: list[dict] | None,
+        tool_choice: str | dict | None, on_output: Callable[[dict], None],
+    ) -> str | LLMResponse: ...
 
 
 def default_compaction_settings() -> CompactionSettings | None:
@@ -80,6 +93,7 @@ class BatchToolRecord:
     status: Literal["success", "failed", "skipped"]
     observation: str | None = None
     error: str | None = None
+    execution_id: str | None = None
 
 
 class Agent:
@@ -116,6 +130,7 @@ class Agent:
         self.agent_profile = agent_profile
         self.job_id = job_id
         self.on_execution = on_execution
+        self.on_transcript: Callable[[dict], int] | None = None
         self.messages: list[dict] = [{"role": "system", "content": system_prompt}]
         self.compaction_settings: CompactionSettings | None = (
             default_compaction_settings()
@@ -246,7 +261,7 @@ class Agent:
 
     def _messages_with_context(self) -> list[dict]:
         """Return messages with runtime context merged into the single leading system message."""
-        history = provider_messages(self.messages)
+        history = portable_messages(provider_messages(self.messages))
         if self._api_type != "anthropic_messages":
             # Claude-native tool blocks can only be replayed to Claude.
             history = plain_messages(history)
@@ -274,6 +289,22 @@ class Agent:
         """A local rewrite cannot change an active provider-side chain."""
         return getattr(self.llm, "has_provider_managed_context", False) is True
 
+    @property
+    def uses_local_responses_replay(self) -> bool:
+        return self._api_type == "responses" and getattr(self.llm, "uses_local_replay", False) is True
+
+    def _append_message(self, message: dict) -> None:
+        if self.uses_local_responses_replay and self.on_transcript is not None:
+            sequence = self.on_transcript(message)
+            message = {**message, SEQUENCE_KEY: sequence}
+        self.messages.append(message)
+
+    def _append_responses_directive(self, scope: str) -> None:
+        # Append a state update rather than changing an earlier developer item.
+        current = self._runtime_context()
+        if directive_text(self.messages, scope) != current:
+            self._append_message({**entry("directive", scope, current), INTERNAL_USER_KEY: True})
+
     def compact_context(self, *, force: bool = False) -> CompactionResult | None:
         """Layer 0: mask old tool output when the context has grown large.
 
@@ -282,7 +313,7 @@ class Agent:
         force=True is the manual command: it ignores the size thresholds and
         also works when automatic compaction is disabled.
         """
-        if self.has_provider_managed_context:
+        if self.has_provider_managed_context or self.uses_local_responses_replay:
             return None
         settings = self.compaction_settings
         if settings is None:
@@ -355,7 +386,7 @@ class Agent:
         raise ValueError(f"Unsupported api_type for tool assertions: {api_type}")
 
     def _append_tool_result(self, record: BatchToolRecord) -> None:
-        self.messages.append({
+        self._append_message({
             "role": "user",
             "content": f"TOOL RESULT ({record.action}): {record.observation or record.error or ''}",
             TOOL_RESULT_SUMMARY_KEY: "TOOL RESULT: " + tool_result_summary(
@@ -382,7 +413,7 @@ class Agent:
             summary += "\n" + "\n".join(
                 tool_result_summary(record.action, record.tool_input, record.status) for record in records
             )
-        self.messages.append({
+        self._append_message({
             "role": "user",
             "content": f"TOOL RESULT (batch): {result}",
             TOOL_RESULT_SUMMARY_KEY: summary,
@@ -409,12 +440,7 @@ class Agent:
     def _native_tool_outputs(pairs: list[tuple[BatchToolRecord, NativeToolCall]]) -> list[NativeToolOutput]:
         outputs: list[NativeToolOutput] = []
         for r, tc in pairs:
-            if r.status == "success":
-                out = r.observation or ""
-            elif r.status == "failed":
-                out = r.error or r.observation or "Tool failed."
-            else:
-                out = r.observation or "Skipped due to earlier failure in fail-fast batch."
+            out = execution_output(r.status, r.observation, r.error)
             outputs.append(NativeToolOutput(call_id=tc.id, output=out, is_error=r.status != "success"))
         return outputs
 
@@ -516,10 +542,10 @@ class Agent:
         except Exception as exc:
             self._debug(f"TOOL AUDIT COMPLETION FAILED: {exc}")
 
-    def _execute_one_tool_call(self, action: str, tool_input: dict) -> tuple[Literal["success", "failed"], str, str | None]:
-        from uuid import uuid4
-
-        identity = uuid4().hex
+    def _execute_one_tool_call(
+        self, action: str, tool_input: dict, *, identity: str | None = None,
+    ) -> tuple[Literal["success", "failed"], str, str | None]:
+        identity = identity or uuid4().hex
         record = {"id": identity, "tool": action, "arguments": tool_input}
         if self.on_execution is not None:
             # Unlike the best-effort audit, a failed durable intent aborts dispatch.
@@ -585,10 +611,13 @@ class Agent:
                 ))
                 continue
 
-            status, observation, error = self._execute_one_tool_call(
-                call.action,
-                call.tool_input,
-            )
+            identity = uuid4().hex if self.uses_local_responses_replay and self.on_execution is not None else None
+            if identity is None:
+                status, observation, error = self._execute_one_tool_call(call.action, call.tool_input)
+            else:
+                status, observation, error = self._execute_one_tool_call(
+                    call.action, call.tool_input, identity=identity,
+                )
             records.append(BatchToolRecord(
                 index=i,
                 total=total,
@@ -597,6 +626,7 @@ class Agent:
                 status=status,
                 observation=observation,
                 error=error,
+                execution_id=identity,
             ))
 
             if status == "failed" and FAIL_FAST_BATCH:
@@ -640,10 +670,20 @@ class Agent:
     def step(self, user_input: str) -> str:
         """Consume next-turn authority and revoke it on every exit path."""
         gate = getattr(self.state, "privileged_turn", None)
-        if gate is None:
-            return self._step(user_input)
-        with gate.turn(self.agent_profile):
-            return self._step(user_input)
+        boundary = len(self.messages) if self.uses_local_responses_replay else None
+        completed = False
+        try:
+            if gate is None:
+                reply = self._step(user_input)
+            else:
+                with gate.turn(self.agent_profile):
+                    reply = self._step(user_input)
+            completed = not reply.startswith("Error:")
+            return reply
+        finally:
+            if boundary is not None and not completed:
+                # Keep staged SQLite evidence, but do not replay a partial turn.
+                del self.messages[boundary:]
 
     def _step(self, user_input: str) -> str:
         """
@@ -657,7 +697,11 @@ class Agent:
             self.compact_context()
         except Exception as e:  # Compaction must never block a turn.
             self._error(f"Context compaction failed and was skipped: {e}")
-        self.messages.append({"role": "user", "content": user_input})
+        responses_client = cast(_LocalResponsesClient, self.llm) if self.uses_local_responses_replay else None
+        local_responses = responses_client is not None
+        if responses_client is not None:
+            self._append_responses_directive(responses_client.replay_scope)
+        self._append_message({"role": "user", "content": user_input})
 
         retry_count = 0
         empty_retry_count = 0
@@ -665,7 +709,7 @@ class Agent:
 
         for step in range(1, MAX_STEPS + 1):
             if step == MAX_STEPS - 1:
-                self.messages.append({
+                self._append_message({
                     "role": "user",
                     INTERNAL_USER_KEY: True,
                     "content": (
@@ -716,7 +760,14 @@ class Agent:
             try:
                 # For stateful native tool APIs (e.g., Responses), continue with
                 # structured function_call_output submission instead of text replay.
-                if (
+                if responses_client is not None:
+                    self._append_responses_directive(responses_client.replay_scope)
+                    with request_progress_listener(self._tool):
+                        reply = responses_client.chat_replay(
+                            plain_messages(provider_messages(self.messages)), tools=tools,
+                            tool_choice=tool_choice, on_output=self._append_message,
+                        )
+                elif (
                     pending_native_tool_calls
                     and getattr(self.llm, 'supports_native_tool_outputs', False)
                 ):
@@ -734,7 +785,16 @@ class Agent:
                             tool_choice=tool_choice
                         )
             except Exception as e:
-                err = f"Error: Model request failed: {e}"
+                status = getattr(e, "status_code", None)
+                if local_responses and type(status) is int:
+                    # Provider error bodies may echo part of replayed input.
+                    parameter = getattr(e, "param", None)
+                    field = f" ({parameter})" if isinstance(parameter, str) and parameter in {
+                        "service_tier", "tools", "model", "reasoning", "input", "include",
+                    } else ""
+                    err = f"Error: OpenAI Responses request failed (HTTP {status}){field}."
+                else:
+                    err = f"Error: Model request failed: {e}"
                 diagnostic = request_retry_diagnostic(e)
                 if diagnostic is not None:
                     err += "\n" + diagnostic
@@ -827,7 +887,7 @@ class Agent:
                             "Do not return an empty message."
                         )
 
-                    self.messages.append({
+                    self._append_message({
                         "role": "user",
                         "content": retry_instruction,
                         INTERNAL_USER_KEY: True,
@@ -845,8 +905,9 @@ class Agent:
                 self._error(f"Invalid model response: {parsed.error}")
 
                 if retry_count < MAX_RETRIES:
-                    self.messages.append({"role": "assistant", "content": reply})
-                    self.messages.append({
+                    if not local_responses:
+                        self._append_message({"role": "assistant", "content": reply})
+                    self._append_message({
                         "role": "user",
                         INTERNAL_USER_KEY: True,
                         "content": (
@@ -880,7 +941,9 @@ class Agent:
             # ---- Tool call -----------------------------------------------
             if parsed.kind == "tool":
                 self._debug(f"AVAILABLE TOOLS: {self.registry.names()}")
-                if native_tool_calls and self._api_type == "chat_completions":
+                if local_responses:
+                    pass  # chat_replay already recorded the exact output items.
+                elif native_tool_calls and self._api_type == "chat_completions":
                     self._append_chat_completions_native_tool_call(reply, native_tool_calls)
                 elif native_tool_calls and self._api_type == "anthropic_messages":
                     # Store the provider's exact blocks, including signed
@@ -982,10 +1045,17 @@ class Agent:
                     self._append_chat_completions_tool_results(records, native_tool_calls)
                     continue
 
-                # For stateful native-tool clients, continue via structured
-                # tool outputs (function_call_output). Still record tool results
-                # in local memory so later turns and debugging have a complete
-                # transcript of what happened.
+                if responses_client is not None and native_tool_calls:
+                    outputs = self._native_tool_outputs(list(zip(records, native_tool_calls, strict=True)))
+                    message = entry("results", responses_client.replay_scope, [
+                        {"type": "function_call_output", "call_id": output.call_id, "output": output.output}
+                        for output in outputs
+                    ])
+                    message[EXECUTION_REFS_KEY] = [record.execution_id for record in records]
+                    self._append_message(message)
+                    continue
+
+                # Legacy stateful clients still use function_call_output submission.
                 if (
                     native_tool_calls
                     and getattr(self.llm, 'supports_native_tool_outputs', False)
@@ -1014,7 +1084,8 @@ class Agent:
             # ---- Final answer --------------------------------------------
             if parsed.kind == "final":
                 self._pending_native_tool_calls = None
-                self.messages.append({"role": "assistant", "content": reply})
+                if not local_responses:
+                    self._append_message({"role": "assistant", "content": reply})
                 return parsed.final
 
             return "Error: Unexpected parser state."

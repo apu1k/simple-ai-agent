@@ -196,7 +196,7 @@ def test_single_chat_database_migrates_context_proposals_and_execution_evidence(
         assert manager.get(identity).pending()[1].new_content == "pending"
         assert manager.get(identity)._store.recover_executions("run")[0]["observation"] == "already done"
         with manager.storage.root.transaction() as db:
-            assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+            assert db.execute("PRAGMA user_version").fetchone()[0] == 3
             assert db.execute("SELECT count(*) FROM checkpoint").fetchone()[0] == 0
             assert db.execute("SELECT count(*) FROM proposals").fetchone()[0] == 0
     finally:

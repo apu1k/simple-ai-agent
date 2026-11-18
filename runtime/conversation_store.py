@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from editing.model import FileEdit, PendingEdit
+from llm.responses_transcript import EXECUTION_REFS_KEY, SEQUENCE_KEY, execution_output
 from runtime.chat_store import ChatStore
 from runtime.persistence import PersistenceError, RuntimeStore, _encode, validate_checkpoint
 
@@ -28,6 +29,10 @@ class ConversationStorage:
                 db.execute("CREATE TABLE IF NOT EXISTS chat_executions (chat_id TEXT NOT NULL, id TEXT NOT NULL, run_id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(chat_id,id))")
                 db.execute("CREATE TABLE IF NOT EXISTS chat_runs (chat_id TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(chat_id,id))")
                 db.execute("CREATE TABLE IF NOT EXISTS conversation_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                db.execute("""CREATE TABLE IF NOT EXISTS chat_transcript (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id TEXT NOT NULL, run_id TEXT NOT NULL, payload TEXT NOT NULL
+                )""")
                 legacy = db.execute("SELECT payload FROM checkpoint WHERE id=1").fetchone()
                 if legacy is not None:
                     if db.execute("SELECT 1 FROM chat_checkpoints LIMIT 1").fetchone():
@@ -54,7 +59,7 @@ class ConversationStorage:
                     validate_checkpoint(saved)
                     if saved["chat_session_id"] != identity:
                         raise PersistenceError("Checkpoint belongs to another chat")
-                db.execute("PRAGMA user_version=2")
+                db.execute("PRAGMA user_version=3")
         except Exception:
             self.root.close()
             raise
@@ -95,7 +100,67 @@ class ChatRuntimeStore:
     def load(self) -> dict[str, Any] | None:
         with self.transaction() as db:
             row = db.execute("SELECT payload FROM chat_checkpoints WHERE chat_id=?", (self.identity,)).fetchone()
-            return json.loads(row[0]) if row else None
+            if row is None:
+                return None
+            checkpoint = json.loads(row[0])
+            validate_checkpoint(checkpoint)
+            messages = checkpoint["context"]["messages"]
+            for index, message in enumerate(messages):
+                if SEQUENCE_KEY not in message:
+                    continue
+                owner = db.execute(
+                    "SELECT run_id,payload FROM chat_transcript WHERE sequence=? AND chat_id=?",
+                    (message[SEQUENCE_KEY], self.identity),
+                ).fetchone()
+                if owner is None:
+                    raise PersistenceError("Checkpoint refers to missing transcript evidence")
+                payload = json.loads(owner[1])
+                if payload.get("role") != message["role"] or SEQUENCE_KEY in payload:
+                    raise PersistenceError("Invalid stored transcript entry")
+                for result in payload.get("content", []) if isinstance(payload.get("content"), list) else []:
+                    if isinstance(result, dict) and result.get("type") == "function_call_output" and EXECUTION_REFS_KEY in result:
+                        if "output" in result:
+                            raise PersistenceError("Ambiguous stored tool result")
+                        result["output"] = self._transcript_execution_output(db, owner[0], result.pop(EXECUTION_REFS_KEY))
+                        if result["output"] is None:
+                            raise PersistenceError("Transcript refers to missing or unfinished execution evidence")
+                messages[index] = {**payload, SEQUENCE_KEY: message[SEQUENCE_KEY]}
+            return checkpoint
+
+    def _transcript_execution_output(self, db, run_id: str, identity: str) -> str | None:
+        row = db.execute(
+            "SELECT payload FROM chat_executions WHERE chat_id=? AND run_id=? AND id=?",
+            (self.identity, run_id, identity),
+        ).fetchone()
+        if row is None:
+            return None
+        record = json.loads(row[0])
+        if record.get("status") not in {"success", "failed"}:
+            return None
+        return execution_output(record["status"], record.get("observation"), record.get("error"))
+
+    def stage_transcript(self, run_id: str, message: dict) -> int:
+        """Retain an original even if the run never advances the safe checkpoint."""
+        with self.transaction() as db:
+            payload = {key: value for key, value in message.items() if key != EXECUTION_REFS_KEY}
+            references = message.get(EXECUTION_REFS_KEY)
+            if references is not None:
+                results = []
+                for result, identity in zip(message["content"], references, strict=True):
+                    stored = self._transcript_execution_output(db, run_id, identity) if identity else None
+                    if stored == result["output"]:
+                        copy = {key: value for key, value in result.items() if key != "output"}
+                        copy[EXECUTION_REFS_KEY] = identity
+                        results.append(copy)
+                    else:
+                        results.append(result)
+                payload["content"] = results
+            cursor = db.execute(
+                "INSERT INTO chat_transcript (chat_id,run_id,payload) VALUES (?,?,?)",
+                (self.identity, run_id, _encode(payload)),
+            )
+            assert cursor.lastrowid is not None
+            return cursor.lastrowid
 
     def save(self, checkpoint: dict[str, Any]) -> None:
         if checkpoint["chat_session_id"] != self.identity:

@@ -10,11 +10,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from llm.anthropic_transcript import NATIVE_KEY
+from llm.responses_transcript import EXECUTION_REFS_KEY, SEQUENCE_KEY
 
 TOOL_RESULT_PREFIX = "TOOL RESULT ("
 TOOL_RESULT_SUMMARY_KEY = "_tool_result_summary"
 INTERNAL_USER_KEY = "_internal_user"
-_LOCAL_KEYS = {TOOL_RESULT_SUMMARY_KEY, INTERNAL_USER_KEY}
+_LOCAL_KEYS = {TOOL_RESULT_SUMMARY_KEY, INTERNAL_USER_KEY, EXECUTION_REFS_KEY, SEQUENCE_KEY}
 CONTEXT_COMPACTION_PREFIX = "CONTEXT COMPACTION: "
 CHARS_PER_TOKEN = 4
 
@@ -170,7 +171,9 @@ def mask_tool_results(messages: list[dict], end: int, min_result_chars: int) -> 
     masked = saved = 0
     for index, message in enumerate(messages):
         replacement: str | list[dict] | None = None
-        if index < end:
+        # Durable Responses originals are immutable. A replay projection for
+        # them is a separate feature; never modify the resolved row in place.
+        if index < end and SEQUENCE_KEY not in message:
             summary = message.get(TOOL_RESULT_SUMMARY_KEY)
             role = message.get("role")
             if role == "tool" and not isinstance(summary, str):

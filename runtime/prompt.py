@@ -136,7 +136,7 @@ Tool calling rules:
 
 
 def build_system_prompt(
-    state: "AgentState" = None,
+    state: "AgentState | None" = None,
     use_native_tools: bool = False,
     tool_registry: ToolRegistry | None = None,
 ) -> str:

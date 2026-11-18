@@ -207,7 +207,7 @@ def create_agent(
 
     # Build prompt from the exact registry that the Agent will execute against.
     system_prompt = build_system_prompt(
-        state,
+        None if getattr(llm, "local_replay_configured", False) is True else state,
         use_native_tools=use_native_tools,
         tool_registry=active_registry,
     )

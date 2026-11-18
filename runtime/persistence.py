@@ -11,6 +11,7 @@ from threading import RLock
 from typing import Any, ContextManager, Iterator, Protocol, get_args
 
 from editing.model import FileEdit, PendingEdit
+from llm.responses_transcript import SEQUENCE_KEY
 from runtime.state import ANTHROPIC_REASONING_EFFORTS, ApiType
 
 
@@ -66,7 +67,7 @@ class RuntimeStore:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.execute("PRAGMA synchronous=FULL")
             version = self._db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2):
+            if version not in (0, 1, 2, 3):
                 raise PersistenceError("Unsupported runtime database version; refusing to overwrite state")
             with self.transaction() as db:
                 db.execute("CREATE TABLE IF NOT EXISTS checkpoint (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL)")
@@ -205,6 +206,12 @@ def validate_checkpoint(saved: dict[str, Any]) -> None:
         require(isinstance(context["messages"], list))
         require(all(isinstance(message, dict) and message.get("role") in ("user", "assistant", "tool")
                     for message in context["messages"]))
+        sequence = 0
+        for message in context["messages"]:
+            if SEQUENCE_KEY in message:
+                current = message[SEQUENCE_KEY]
+                require(type(current) is int and current > sequence)
+                sequence = current
         require(context["provider"] is None or isinstance(context["provider"], dict))
         run = saved["run"]
         if run is not None:
