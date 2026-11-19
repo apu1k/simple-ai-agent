@@ -12,6 +12,22 @@ UAC. It never exposes finalization/publication or elevates checkout code.
 policy and receipts. Live ISO/NoCloud `runcmd` compatibility, UART/pipe behavior,
 actual ACL transitions and Linux mount/unmount behavior remain unverified.
 The first authorized run must be **inspect**, not finalize or publication.
+
+An offline authenticated exchange candidate now connects the existing TLS
+adapters to the fixed read-only inspection. Its controller uses only the
+canonical `\\.\pipe\night-shift-<attempt-id>-com1` for a fresh runner, not the
+legacy maintenance pipe. Its guest uses only `/dev/ttyS0`. Each side uses its
+own original local monotonic deadline through open, handshake and exchange.
+The guest checks that the authenticated attempt and the live recovery request
+agree before touching any block device;
+finalization is not a TLS operation. The controller validates a bounded guest
+receipt, not host-side disconnection, removal, or acceptance. Unreviewed link
+targets do not cross the wire. There is no new production launcher or media
+bundle, and the existing plaintext refusal is unchanged. To advance this
+checkpoint to a fresh VM run, the reviewed credential/bootstrap and exact-VM
+supervision paths must still supply the trusted credentials, observe the exact new VM and
+configured pipe, and verify teardown. Stream failure leaves teardown to that
+independent supervision; exiting a TLS context does not repeat uncertain cleanup.
 A timeout is not evidence that the VM or guest worked.
 
 ## Before a real run

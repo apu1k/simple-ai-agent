@@ -50,12 +50,13 @@ class BoundedTlsPipe:
         timeout_seconds: float = 30.0,
         cancelled: Callable[[], bool] = lambda: False,
         clock: Callable[[], float] = time.monotonic,
+        deadline: float | None = None,
     ) -> None:
         self._owner = threading.get_ident()
         self._busy = False
         self._closed = False
         self._pipe: BoundedPipe | None = None
-        self._budget = IOBudget(timeout_seconds, cancelled=cancelled, clock=clock)
+        self._budget = IOBudget(timeout_seconds, cancelled=cancelled, clock=clock, deadline=deadline)
         # The endpoint retains its own defensive checks. Its local timeout can
         # never extend the authoritative outer budget, checked around every
         # endpoint/native operation and before returning an application result.
@@ -181,4 +182,8 @@ class BoundedTlsPipe:
             return self
 
     def __exit__(self, *_: object) -> None:
-        self.close()
+        self._require_owner()
+        # Failure handling already closed the session or retained exact native
+        # state as UNKNOWN. Context exit must not issue a second cleanup.
+        if not self._closed:
+            self.close()

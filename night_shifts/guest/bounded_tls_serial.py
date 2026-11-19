@@ -39,12 +39,14 @@ class GuestTlsSerial:
         timeout_seconds: float = 30.0,
         cancelled: Callable[[], bool] = lambda: False,
         clock: Callable[[], float] = time.monotonic,
+        deadline: float | None = None,
     ) -> None:
         self._owner = threading.get_ident()
+        self._binding = binding
         self._busy = False
         self._closed = False
         self._serial: SerialDevice | None = None
-        self._budget = IOBudget(timeout_seconds, cancelled=cancelled, clock=clock)
+        self._budget = IOBudget(timeout_seconds, cancelled=cancelled, clock=clock, deadline=deadline)
         self._endpoint = OfflineTlsEndpoint(
             context, binding, role="guest", peer_sha256=peer_sha256,
             timeout_seconds=self._budget.remaining(), clock=clock, cancelled=cancelled,
@@ -57,6 +59,11 @@ class GuestTlsSerial:
                 self._drain()
                 if not self._endpoint.authenticated:
                     self._read()
+
+    @property
+    def binding(self) -> AttemptBinding:
+        """The trusted attempt and VM identity used for every frame."""
+        return self._binding
 
     @property
     def closed(self) -> bool:
@@ -158,4 +165,6 @@ class GuestTlsSerial:
             return self
 
     def __exit__(self, *_: object) -> None:
-        self.close()
+        self._require_owner()
+        if not self._closed:
+            self.close()

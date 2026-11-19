@@ -305,10 +305,9 @@ def test_partial_failed_write_is_not_replayed(material, monkeypatch):
 
 def test_unknown_cleanup_overrides_original_failure(material, monkeypatch):
     fixture = setup_peer(material, monkeypatch)
-    channel = fixture.start()
-    fixture.pipe.eof = True
-    fixture.pipe.unknown_close = True
-    with pytest.raises(PipeCleanupUnknown, match="^cleanup_unknown$") as error:
+    with pytest.raises(PipeCleanupUnknown, match="^cleanup_unknown$") as error, fixture.start() as channel:
+        fixture.pipe.eof = True
+        fixture.pipe.unknown_close = True
         channel.receive_message()
     assert error.value.channel is fixture.pipe
     assert channel.closed and fixture.pipe.close_calls == 1
@@ -319,9 +318,8 @@ def test_unknown_cleanup_overrides_original_failure(material, monkeypatch):
 
 def test_unknown_io_cleanup_is_not_implicitly_retried(material, monkeypatch):
     fixture = setup_peer(material, monkeypatch)
-    channel = fixture.start()
-    fixture.pipe.read_error = PipeCleanupUnknown(fixture.pipe)
-    with pytest.raises(PipeCleanupUnknown) as error:
+    with pytest.raises(PipeCleanupUnknown) as error, fixture.start() as channel:
+        fixture.pipe.read_error = PipeCleanupUnknown(fixture.pipe)
         channel.receive_message()
     assert error.value.channel is fixture.pipe
     assert channel.closed and fixture.pipe.cleanup_unknown

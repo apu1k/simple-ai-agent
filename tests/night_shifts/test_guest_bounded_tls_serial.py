@@ -222,10 +222,11 @@ def test_guest_unknown_cleanup_overrides_error_and_cannot_retry_fd_close(materia
 
 def test_guest_unknown_io_cleanup_does_not_implicitly_close_again(material, monkeypatch):
     fixture = setup_peer(material, monkeypatch)
-    guest = fixture.start()
-    fixture.peer.read_error = SerialCleanupUnknown(fixture.peer)
-    with pytest.raises(SerialCleanupUnknown):
+    failure = SerialCleanupUnknown(fixture.peer)
+    with pytest.raises(SerialCleanupUnknown) as error, fixture.start() as guest:
+        fixture.peer.read_error = failure
         guest.receive_message()
+    assert error.value is failure
     assert guest.closed and fixture.peer.close_calls == 0
     with pytest.raises(SerialCleanupUnknown):
         guest.close()

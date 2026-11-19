@@ -55,11 +55,15 @@ class IOBudget:
         *,
         cancelled: Callable[[], bool] = lambda: False,
         clock: Callable[[], float] = time.monotonic,
+        deadline: float | None = None,
     ):
         _seconds(timeout_seconds, 900)
+        if deadline is not None and (type(deadline) not in (int, float) or not math.isfinite(deadline)):
+            raise ValueError("invalid_deadline")
         self._clock = clock
         self._cancelled = cancelled
-        self._deadline = clock() + timeout_seconds
+        limit = clock() + timeout_seconds
+        self._deadline = min(limit, deadline) if deadline is not None else limit
 
     def remaining(self) -> float:
         try:
@@ -440,4 +444,6 @@ class BoundedPipe:
         return self
 
     def __exit__(self, *_: object) -> None:
-        self.close()
+        self._require_owner()
+        if not self._closed:
+            self.close()

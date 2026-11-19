@@ -273,7 +273,8 @@ def read_line(channel: Any, limit: int, timeout: float) -> bytes:
     raise FinalizationError('controller handshake timed out')
 
 
-def main() -> int:
+def recovery_request() -> dict[str, Any]:
+    """Check the live OS and the trusted, read-only recovery request before disk I/O."""
     require(os.name == 'posix' and getattr(os, 'geteuid', lambda: -1)() == 0)
     require(Path('/sys/class/dmi/id/sys_vendor').read_text().strip() == 'Microsoft Corporation')
     cmdline = Path('/proc/cmdline').read_text()
@@ -283,49 +284,63 @@ def main() -> int:
     require(sorted(p.name for p in Path('/sys/class/net').iterdir()) == ['lo'])
     live_root = json.loads(command('/usr/bin/findmnt', '--json', '--mountpoint', '/', '-o', 'FSTYPE'))
     require(live_root['filesystems'][0]['fstype'] == 'overlay')
-    request = validate_request(json.loads((MEDIA / 'request.json').read_bytes()))
+    with (MEDIA / 'request.json').open('rb') as stream:
+        raw = stream.read(65537)
+    require(len(raw) <= 65536)
+    request = validate_request(json.loads(raw))
     require(Path('/var/lib/cloud/data/instance-id').read_text().strip() == 'night-shift-finalize-' + request['id'])
-    with serial._open_serial('/dev/ttyS0') as channel:
-        require(json.loads(read_line(channel, 256, 120)) == {'id': request['id'], 'mode': request['mode']})
-        receipt: dict[str, Any] = {'version': 1, 'id': request['id'], 'mode': request['mode'], 'status': 'failed', 'unmounted_read_only': False}
-        mounted = False
-        try:
-            disks = json.loads(command('/usr/bin/lsblk', '--json', '--tree', '-b', '-e', '7', '-o', 'PATH,TYPE,SIZE,FSTYPE,MOUNTPOINTS'))['blockdevices']
-            writable = [d for d in disks if d['type'] == 'disk']
-            require(len(writable) == 1 and writable[0]['path'] == '/dev/sda' and int(writable[0]['size']) == 20 * 1024**3)
-            parts = writable[0].get('children', [])
-            require([(p['path'], p['type'], p['fstype']) for p in parts] == [('/dev/sda1', 'part', 'vfat'), ('/dev/sda2', 'part', 'ext4')])
-            require(all(not any(p.get('mountpoints', [])) for p in [writable[0], *parts]))
-            # No source partition may already be mounted by the live installer.
-            mounts = json.loads(command('/usr/bin/findmnt', '--json', '-o', 'TARGET,SOURCE'))
-            require('/dev/sda' not in json.dumps(mounts))
-            ROOT.mkdir(mode=0o700)
-            for device in ('/dev/sda', '/dev/sda1', '/dev/sda2'):
-                command('/usr/sbin/blockdev', '--setro', device)
-            command('/usr/bin/mount', '-t', 'ext4', '-o', 'ro,noload,nodev,nosuid,noexec', '/dev/sda2', str(ROOT))
+    return request
+
+
+def _maintain_copy(request: dict[str, Any]) -> dict[str, Any]:
+    """Operate after the caller validates live boot and the attempt's channel."""
+    validate_request(request)
+    receipt: dict[str, Any] = {'version': 1, 'id': request['id'], 'mode': request['mode'],
+                               'status': 'failed', 'unmounted_read_only': False}
+    devices = ('/dev/sda', '/dev/sda1', '/dev/sda2')
+    checked = mounted = False
+    try:
+        disks = json.loads(command('/usr/bin/lsblk', '--json', '--tree', '-b', '-e', '7',
+                                   '-o', 'PATH,TYPE,SIZE,FSTYPE,MOUNTPOINTS'))['blockdevices']
+        writable = [d for d in disks if d['type'] == 'disk']
+        require(len(writable) == 1 and writable[0]['path'] == devices[0]
+                and int(writable[0]['size']) == 20 * 1024**3)
+        parts = writable[0].get('children', [])
+        require([(p['path'], p['type'], p['fstype']) for p in parts]
+                == [(devices[1], 'part', 'vfat'), (devices[2], 'part', 'ext4')])
+        require(all(not any(p.get('mountpoints', [])) for p in [writable[0], *parts]))
+        mounts = json.loads(command('/usr/bin/findmnt', '--json', '-o', 'TARGET,SOURCE'))
+        require('/dev/sda' not in json.dumps(mounts))
+        ROOT.mkdir(mode=0o700)
+        checked = True
+        for device in devices:
+            command('/usr/sbin/blockdev', '--setro', device)
+        command('/usr/bin/mount', '-t', 'ext4', '-o', 'ro,noload,nodev,nosuid,noexec', devices[2], str(ROOT))
+        mounted = True
+        if request['mode'] == 'inspect':
+            initialized(ROOT)
+            receipt['diagnostics'] = inventory(ROOT)
+            receipt['audit'] = 'inspection_only'
+        else:
+            prepare(ROOT, request)
+            command('/usr/bin/umount', str(ROOT))
+            mounted = False
+            for device in devices:
+                command('/usr/sbin/blockdev', '--setrw', device)
+            command('/usr/bin/mount', '-t', 'ext4', '-o', 'rw,nodev,nosuid,noexec', devices[2], str(ROOT))
             mounted = True
-            if request['mode'] == 'inspect':
-                initialized(ROOT)
-                receipt['diagnostics'] = inventory(ROOT)
-                receipt['audit'] = 'inspection_only'
-            else:
-                prepare(ROOT, request)
-                command('/usr/bin/umount', str(ROOT))
-                mounted = False
-                for device in ('/dev/sda', '/dev/sda1', '/dev/sda2'):
-                    command('/usr/sbin/blockdev', '--setrw', device)
-                command('/usr/bin/mount', '-t', 'ext4', '-o', 'rw,nodev,nosuid,noexec', '/dev/sda2', str(ROOT))
-                mounted = True
-                receipt.update(finalize(ROOT, request, (MEDIA / 'night-shift-protocol-test.service').read_bytes()))
-                command('/usr/bin/sync')
-            receipt['status'] = 'success'
-        except Exception:
-            receipt['error'] = 'maintenance refused or failed; copy not accepted'
-        finally:
+            receipt.update(finalize(ROOT, request, (MEDIA / 'night-shift-protocol-test.service').read_bytes()))
+            command('/usr/bin/sync')
+        receipt['status'] = 'success'
+    except Exception:
+        receipt['error'] = 'maintenance refused or failed; copy not accepted'
+    finally:
+        # A failed layout/mount guard must not even change block-device flags.
+        if checked:
             try:
                 if mounted:
                     command('/usr/bin/umount', str(ROOT))
-                for device in ('/dev/sda', '/dev/sda1', '/dev/sda2'):
+                for device in devices:
                     command('/usr/sbin/blockdev', '--setro', device)
                     require(command('/usr/sbin/blockdev', '--getro', device).strip() == '1')
                 require('/dev/sda' not in command('/usr/bin/findmnt', '--json', '-o', 'TARGET,SOURCE'))
@@ -333,6 +348,14 @@ def main() -> int:
             except Exception:
                 receipt['status'] = 'failed'
                 receipt['error'] = 'unmount/read-only state unknown; copy not accepted'
+    return receipt
+
+
+def main() -> int:
+    request = recovery_request()
+    with serial._open_serial('/dev/ttyS0') as channel:
+        require(json.loads(read_line(channel, 256, 120)) == {'id': request['id'], 'mode': request['mode']})
+        receipt = _maintain_copy(request)
         encoded = json.dumps(receipt, sort_keys=True, separators=(',', ':')).encode('utf-8')
         require(len(encoded) <= 32768)
         channel.write(encoded + b'\n')
