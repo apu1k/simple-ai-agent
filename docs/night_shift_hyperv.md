@@ -44,7 +44,7 @@ Pin and record the image SHA-256 digest. `HyperVSandboxController` verifies it b
 
 ## Default sandbox policy
 
-`SandboxSpec` currently defaults to 2 virtual CPUs, 4096 MiB startup memory, a 20 GiB virtual disk size, and networking disabled. `create.ps1` sets CPU count, disables dynamic memory, resizes the differencing disk when applicable, and omits a switch when networking is off. It explicitly passes the ID-scoped `vm-config` directory beside `worker.vhdx` to `New-VM -Path`, rather than using Hyper-V's global VM configuration default (which may be on C:). This is **offline-tested argument construction**, not a real-host storage attestation: verify VM configuration, state, checkpoint/smart-paging locations and removal on the approved host. If a configuration directory remains after `Remove-VM`, cleanup must report failure; do not delete unrelated host directories. Virtual disk size is **not** a verified host-storage quota; cgroup/process/lifetime and disk growth enforcement must be reviewed on a real host before treating resource limits as comprehensive.
+`SandboxSpec` currently defaults to 2 virtual CPUs, 4096 MiB startup memory, a 20 GiB virtual disk size, and networking disabled. `create.ps1` sets CPU count, disables dynamic memory, resizes the differencing disk when applicable, and omits a switch when networking is off. Before reporting creation it reads back the no-checkpoint settings and, for offline runs, verifies that no adapter reports a switch binding. It explicitly passes the ID-scoped `vm-config` directory beside `worker.vhdx` to `New-VM -Path`, rather than using Hyper-V's global VM configuration default (which may be on C:). This is **offline-tested argument construction**, not a real-host storage attestation: verify VM configuration, state, checkpoint/smart-paging locations and removal on the approved host. If a configuration directory remains after `Remove-VM`, cleanup must report failure; do not delete unrelated host directories. Virtual disk size is **not** a verified host-storage quota; cgroup/process/lifetime and disk growth enforcement must be reviewed on a real host before treating resource limits as comprehensive.
 
 ## Agent plan
 
@@ -63,7 +63,7 @@ The plan is persisted with the job and included in the version-1 worker task. It
 4. Deny networking unless the persisted policy explicitly enables an approved switch/profile.
 5. Persist the external VM ID immediately after creation so controller restart cleanup can find it.
 6. Make stop and destroy idempotent. Scope reconciliation to precisely owned IDs; an unscoped startup sweep is unsafe while another runner may be active.
-7. Destroy differencing disks after completion, cancellation, timeout, and failed provisioning while retaining operational records and approved artifacts.
+7. Destroy a disposable differencing disk only after successful VM inventory, confirmed VM absence and read-back that the VHDX is unattached and unreferenced. If creation itself fails, retain any partial VM/disk and the attempt record for separate exact-resource review; do not roll back from a name alone.
 
 ## Trusted configuration example
 

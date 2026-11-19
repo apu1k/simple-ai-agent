@@ -225,8 +225,11 @@ class HyperVSandboxController:
         )
 
     def create(self, *, job_id: str, spec: SandboxSpec) -> SandboxRecord:
-        if spec.network_enabled and self.config.switch_name is None:
-            raise HyperVError("Network-enabled sandboxes require an approved Hyper-V switch")
+        switch_args: tuple[str, ...] = ()
+        if spec.network_enabled:
+            if self.config.switch_name is None:
+                raise HyperVError("Network-enabled sandboxes require an approved Hyper-V switch")
+            switch_args = ("-SwitchName", self.config.switch_name)
         self.check_prerequisites()
 
         sandbox = SandboxRecord(job_id=job_id, backend=self.backend_name, spec=spec)
@@ -249,7 +252,7 @@ class HyperVSandboxController:
                     "-CpuCount", str(spec.cpu_count),
                     "-MemoryBytes", str(spec.memory_mb * 1024 * 1024),
                     "-DiskSizeBytes", str(spec.disk_gb * 1024 * 1024 * 1024),
-                    "-SwitchName", self.config.switch_name or "",
+                    *switch_args,
                 ),
             )
         except Exception as exc:

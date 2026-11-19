@@ -71,7 +71,7 @@ def test_create_uses_trusted_names_fixed_scripts_and_persists_policy(tmp_path: P
     assert create_arguments[create_arguments.index("-ComPortPipe") + 1] == (
         rf"\\.\pipe\night-shift-{sandbox.sandbox_id}-com1"
     )
-    assert create_arguments[create_arguments.index("-SwitchName") + 1] == ""
+    assert "-SwitchName" not in create_arguments
     disk_path = Path(create_arguments[create_arguments.index("-DiskPath") + 1])
     config_path = Path(create_arguments[create_arguments.index("-VmConfigPath") + 1])
     assert disk_path == controller.config.workspace_root.resolve() / sandbox.sandbox_id / "worker.vhdx"
@@ -93,11 +93,11 @@ def test_creation_script_sets_and_reads_back_explicit_fixed_memory():
         Path(__file__).resolve().parents[2]
         / "night_shifts" / "backends" / "hyperv_scripts" / "create.ps1"
     ).read_text(encoding="utf-8")
-    setting = "Set-VMMemory -VMName $VmName -DynamicMemoryEnabled $false -StartupBytes $MemoryBytes"
-    observation = "$memory = Get-VMMemory -VMName $VmName -ErrorAction Stop"
+    setting = "Set-VMMemory -VM $vm -DynamicMemoryEnabled $false -StartupBytes $MemoryBytes"
+    observation = "$memory = Get-VMMemory -VM $vm -ErrorAction Stop"
     assert "MemoryStartupBytes = $MemoryBytes" in script
     assert "-DynamicMemory:" not in script
-    assert script.index("$createdVm = $true") < script.index(setting)
+    assert script.index("$vm = $created[0]") < script.index(setting)
     assert script.index(setting) < script.index(observation)
     assert "Start-VM" not in script
 
@@ -110,18 +110,17 @@ def test_creation_script_rejects_missing_or_mismatched_memory_before_success():
     ).read_text(encoding="utf-8")
     expected_guard = (
         "if ($null -eq $memory -or $memory.Startup -ne $MemoryBytes -or\n"
-        "        $memory.DynamicMemoryEnabled -ne $false) {\n"
-        "        throw 'Created VM does not have the exact requested fixed-memory settings'\n"
-        "    }"
+        "    $memory.DynamicMemoryEnabled -ne $false) {\n"
+        "    throw 'Created VM does not have the exact requested fixed-memory settings'\n"
+        "}"
     )
-    observation = "$memory = Get-VMMemory -VMName $VmName -ErrorAction Stop"
-    success = "\n    $VmName\n"
-    assert script.index("try {") < script.index(observation) < script.index(expected_guard)
-    assert script.index(expected_guard) < script.index(success) < script.index("catch {")
-    cleanup = script[script.index("catch {"):]
-    assert "if ($createdVm) {" in cleanup
-    assert "Remove-VM -Name $VmName -Force" in cleanup
-    assert "Remove-Item -LiteralPath $DiskPath -Force" in cleanup
+    observation = "$memory = Get-VMMemory -VM $vm -ErrorAction Stop"
+    success = "\n$VmName\n"
+    assert script.index(observation) < script.index(expected_guard) < script.index(success)
+    assert "Remove-VM" not in script and "Remove-Item" not in script
+    assert script.index("-AutomaticCheckpointsEnabled $false") < script.index(success)
+    assert script.index("$effective[0].AutomaticCheckpointsEnabled -ne $false") < script.index(success)
+    assert script.index("Get-VMNetworkAdapter -VM $effective[0] -ErrorAction Stop") < script.index(success)
 
 
 def test_preflight_requires_memory_configuration_and_readback_commands():
@@ -197,6 +196,17 @@ def test_network_requires_a_trusted_switch(tmp_path: Path):
         )
 
     assert runner.calls == []
+
+
+@pytest.mark.parametrize('network_enabled', [False, True])
+def test_approved_switch_is_passed_only_for_network_enabled_sandbox(tmp_path: Path, network_enabled: bool):
+    controller, runner = build_controller(tmp_path, switch_name='approved test switch')
+    controller.create(job_id='job-1', spec=SandboxSpec(network_enabled=network_enabled))
+    create_arguments = runner.calls[-1][1]
+    if network_enabled:
+        assert create_arguments[-2:] == ('-SwitchName', 'approved test switch')
+    else:
+        assert '-SwitchName' not in create_arguments
 
 
 def test_lifecycle_failure_is_persisted(tmp_path: Path):

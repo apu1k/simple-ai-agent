@@ -104,20 +104,26 @@ def test_archive_reader_refuses_traversal_without_running_installer(tmp_path):
     powershell(command)
 
 
-@pytest.mark.parametrize('state,bad_owner,fail_readback,expected_stop,expected_observation', [
-    ('Running', False, False, 1, 'off_observed'),
-    ('Off', False, False, 0, 'off_observed'),
-    ('Running', True, False, 0, 'unknown'),
-    ('Running', False, True, 1, 'unknown'),
+@pytest.mark.parametrize('phase,state,bad_owner,fail_readback,stop_requested,expected_stop,expected_observation', [
+    ('CHANNEL', 'Running', False, False, False, 1, 'off_observed'),
+    ('CHANNEL', 'Off', False, False, False, 0, 'off_observed'),
+    ('CHANNEL', 'Running', True, False, False, 0, 'unknown'),
+    ('CHANNEL', 'Running', False, True, False, 1, 'unknown'),
+    ('STOP', 'Running', False, False, True, 0, 'unknown'),
+    ('STOP', 'Off', False, False, True, 0, 'off_observed'),
+    ('REMOVE', 'Running', False, False, False, 0, 'unknown'),
 ])
 def test_failure_handler_observes_only_exact_owned_fake_vm(
-    state, bad_owner, fail_readback, expected_stop, expected_observation,
+    phase, state, bad_owner, fail_readback, stop_requested, expected_stop, expected_observation,
 ):
     # Evaluate only the catch body with all Hyper-V operations shadowed by local
     # fake functions. No real VM, privilege, protected receipt or entry point.
     command = maintenance_functions('Assert-Owned', 'Get-MaintenanceFailureDetails')
-    command += ("$Identity='" + 'a' * 32 + "';$Mode='inspect';$phase='CHANNEL';"
-                "$channelStage='security_query';$failureCode='operation_failed';"
+    stage = 'security_query' if phase == 'CHANNEL' else 'not_applicable'
+    stop_flag = 'true' if stop_requested else 'false'
+    command += ("$Identity='" + 'a' * 32 + "';$Mode='inspect';" +
+                f"$phase='{phase}';$channelStage='{stage}';$stopRequested=${stop_flag};" +
+                "$failureCode='operation_failed';"
                 "$vmName='fixture';$owner='fixture-owner';$expectedConfig='C:\\fixture';"
                 "$vm=[pscustomobject]@{Id=[guid]'51434da9-9168-428a-8624-72a246ccc18d'};"
                 "$script:owned=[pscustomobject]@{Id=$vm.Id;Name=$vmName;Notes=$owner;Path=$expectedConfig;State='"
@@ -134,14 +140,14 @@ def test_failure_handler_observes_only_exact_owned_fake_vm(
                 "$body=@($ast.EndBlock.Statements | Where-Object {$_ -is [System.Management.Automation.Language.TryStatementAst]})[0].CatchClauses[0].Body.Extent.Text;"
                 "$invoke=\"try { throw (New-Object ComponentModel.Win32Exception(5,'PRIVATE_CANARY')) } catch \"+$body;"
                 "try{Invoke-Expression $invoke;throw 'handler did not fail'}catch{"
-                "if($_.Exception.Message -cne 'NS-MAINTENANCE-FAIL CHANNEL'){throw 'phase lost'}};"
+                f"if($_.Exception.Message -cne 'NS-MAINTENANCE-FAIL {phase}'){{throw 'phase lost'}}}};"
                 "@{details=$script:captured;stops=$script:stops}|ConvertTo-Json -Depth 4 -Compress")
     result = json.loads(powershell(command))
     assert result['stops'] == expected_stop
     details = result['details']
     assert details['stop_observation'] == expected_observation
     assert details['code'] == 'win32_error' and details['win32_error'] == 5
-    assert details['channel_stage'] == 'security_query'
+    assert details['phase'] == phase and details['channel_stage'] == stage
     assert 'CANARY' not in json.dumps(result)
 
 

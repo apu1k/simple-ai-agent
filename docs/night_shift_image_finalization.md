@@ -23,7 +23,10 @@ agree before touching any block device;
 finalization is not a TLS operation. The controller validates a bounded guest
 receipt, not host-side disconnection, removal, or acceptance. Unreviewed link
 targets do not cross the wire. There is no new production launcher or media
-bundle, and the existing plaintext refusal is unchanged. To advance this
+bundle, and the existing plaintext refusal is unchanged. In particular, a
+successful authenticated inspection would not unblock the current plaintext
+finalize command on a host that rejects its COM1 ACL. Finalization still needs a
+separately reviewed trusted channel or a separately reviewed attended image route. To advance this
 checkpoint to a fresh VM run, the reviewed credential/bootstrap and exact-VM
 supervision paths must still supply the trusted credentials, observe the exact new VM and
 configured pipe, and verify teardown. Stream failure leaves teardown to that
@@ -95,7 +98,8 @@ python -m night_shifts.image_finalization inspect `
 
 There are no Ubuntu login/console commands. The new generation-2 recovery VM has
 2 CPUs, explicit fixed 2 GiB memory with read-back, no network adapter, GSI
-removed from use, no checkpoints and Linux Secure Boot. Its boot order contains
+removed from use, both checkpoint controls explicitly disabled/read back, no
+existing checkpoints and Linux Secure Boot. Its boot order contains
 **only** the pinned live DVD: it must not boot the installed target. CIDATA is
 data-only, contains no credentials and uses ordinary `runcmd`, **not autoinstall**;
 no target program, chroot, mkfs, package installation or download is executed.

@@ -30,7 +30,10 @@ $phase = 'COPY'
 $channelStage = 'not_applicable'
 $failureCode = 'operation_failed'
 $expectedConfig = Join-Path $configRoot $vmName
-if (Get-VM -Name $vmName -ErrorAction SilentlyContinue) { throw 'Maintenance VM already exists' }
+$initialInventory = @(Get-VM -ErrorAction Stop)
+if (@($initialInventory | Where-Object { $_.Name -ieq $vmName }).Count -ne 0) {
+    throw 'Maintenance VM already exists'
+}
 if ((Test-Path -LiteralPath $copy) -or (Test-Path -LiteralPath $configRoot) -or
     $SourceDisk -eq $copy -or $SourceDisk -eq $RecoveryIso -or $SourceDisk -eq $seed) {
     throw 'Refusing existing output or overlapping inputs'
@@ -46,7 +49,7 @@ if ($vhd.VhdFormat -ne 'VHDX' -or $vhd.VhdType -ne 'Dynamic' -or
     throw 'Source must be an unattached, parentless dynamic 20 GiB VHDX'
 }
 $references = @()
-foreach ($candidate in @(Get-VM -ErrorAction Stop)) {
+foreach ($candidate in $initialInventory) {
     foreach ($drive in @(Get-VMHardDiskDrive -VM $candidate -ErrorAction Stop)) {
         if ($drive.Path -eq $SourceDisk) {
             if ($candidate.State -ne 'Off') { throw 'A source-disk VM is not OFF' }
@@ -59,6 +62,7 @@ $pipe = $null
 $sourceLock = $null
 $isoLock = $null
 $seedLock = $null
+$stopRequested = $false
 function Assert-Owned($Candidate) {
     if (-not $Candidate -or $Candidate.Id -ne $vm.Id -or
         $Candidate.Name -cne $vmName -or $Candidate.Notes -cne $owner -or
@@ -167,7 +171,8 @@ try {
         copy = $copy; cleanup = 'not_observed' }
     Write-MaintenanceReceipt $VmReceipt $vmRecord
     if ($vm.Path -ne $expectedConfig) { throw 'Unexpected maintenance configuration path' }
-    Set-VM -VM $vm -Notes $owner -CheckpointType Disabled -AutomaticStartAction Nothing -AutomaticStopAction ShutDown
+    Set-VM -VM $vm -Notes $owner -CheckpointType Disabled -AutomaticCheckpointsEnabled $false `
+        -AutomaticStartAction Nothing -AutomaticStopAction ShutDown
     Set-VMMemory -VM $vm -DynamicMemoryEnabled $false -StartupBytes 2147483648
     Set-VMProcessor -VM $vm -Count 2
     Get-VMNetworkAdapter -VM $vm | Remove-VMNetworkAdapter
@@ -184,7 +189,8 @@ try {
     $firmware = Get-VMFirmware -VM $vm -ErrorAction Stop
     $disks = @(Get-VMHardDiskDrive -VM $vm -ErrorAction Stop)
     $dvds = @(Get-VMDvdDrive -VM $vm -ErrorAction Stop)
-    if ($effective.CheckpointType -ne 'Disabled' -or $effective.AutomaticStartAction -ne 'Nothing' -or
+    if ($effective.CheckpointType -ne 'Disabled' -or $effective.AutomaticCheckpointsEnabled -ne $false -or
+        $effective.AutomaticStartAction -ne 'Nothing' -or
         $effective.AutomaticStopAction -ne 'ShutDown' -or
         $com.Path -ne ('\\.\pipe\' + $vmName + '-com1') -or
         $memory.Startup -ne 2147483648 -or $memory.DynamicMemoryEnabled -ne $false -or
@@ -291,7 +297,10 @@ public static class MaintenancePipeSecurity {
     Assert-Owned $owned
     # The guest has unmounted the copy. Stop the LIVE recovery OS, not the target;
     # no ISO-ejection prompt or guest-console poweroff command is needed.
-    if ($owned.State -ne 'Off') { Stop-VM -VM $owned -TurnOff -Force -ErrorAction Stop }
+    if ($owned.State -ne 'Off') {
+        $stopRequested = $true
+        Stop-VM -VM $owned -TurnOff -Force -ErrorAction Stop
+    }
     $owned = Get-VM -Id $vm.Id -ErrorAction Stop
     Assert-Owned $owned
     if ($owned.State -ne 'Off') { throw 'Maintenance VM did not stop' }
@@ -310,10 +319,17 @@ public static class MaintenancePipeSecurity {
     }
     $phase = 'REMOVE'
     Remove-VM -VM $owned -Force -ErrorAction Stop
-    if (Get-VM -Id $vm.Id -ErrorAction SilentlyContinue) { throw 'Maintenance VM removal not observed' }
-    if ((Get-VHD -Path $copy -ErrorAction Stop).Attached) { throw 'Copy remains attached after removal' }
-    foreach ($candidate in @(Get-VM -ErrorAction Stop)) {
-        if (@(Get-VMHardDiskDrive -VM $candidate | Where-Object { $_.Path -eq $copy }).Count -ne 0) {
+    $remaining = @(Get-VM -ErrorAction Stop)
+    if (@($remaining | Where-Object { $_.Id -eq $vm.Id -or $_.Name -ieq $vmName }).Count -ne 0) {
+        throw 'Maintenance VM removal not observed'
+    }
+    $observedCopy = @(Get-VHD -Path $copy -ErrorAction Stop)
+    if ($observedCopy.Count -ne 1 -or $observedCopy[0].Path -ine $copy -or
+        $observedCopy[0].Attached -isnot [bool] -or $observedCopy[0].Attached) {
+        throw 'Copy detachment was not observed after removal'
+    }
+    foreach ($candidate in $remaining) {
+        if (@(Get-VMHardDiskDrive -VM $candidate -ErrorAction Stop | Where-Object { $_.Path -ieq $copy }).Count -ne 0) {
             throw 'A VM still references the working copy'
         }
     }
@@ -334,7 +350,9 @@ catch {
         try {
             $owned = Get-VM -Id $vm.Id -ErrorAction Stop
             Assert-Owned $owned
-            if ($owned.State -ne 'Off') { Stop-VM -VM $owned -TurnOff -Force -ErrorAction Stop }
+            if ($owned.State -ne 'Off' -and -not $stopRequested -and $phase -ne 'REMOVE') {
+                Stop-VM -VM $owned -TurnOff -Force -ErrorAction Stop
+            }
             $owned = Get-VM -Id $vm.Id -ErrorAction Stop
             Assert-Owned $owned
             if ($owned.State -eq 'Off') { $stopObservation = 'off_observed' }

@@ -32,4 +32,17 @@ After explicit operator approval, configure the variables shown in [the opt-in t
 
 For each run, record: operator approval; sanitized command and variable **names** (never credentials); host/Hyper-V and reviewed image provenance/path/digest; CPU/memory/virtual disk/network/timeouts; cases and pass/fail/skips with elapsed times; observed VM generation, CPU/memory/virtual size, network state and pipe permissions; guest service state; VM name/marker, final host `Get-VM` absence and `worker.vhdx` absence for **each** sandbox; and any unknown/failed cleanup. Do not paste unbounded guest output or secret paths into public reports. If failures leave owned resources, stop accepting jobs, identify exact recorded sandbox IDs and ownership markers and request operator-led cleanup; never sweep other VMs.
 
+For the protected runtime path, the repository has a candidate exact-VM
+teardown action (`reconcile_gate_a_vm.ps1`). It takes a host-observed VM GUID and
+derives the name, owner marker, configuration and disk paths from the fixed
+operation and approved attempt identity. It observes Off before removal,
+then verifies GUID/name absence and disk detachment/no VM references. It
+retains the disk and emits no success on a failed or ambiguous query. This is
+not a watchdog: it is unwired and relies on the future independent host owner
+to pin the execution closure and workspace identity, exclude another lifecycle
+writer, enforce the original deadline, and publish authoritative observations.
+For the smoke case, separately verified deletion of the exact differencing disk
+is still required. Do not point this candidate at any retained attempt or run it
+as a general-purpose cleanup command.
+
 **Gate A passes only with recorded real-host observations and confirmed cleanup, not with fake-runner or local protocol tests.** Missing approved host/image/permissions is an explicit blocker. Gate B (real workspace transfer) remains separate.
