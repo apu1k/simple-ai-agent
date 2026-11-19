@@ -37,6 +37,8 @@ class PendingPrivilege:
     claim: PrivilegedClaim
     review_json: str
     review_sha256: str
+    # Display provenance only; the protected payload binds the script text.
+    script_path: str | None = None
 
     @property
     def path(self) -> str:
@@ -177,12 +179,13 @@ class PrivilegedTurn:
             return (not self._live(claim)
                     or self._decisions.get('E' + claim.request_id) in ('expired', 'rejected'))
 
-    def submit(self, claim: PrivilegedClaim, details: dict) -> PendingPrivilege:
+    def submit(self, claim: PrivilegedClaim, details: dict, *,
+               script_path: str | None = None) -> PendingPrivilege:
         review = json.dumps(details, sort_keys=True, ensure_ascii=True, indent=2, allow_nan=False)
         if len(review.encode('utf-8')) > 65536:
             raise ValueError('Oversized approval request')
         request = PendingPrivilege('E' + claim.request_id, claim, review,
-                                   hashlib.sha256(review.encode('utf-8')).hexdigest())
+                                   hashlib.sha256(review.encode('utf-8')).hexdigest(), script_path)
         with self._lock:
             if _context.get() != self._turn or not self._live(claim) or request.id in self._requests:
                 raise PermissionError('Approval request is not live or was already submitted')

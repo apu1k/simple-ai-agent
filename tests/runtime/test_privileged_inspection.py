@@ -127,7 +127,7 @@ def test_wrong_grant_and_worker_profile_cannot_inspect(monkeypatch):
         client.inspect_installed_copy(PrivilegedClaim(ID, time.time() + 1800))
     from tools.system.privileged_inspection import inspect_privileged_image_copy
     assert inspect_privileged_image_copy(SimpleNamespace(privileged_turn=PrivilegedTurn())).startswith('Error:')
-    assert 'inspect_privileged_image_copy' in profile_tool_names(AgentProfile.HEAD)
+    assert 'inspect_privileged_image_copy' not in profile_tool_names(AgentProfile.HEAD)
     assert all('inspect_privileged_image_copy' not in profile_tool_names(p) for p in AgentProfile if p != AgentProfile.HEAD)
 
 

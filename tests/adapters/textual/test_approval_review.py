@@ -1,5 +1,6 @@
 """Approval-display regressions only: no decisions, UAC, commands or host writes."""
 import asyncio
+from dataclasses import replace
 import hashlib
 import io
 import json
@@ -42,6 +43,16 @@ def test_multiline_script_and_all_metadata_are_visible_without_changing_approval
     assert review.no_wrap is False and review.overflow == 'fold'
     assert (request.review_json, request.review_sha256) == before
     assert hashlib.sha256(request.review_json.encode('utf-8')).hexdigest() == request.review_sha256
+
+
+def test_powershell_file_review_identifies_source_and_shows_frozen_contents():
+    script = 'Write-Output "hello"\n# second line\n'
+    request = replace(frozen_request({'script': script}), script_path=r'C:\fixture\task.ps1')
+    plain = render_privileged_review(request).plain
+    assert 'Runs a PowerShell file (reviewed snapshot)' in plain
+    assert r'Source file: C:\fixture\task.ps1' in plain
+    assert script in plain
+    assert 'not re-read' in plain
 
 
 def test_literal_backslash_escapes_are_not_decoded_twice():

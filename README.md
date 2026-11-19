@@ -13,7 +13,7 @@ The project is independent and is not affiliated with any university, research i
 - Native tool calling where supported, with a JSON protocol fallback
 - Bounded, fail-fast tool batches
 - Exact-match file edits that remain pending until explicitly approved
-- Pending create, replace, move, copy, and delete operations
+- Pending create, replace, move, copy, delete, and Git commit-and-push operations
 - Filesystem, Python AST, HTTP, safe shell, and knowledge-search tools
 - Local knowledge routing and optional Qdrant-backed indexes
 - PDF-to-Markdown reading through PyMuPDF4LLM
@@ -241,6 +241,7 @@ The agent can:
 - extract PDFs as Markdown
 - inspect Python modules with the AST
 - propose file edits and filesystem operations for approval
+- propose a Git commit and push for specifically listed files
 - run a small OS-specific unelevated shell-command allowlist
 - request Administrator commands through [per-command pending approval and UAC](docs/elevated_commands.md),
   after separate protected-launcher installation (Windows; maximum command execution: 60 seconds)
@@ -248,6 +249,10 @@ The agent can:
 - search configured local knowledge sources and chat history
 
 Relative paths resolve against the active working directory. Absolute paths are supported.
+
+## Approving a Git commit and push
+
+Ask the agent to commit in a worktree, list the files (relative to the repository root), and give it the commit message. Approve any pending edits first so the Git review shows the files on disk. Open **Pending** (F9) to review the file diff, message, and destination; Enter accepts, and Delete/Backspace rejects. The branch must be checked out and synchronized with a configured upstream. The action commits only the reviewed file changes and pushes only the new commit to that upstream using the backend account’s ordinary Git credentials. Unrelated staged changes are left alone. A changed review is refused, and an unconfirmed push is not retried or rolled back automatically; check the result in chat. Git hooks still run on approval, so use trusted worktrees. Files using custom clean filters, including Git LFS, aren’t supported by this tool.
 
 ## File-operation safety
 
@@ -267,7 +272,7 @@ Embedding and index data stay local unless you explicitly configure otherwise. T
 
 - `\help` — command overview
 - `\models` — select a provider/model
-- `\settings` — configure runtime behavior, including proposal-diff results, OpenAI Flex processing, reasoning effort, and [one-turn privileged Hyper-V evidence](docs/privileged_hyperv_evidence.md) (fixed read-only operation; separate protected setup and UAC consent required)
+- `\settings` — configure runtime behavior, including proposal-diff results, OpenAI Flex processing, reasoning effort, and [one-turn PowerShell elevation](docs/elevated_commands.md) (local Windows only; separate protected setup and UAC consent required)
 - `\chats` — browse saved chats
 - `\new_chat` — start a new chat
 - `\history` — list recent chats

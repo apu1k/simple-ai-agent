@@ -38,6 +38,10 @@ def render_privileged_review(request: PendingPrivilege) -> Text:
         details = None
 
     if isinstance(details, dict) and isinstance(details.get('script'), str):
+        if request.script_path is not None:
+            review.append('Runs a PowerShell file (reviewed snapshot)\n', style=WARNING_STYLE)
+            review.append(f'Source file: {_visible_script(request.script_path)}\n'
+                          'The protected copy below runs; the original path is not re-read.\n\n')
         review.append('Request metadata (script shown separately below):\n', style='bold')
         metadata = {key: value for key, value in details.items() if key != 'script'}
         review.append(json.dumps(metadata, sort_keys=True, ensure_ascii=True, indent=2))

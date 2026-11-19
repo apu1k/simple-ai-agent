@@ -159,6 +159,40 @@ def test_tool_disabled_and_bad_timeout_do_not_run(monkeypatch, tmp_path):
     assert run_elevated_shell_command(state, 'exit 0', 'fixture', 901).startswith('Error: Timeout')
 
 
+def test_script_path_resnapshots_between_requests_not_after_approval(monkeypatch, tmp_path):
+    permit = gate()
+    source = tmp_path / 'fixture.ps1'
+    source.write_bytes(b'\xef\xbb\xbfWrite-Output 1\r\n')
+    monkeypatch.setattr(client, 'local_path', lambda value, **kw: Path(value))
+    observed = []
+
+    def fake_launcher(gate, claim, script, timeout, reason, cwd, *, script_path):
+        def decide(message):
+            request = next(iter(gate.pending().values()))
+            assert request.script_path == str(source)
+            source.write_bytes(b'Write-Output 2\n')
+            approve(gate)(message)
+        with tool_progress_listener(decide):
+            request, decision = client.await_approval(gate, claim, {'script': script}, script_path=script_path)
+        gate.require_accepted(request)
+        observed.append(json.loads(request.review_json)['script'])
+        return {'status': decision}
+
+    monkeypatch.setattr('tools.system.elevated.run_approved_script', fake_launcher)
+    state = SimpleNamespace(privileged_turn=permit, cwd=tmp_path)
+    with permit.turn('head'), approval_ui_context():
+        for _ in range(2):
+            assert json.loads(run_elevated_shell_command(state, reason='fixture', script_path=source.name)) == {'status': 'accepted'}
+    assert observed == ['Write-Output 1\r\n', 'Write-Output 2\n']
+
+
+def test_requires_exactly_one_elevated_script_source(tmp_path):
+    state = SimpleNamespace(privileged_turn=PrivilegedTurn(), cwd=tmp_path)
+    assert 'exactly one' in run_elevated_shell_command(state, reason='fixture')
+    assert 'exactly one' in run_elevated_shell_command(state, 'exit 0', 'fixture', script_path='a.ps1')
+    assert '.ps1 extension' in run_elevated_shell_command(state, reason='fixture', script_path='a.txt')
+
+
 def quote(value):
     return "'" + str(value).replace("'", "''") + "'"
 

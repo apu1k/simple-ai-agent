@@ -1,4 +1,4 @@
-"""Head-only, single-use fixed Hyper-V query; never a generic admin shell."""
+"""Internal single-use fixed Hyper-V query; not exposed to the model."""
 from __future__ import annotations
 
 import json
@@ -6,24 +6,8 @@ import json
 from core.tool_progress import evidence_progress
 from runtime.privileged_host import collect_installed_evidence, load_policy
 from runtime.elevated_commands import await_approval
-from tools._base import tool
 
 
-@tool(
-    description=(
-        'Collect read-only Hyper-V evidence for the operator-pinned VHDX/ISO/workspace. '
-        'Requires Elevated commands enabled for this turn, acceptance of this fixed operation in pending, '
-        'a protected helper installation, and Windows UAC consent. One attempt only, '
-        'including cancellation/failure. No inputs, arbitrary commands, VM launch, '
-        'mounting, permission repair or lifecycle operations are accepted. '
-        'The protected worker execution cap is 900 seconds (15 minutes). '
-        'Older deployments without this policy refuse before UAC. '
-        'Returns bounded evidence and the protected execution receipt path. '
-        'run_shell_command is not elevated by this setting.'
-    ),
-    params={},
-    requires_state=True,
-)
 def collect_privileged_host_evidence(state) -> str:
     gate = getattr(state, 'privileged_turn', None)
     if gate is None:

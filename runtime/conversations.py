@@ -161,7 +161,8 @@ class ConversationManager:
             self._revision += 1
             self._marker = marker
         return {"sequence": self._revision,
-                "processing": any(r.snapshot().processing for r in self._runtimes.values()),
+                "processing": any(r.snapshot().processing or (r._git_worker is not None and r._git_worker.is_alive())
+                                  for r in self._runtimes.values()),
                 "pending_count": sum(len(r.pending()) for r in self._runtimes.values()),
                 "closed": self._closed, "durable_state": self.storage is not None}
 
@@ -175,7 +176,7 @@ class ConversationManager:
                 locks.enter_context(runtime._condition)
             status = self._maintenance_status_locked()
             if status["processing"]:
-                raise RuntimeBusyError("A chat has an active run; finish it before restarting")
+                raise RuntimeBusyError("A chat has an active run or approved Git request; finish it before restarting")
             if status["sequence"] != sequence:
                 raise ValueError("Conversations changed; review them again before restarting")
             self._closed = True

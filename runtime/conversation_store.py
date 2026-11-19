@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from editing.model import FileEdit, PendingEdit
+from editing.model import FileEdit, GitCommitPlan, PendingEdit
 from llm.responses_transcript import (
     EXECUTION_REFS_KEY,
     REPLAY_KEY,
@@ -214,6 +214,8 @@ class ChatRuntimeStore:
                 if item["destination_path"] is not None:
                     item["destination_path"] = Path(item["destination_path"])
                 item["edits"] = [FileEdit(**edit) for edit in item["edits"]]
+                if item.get("git_commit") is not None:
+                    item["git_commit"] = GitCommitPlan(**item["git_commit"])
                 proposals.append(PendingEdit(**item))
             return proposals
 

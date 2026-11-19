@@ -18,7 +18,19 @@ class FileEdit:
 
 
 EditStatus = Literal["pending", "applying", "applied", "rejected", "outcome_unknown"]
-EditKind = Literal["edit", "create", "move", "delete", "copy"]
+EditKind = Literal["edit", "create", "move", "delete", "copy", "git_commit"]
+
+
+@dataclass(frozen=True)
+class GitCommitPlan:
+    files: list[str]
+    message: str
+    branch: str
+    remote: str
+    remote_ref: str
+    url_sha256: str
+    base: str
+    tree: str
 
 
 @dataclass
@@ -45,3 +57,4 @@ class PendingEdit:
     recursive: bool = False
     force: bool = False
     is_directory: bool = False
+    git_commit: GitCommitPlan | None = None

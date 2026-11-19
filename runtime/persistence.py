@@ -10,7 +10,7 @@ import sqlite3
 from threading import RLock
 from typing import Any, ContextManager, Iterator, Protocol, get_args
 
-from editing.model import FileEdit, PendingEdit
+from editing.model import FileEdit, GitCommitPlan, PendingEdit
 from llm.responses_transcript import RESULT_OVERRIDES_KEY, SEQUENCE_KEY
 from runtime.state import ANTHROPIC_REASONING_EFFORTS, ApiType
 
@@ -133,6 +133,8 @@ class RuntimeStore:
                 if item["destination_path"] is not None:
                     item["destination_path"] = Path(item["destination_path"])
                 item["edits"] = [FileEdit(**edit) for edit in item["edits"]]
+                if item.get("git_commit") is not None:
+                    item["git_commit"] = GitCommitPlan(**item["git_commit"])
                 proposals.append(PendingEdit(**item))
             return proposals
 

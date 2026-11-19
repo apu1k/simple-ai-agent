@@ -251,7 +251,7 @@ class Agent:
             f"- elevated requests: {getattr(getattr(self.state, 'privileged_turn', None), 'status', 'disabled')}\n"
             "- Enabling elevation permits requests, not execution: each needs pending acceptance and Windows UAC.\n"
             "- run_shell_command is never elevated. General approved PowerShell execution is capped at 60 seconds.\n"
-            "- Fixed evidence/inspection helpers retain installed policy and one-attempt constraints.\n"
+            "- Only run_elevated_shell_command is exposed for elevation; it accepts inline PowerShell or a reviewed .ps1 snapshot.\n"
             "- Do not re-propose rejected commands, reset claims, repair permissions, or retry unknown outcomes without separate user authorization.\n"
             "- Process completion is not effects verification; timeout is not rollback or proof a VM/service stopped.\n\n"
             "Important:\n"

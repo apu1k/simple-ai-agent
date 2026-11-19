@@ -142,7 +142,7 @@ def test_tool_failure_is_not_refunded_or_leaked(gate, monkeypatch, failure):
 
 
 def test_head_only_profile():
-    assert 'collect_privileged_host_evidence' in profile_tool_names(AgentProfile.HEAD)
+    assert 'collect_privileged_host_evidence' not in profile_tool_names(AgentProfile.HEAD)
     for profile in AgentProfile:
         if profile != AgentProfile.HEAD:
             assert 'collect_privileged_host_evidence' not in profile_tool_names(profile)
@@ -152,6 +152,7 @@ def test_head_only_profile():
 def test_agent_wrapper_releases_grant_on_all_exits(gate, failure):
     permit, _ = gate
     agent = Agent.__new__(Agent)
+    agent._api_type = 'chat_completions'
     agent.state = SimpleNamespace(privileged_turn=permit)
     agent.agent_profile = 'head'
     def fake_step(text):

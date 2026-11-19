@@ -19,6 +19,7 @@ from core.tool_progress import (
     PRIVILEGED_EVIDENCE_PREFIX,
     approval_ui_context,
 )
+from editing.git_commit import apply_commit
 from editing.model import PendingEdit
 from llm.base import LLMClient
 from llm.request_progress import REQUEST_PROGRESS_PREFIX
@@ -87,6 +88,7 @@ class AgentRuntime:
         self._messages: list[tuple[str, str]] = []
         self._run: RunInfo | None = None
         self._worker: Thread | None = None
+        self._git_worker: Thread | None = None
         self._progress = ""
         self._closed = False
         self._clients: dict[str, bool] = {}
@@ -234,8 +236,8 @@ class AgentRuntime:
         with self._condition:
             if self._store is not None:
                 self._store.check()
-            if self._is_processing():
-                raise RuntimeBusyError("An agent run is active; finish it before restarting")
+            if self._is_processing() or (self._git_worker is not None and self._git_worker.is_alive()):
+                raise RuntimeBusyError("An agent run or approved Git request is active; finish it before restarting")
             if self._closed:
                 return  # A lost drain acknowledgement is safe to retry.
             if sequence != self._sequence:
@@ -249,7 +251,7 @@ class AgentRuntime:
             self._closed = True
             self._clients.clear()
             self.state.privileged_turn.revoke()
-            worker = self._worker
+            workers = (self._worker, self._git_worker)
             if first_close:
                 try:
                     self._publish("state_changed")
@@ -259,8 +261,9 @@ class AgentRuntime:
                     self._messages.append(("Error", str(error)))
         if wait:
             try:
-                if worker is not None and worker.ident is not None:
-                    worker.join()
+                for worker in workers:
+                    if worker is not None and worker.ident is not None:
+                        worker.join()
             finally:
                 with self._condition:
                     if self._store is not None:
@@ -446,6 +449,9 @@ class AgentRuntime:
                 message = f"Administrator request #{identity}: {decision}. {suffix}"
                 self._message("Approval", message)
             else:
+                edit = self.state.edit_store.get(identity)
+                if accept and edit is not None and edit.kind == 'git_commit':
+                    return self._start_git_approval(identity)
                 operation = self.state.edit_store.approve if accept else self.state.edit_store.reject
                 # Shared by all runtimes on a multi-chat host. Revalidation and
                 # application must not race another chat's filesystem approval.
@@ -458,6 +464,41 @@ class AgentRuntime:
                         self._message("System", cwd_message)
             self._publish("state_changed")
             return message
+
+    def _start_git_approval(self, identity: int) -> str:
+        # Called under _condition; claim the proposal durably before returning
+        # to the UI. A long push never holds the runtime condition or API ledger.
+        if self._git_worker is not None and self._git_worker.is_alive():
+            raise RuntimeBusyError('Another approved Git request is still running')
+        edit = self.state.edit_store.begin_git_approval(identity)
+        worker = Thread(target=self._execute_git_approval, args=(edit,), name='agent-git-approval', daemon=True)
+        self._git_worker = worker
+        message = f'Git request #{identity} accepted. Rechecking the review before committing and pushing.'
+        self._message('Approval', message)
+        self._publish('state_changed')
+        worker.start()
+        return message
+
+    def _execute_git_approval(self, edit: PendingEdit) -> None:
+        try:
+            assert edit.git_commit is not None
+            with self._file_decision_lock:
+                status, result = apply_commit(edit.path, edit.git_commit)
+        except Exception:
+            status = 'outcome_unknown'
+            result = 'Git outcome unknown. Inspect the local branch and remote before retrying.'
+        with self._condition:
+            try:
+                self.state.edit_store.finish_git_approval(edit.id, status)
+                self._message('Approval', f'Git request #{edit.id}: {result}')
+                self._publish('state_changed')
+            except PersistenceError as error:
+                self._persistence_error = str(error)
+                self._closed = True
+                self.state.privileged_turn.revoke()
+                self._messages.append(('Error', f'Git request #{edit.id}: {result} Could not save the outcome.'))
+            finally:
+                self._condition.notify_all()
 
     def decide_file_pending(self, identity: int, *, accept: bool, revision: str) -> str:
         from runtime.wire import proposal_revision

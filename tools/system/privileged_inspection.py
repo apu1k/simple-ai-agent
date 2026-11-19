@@ -1,4 +1,4 @@
-"""Head-only, operator-pinned inspection. Not a generic administrator shell."""
+"""Internal operator-pinned inspection; not exposed to the model."""
 from __future__ import annotations
 
 import json
@@ -7,22 +7,8 @@ from core.tool_progress import evidence_progress
 from runtime.privileged_inspection import inspect_installed_copy, load_inspection_policy
 from runtime.elevated_commands import await_approval
 from runtime.privileged_turn import INSPECTION_OPERATION
-from tools._base import tool
 
 
-@tool(
-    description=(
-        'Inspect a fresh copy of the operator-pinned diagnostic VHDX using one isolated recovery VM. '
-        'Requires Elevated commands enabled for this turn, pending acceptance, separately reviewed '
-        'protected installation/approval, and UAC. No model-selected inputs or commands. '
-        'May create/start/stop/remove only the new exact-owned recovery VM and retain copy/media/evidence. '
-        'No source modification, finalization, publication, Gate A, ACL repair, retry or broad cleanup. '
-        'The protected worker execution cap is 900 seconds (15 minutes). '
-        'Older deployments without this policy refuse before UAC. '
-        'A process timeout is UNKNOWN and does not prove the VM stopped. Shell commands remain unelevated.'
-    ),
-    params={}, requires_state=True,
-)
 def inspect_privileged_image_copy(state) -> str:
     gate = getattr(state, 'privileged_turn', None)
     if gate is None:

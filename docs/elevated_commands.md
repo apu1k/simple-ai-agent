@@ -42,10 +42,19 @@ receive the elevated tool or inherit head authority.
 
 ## General command tool
 
-`run_elevated_shell_command(script, reason, timeout=30)` executes a complete
-PowerShell script through the fixed native x64 system Windows PowerShell, with no
-profile or interactive stdin. The current working directory is frozen into the
-request. Local canonical directories without reparse points are required.
+`run_elevated_shell_command` is the only model-facing elevation tool. Pass
+`reason` and exactly one of `script` (inline PowerShell) or `script_path` (a local
+UTF-8 `.ps1` file with an optional BOM). The path may be absolute or relative to
+the agent’s working directory. Pending identifies a file request, shows its source
+path and full contents, and approves only the frozen snapshot. The original file
+is not re-read after approval. Another call snapshots the file again and needs a
+new approval and UAC consent.
+
+Both modes run a protected `.ps1` copy via the fixed native x64 system Windows
+PowerShell, with no profile or interactive stdin. The working directory is
+frozen into the request. `$PSScriptRoot` and `$PSCommandPath` refer to the
+protected copy, not the source; sibling files and other dependencies are not
+snapshotted. Local canonical paths without reparse points are required.
 
 The general tool accepts an explicitly selected execution timeout of **1–900
 seconds (15 minutes)**, defaulting to 30 seconds. This is independent of the
@@ -79,8 +88,8 @@ including provider keys and Python hooks, before starting the worker. This avoid
 passing them accidentally; approved Administrator code can still access account
 data and is not sandboxed.
 
-The fixed evidence/inspection tools use the same setting and pending approval
-interface, but are NOT general-script calls. Historically their native workers
+The fixed evidence/inspection helpers are retained for internal workflows, not
+exposed to the model. They are NOT general-script calls. Historically their native workers
 could use the remaining 30-minute turn budget: the general tool's old 60-second
 limit never applied to them. This explains why a multi-minute inspection could
 run without bypassing the general launcher.

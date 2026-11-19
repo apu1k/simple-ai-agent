@@ -174,7 +174,7 @@ class AgentTextualApp(App):
             yield Static("Runtime settings", id="model_settings_header")
             yield Tree("Settings", id="model_settings_tree")
         with Container(id="pending_select", classes="hidden"):
-            yield Static("Pending edits", id="pending_header")
+            yield Static("Pending requests", id="pending_header")
             with Container(id="pending_body"):
                 with Container(id="pending_list_pane"):
                     yield Static("", id="pending_list")
@@ -742,8 +742,7 @@ class AgentTextualApp(App):
                 "System",
                 f"Elevated commands: {gate.status}. Each request needs pending acceptance and UAC consent. "
                 "General command limit: 60 seconds. Ordinary shell commands stay unelevated. "
-                "Arbitrary approved scripts can change the device; timeouts do not undo effects. "
-                "Fixed evidence/inspection helpers retain their installed scope and claims.",
+                "Arbitrary approved scripts can change the device; timeouts do not undo effects.",
             )
         elif key == "include_diff" and (isinstance(value, bool) or value == "model"):
             self._set_include_diff_setting(value)
@@ -790,7 +789,7 @@ class AgentTextualApp(App):
 
         input_widget = self.query_one("#input", Input)
         input_widget.value = ""
-        input_widget.placeholder = "Search pending edits... Enter approve, Delete/Backspace reject, Ctrl+G cancels"
+        input_widget.placeholder = "Search pending requests... Enter approve, Delete/Backspace reject, Ctrl+G cancels"
         input_widget.focus()
         self._render_pending_view()
 
@@ -871,8 +870,9 @@ class AgentTextualApp(App):
             self.query_one('#pending_diff_scroll', VerticalScroll).scroll_home(animate=False)
             return
 
+        label = 'Git request' if edit.kind == 'git_commit' else 'Edit'
         metadata = Text(
-            f"Edit #{edit.id} [{edit.kind}] {edit.status}\n{edit.path}\n\n",
+            f"{label} #{edit.id} [{edit.kind}] {edit.status}\n{edit.path}\n\n",
             style="bold",
         )
         diff_text = edit.diff if edit.diff.strip() else "(no diff)"
@@ -1556,7 +1556,7 @@ class AgentTextualApp(App):
         elif self._mode == "model_settings_select":
             input_widget.placeholder = "Search settings... Enter selects one match, Ctrl+G cancels"
         elif self._mode == "pending_select":
-            input_widget.placeholder = "Search pending edits... Enter approve, Delete/Backspace reject, Ctrl+G cancels"
+            input_widget.placeholder = "Search pending requests... Enter approve, Delete/Backspace reject, Ctrl+G cancels"
         elif self._mode == "chat_select":
             input_widget.placeholder = "Search chats... Enter loads selected chat, Ctrl+G cancels"
         elif processing:

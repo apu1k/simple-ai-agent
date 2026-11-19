@@ -28,7 +28,7 @@ from threading import RLock
 from typing import Callable, Concatenate, ParamSpec, TypeVar
 
 from editing.diff import create_unified_diff
-from editing.model import FileEdit, PendingEdit
+from editing.model import EditStatus, FileEdit, GitCommitPlan, PendingEdit
 
 
 MAX_OPERATION_PREVIEW_ENTRIES = 100
@@ -348,6 +348,34 @@ class EditStore:
         self._edits[edit_id] = pending
         return pending, preview
 
+    @_locked
+    def propose_git_commit(
+        self, path: Path, plan: GitCommitPlan, preview: str,
+    ) -> tuple[PendingEdit, str]:
+        pending = PendingEdit(self._next_id, path, '', '', preview, [],
+                              kind='git_commit', git_commit=deepcopy(plan))
+        self._next_id += 1
+        self._edits[pending.id] = pending
+        return pending, preview
+
+    @_locked
+    def begin_git_approval(self, edit_id: int) -> PendingEdit:
+        edit = self._edits[edit_id]
+        if edit.kind != 'git_commit' or edit.status != 'pending' or edit.git_commit is None:
+            raise ValueError(f'Git request #{edit_id} is no longer pending')
+        intent = replace(edit, status='applying')
+        self._persist(intent)
+        self._edits[edit_id] = intent
+        return deepcopy(intent)
+
+    @_locked
+    def finish_git_approval(self, edit_id: int, status: EditStatus) -> None:
+        edit = self._edits[edit_id]
+        if edit.kind != 'git_commit' or edit.status != 'applying':
+            raise ValueError(f'Git request #{edit_id} was not accepted')
+        edit.status = status
+        self._persist(edit)
+
     # ------------------------------------------------------------------
     # Approve
     # ------------------------------------------------------------------
@@ -359,6 +387,8 @@ class EditStore:
             raise KeyError(f"Pending edit #{edit_id} does not exist.")
         if edit.status != "pending":
             raise ValueError(f"Pending edit #{edit_id} is already {edit.status}.")
+        if edit.kind == 'git_commit':
+            raise ValueError('Git requests must be approved through the runtime')
         # Commit intent before touching the filesystem. A crash after this point
         # never resurrects an executable approval, even if the effect completed.
         self._persist(replace(edit, status="applying"))
@@ -523,7 +553,8 @@ class EditStore:
 
         self._persist(replace(edit, status="rejected"))
         edit.status = "rejected"
-        return f"Rejected pending edit #{edit_id}."
+        label = 'Git request' if edit.kind == 'git_commit' else 'pending edit'
+        return f'Rejected {label} #{edit_id}.'
 
     # ------------------------------------------------------------------
     # Query

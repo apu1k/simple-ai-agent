@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import stat
 import time
 from pathlib import Path
 from contextlib import nullcontext
@@ -30,8 +31,10 @@ HELPER_DIRECTORY = 'AiAgentElevatedCommands'
 
 
 def await_approval(gate: PrivilegedTurn, claim: PrivilegedClaim,
-                   details: dict[str, Any]) -> tuple[PendingPrivilege, str]:
-    request = gate.submit(claim, details)
+                   details: dict[str, Any], *,
+                   script_path: str | None = None) -> tuple[PendingPrivilege, str]:
+    request = (gate.submit(claim, details) if script_path is None
+               else gate.submit(claim, details, script_path=script_path))
     approval_progress(request.id)
     return request, gate.wait(request)
 
@@ -94,6 +97,33 @@ def load_launcher() -> tuple[Path, Path, dict[str, Any]]:
     # Requests are intentionally operator-writable; NEVER load code from here.
     local_path(str(root / 'requests'), directory=True)
     return root, powershell, policy
+
+
+def read_script_file(cwd: Path, value: str) -> tuple[str, str]:
+    """Read the bounded source once, without newline translation."""
+    if not isinstance(value, str) or not value or any(c in value for c in '\x00\r\n'):
+        raise ValueError('Provide a local .ps1 path')
+    path = Path(value)
+    if not path.is_absolute():
+        if path.anchor:
+            raise ValueError('Use an absolute or working-directory-relative .ps1 path')
+        path = cwd / path
+    if path.suffix.lower() != '.ps1':
+        raise ValueError('The script file must have a .ps1 extension')
+    # Normalize relative components without following reparse points. local_path
+    # checks the normalized canonical path and its ancestors before opening it.
+    path = local_path(os.path.abspath(path))
+    if not stat.S_ISREG(path.stat().st_mode):
+        raise ValueError('The PowerShell source must be a regular file')
+    with path.open('rb') as stream:
+        data = stream.read(MAX_SCRIPT_BYTES + 4)
+    if len(data) > MAX_SCRIPT_BYTES + 3:
+        raise ValueError('The PowerShell script exceeds 32768 UTF-8 bytes')
+    try:
+        script = data.decode('utf-8-sig')
+    except UnicodeDecodeError as exc:
+        raise ValueError('Use a UTF-8 PowerShell file (optional BOM)') from exc
+    return str(path), script
 
 
 def validate_script(script: str, timeout: int, reason: str) -> None:
@@ -175,7 +205,8 @@ def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: st
                         require_preparation: bool = False,
                         require_preparation_supervision: bool = False,
                         require_bootstrap_supervision: bool = False,
-                        setup_preload: str | None = None) -> dict[str, Any]:
+                        setup_preload: str | None = None,
+                        script_path: str | None = None) -> dict[str, Any]:
     if os.name != 'nt' or claim.operation != 'elevated_commands':
         raise PrivilegedHostError('Windows elevated-command grant required')
     validate_script(script, timeout, reason)
@@ -228,7 +259,10 @@ def run_approved_script(gate: PrivilegedTurn, claim: PrivilegedClaim, script: st
             payload['setup_preload'] = setup_preload
         if bootstrap:
             payload['bootstrap_sha256'] = policy['bootstrap_sha256']
-        request, decision = await_approval(gate, claim, payload)
+        # Source path is review metadata only. Keep the protected launcher
+        # protocol unchanged; the approved script is the frozen file content.
+        request, decision = (await_approval(gate, claim, payload) if script_path is None
+                             else await_approval(gate, claim, payload, script_path=script_path))
         base = dict(request_id=claim.request_id, approval=decision, review_sha256=request.review_sha256)
         if decision != 'accepted':
             return dict(base, status=decision, executed=False)

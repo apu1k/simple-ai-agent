@@ -68,6 +68,16 @@ def test_worker_profiles_do_not_receive_head_only_or_mutation_tools():
     assert "run_shell_command" in reviewer
 
 
+def test_git_proposal_and_general_elevation_are_head_only():
+    source = _source_registry()
+    for profile in AgentProfile:
+        names = build_profile_registry(profile, source_registry=source).names()
+        assert ('propose_git_commit' in names) is (profile == AgentProfile.HEAD)
+        assert ('run_elevated_shell_command' in names) is (profile == AgentProfile.HEAD)
+        assert 'collect_privileged_host_evidence' not in names
+        assert 'inspect_privileged_image_copy' not in names
+
+
 def test_coding_worker_has_code_tools_but_not_head_network_tools():
     coding = build_profile_registry(
         AgentProfile.CODING_WORKER,
