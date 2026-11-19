@@ -79,16 +79,16 @@ def real_controller(tmp_path: Path, host_config: HyperVConfig):
     store = SandboxStore(tmp_path / "operations.sqlite3")
     controller = HyperVSandboxController(host_config, store)
     yield controller
-    cleanup_errors = []
-    for sandbox in store.list():
-        if sandbox.status is SandboxStatus.DESTROYED:
-            continue
-        try:
-            controller.destroy(sandbox)
-        except Exception as exc:  # pragma: no cover - exercised only on a real host
-            cleanup_errors.append(f"{sandbox.sandbox_id}: {exc}")
-    if cleanup_errors:
-        pytest.fail("real-host cleanup failed: " + "; ".join(cleanup_errors))
+    # The lifecycle case gets one cleanup attempt. A second attempt here could
+    # obscure a failed or unknown outcome; retain exact IDs for operator review.
+    unconfirmed = [
+        f"{record.sandbox_id} ({record.status.value})"
+        for record in store.list()
+        if record.status is not SandboxStatus.DESTROYED
+    ]
+    if unconfirmed:
+        pytest.fail(f"real-host cleanup not confirmed; retained IDs in {store.path}: "
+                    + "; ".join(unconfirmed))
 
 
 @pytest.fixture
@@ -113,10 +113,12 @@ def _assert_destroyed(controller: HyperVSandboxController) -> None:
     assert len(records) == 1  # a fresh store belongs to this test only
     record = records[0]
     assert record.status is SandboxStatus.DESTROYED
-    assert controller.status(record) is SandboxStatus.DESTROYED  # host Get-VM reports missing
+    assert controller.status(record) is SandboxStatus.DESTROYED  # successful host inventory
     disk = controller.config.workspace_root / record.sandbox_id / "worker.vhdx"
-    assert not disk.exists()  # differencing disk removed
-    assert not disk.parent.exists()
+    with pytest.raises(FileNotFoundError):
+        disk.lstat()  # do not treat an unexpected entry or lookup error as absence
+    with pytest.raises(FileNotFoundError):
+        disk.parent.lstat()
 
 
 def test_real_host_prerequisites(real_controller: HyperVSandboxController):

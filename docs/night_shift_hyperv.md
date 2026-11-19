@@ -157,7 +157,7 @@ $env:NIGHT_SHIFT_HYPERV_INTEGRATION = '1'
 $env:NIGHT_SHIFT_HYPERV_BASE_IMAGE = 'C:\ProgramData\NightShift\images\worker.vhdx'
 $env:NIGHT_SHIFT_HYPERV_BASE_IMAGE_SHA256 = '<reviewed digest>'
 $env:NIGHT_SHIFT_HYPERV_WORKSPACE = 'C:\ProgramData\NightShift\integration-sandboxes'
-python -m pytest -q tests/night_shifts/test_hyperv_real_host.py
+python -m pytest -x -q tests/night_shifts/test_hyperv_real_host.py
 ```
 
 The suite configures networking off and covers prerequisites, successful and rejected-objective serial exchanges, timeout/cancellation, forced-stop disconnect cleanup, host-observed VM absence, disk removal, and exact-ID orphan reconciliation. Actual adapter state and pipe ACLs require separate host inspection.
