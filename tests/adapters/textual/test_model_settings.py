@@ -151,7 +151,8 @@ def test_settings_command_search_and_tree_selection(tmp_path):
             await pilot.press("enter")
             await pilot.pause()
             assert app._mode == "model_settings_select"
-            assert len(app._visible_model_setting_matches) == 15
+            assert ('elevated_commands', True) in app._visible_model_setting_matches
+            assert ('include_diff', 'model') in app._visible_model_setting_matches
 
             input_widget.value = "OpenAI Flex: Enabled"
             await pilot.pause()
@@ -315,6 +316,49 @@ def test_unified_elevation_setting_is_ui_only_volatile_and_revocable(tmp_path):
             app._set_model_setting("elevated_commands", False)
             assert app.state.privileged_turn.status == "disabled"
             assert not hasattr(app.state.model_settings, "elevated_commands")
+    asyncio.run(run_test())
+
+
+def test_shared_settings_displays_elevation_without_enabling_it(tmp_path, monkeypatch):
+    async def run_test():
+        app = make_app(tmp_path)
+        monkeypatch.setattr(app.runtime, 'supports_privileged_approval', False, raising=False)
+        async with app.run_test(size=(150, 40)) as pilot:
+            app._handle_command('\\settings')
+            app.query_one('#input', Input).value = 'Elevated commands: Enable next turn'
+            await pilot.pause()
+            tree = app.query_one('#model_settings_tree', Tree)
+            row, = tree.root.children
+            assert 'Enable next turn (unavailable)' in str(row.label)
+            assert 'no Windows desktop reviewer' in str(row.label)
+            assert row.data is None
+            assert app._visible_model_setting_matches == []
+            await pilot.press('enter')
+            await pilot.pause()
+            assert app._mode == 'model_settings_select'
+            assert app.state.privileged_turn.status == 'disabled'
+
+    asyncio.run(run_test())
+
+
+def test_shared_desktop_setting_uses_normal_settings_selection(tmp_path, monkeypatch):
+    async def run_test():
+        app = make_app(tmp_path)
+        sent = []
+        monkeypatch.setattr(app.runtime, 'supports_privileged_approval', False, raising=False)
+        monkeypatch.setattr(app.state, 'desktop_approval_enabled', True, raising=False)
+        monkeypatch.setattr(app.runtime, 'set_model_setting', lambda key, value, **_: sent.append((key, value)))
+        async with app.run_test(size=(150, 40)) as pilot:
+            app._handle_command('\\settings')
+            app.query_one('#input', Input).value = 'Elevated commands: Enable next turn'
+            await pilot.pause()
+            assert app._visible_model_setting_matches == [('elevated_commands', True)]
+            await pilot.press('enter')
+            await pilot.pause()
+            assert sent == [('elevated_commands', True)]
+            assert app._mode == 'chat'
+            assert app.state.privileged_turn.status == 'disabled'  # Client did not grant authority.
+
     asyncio.run(run_test())
 
 

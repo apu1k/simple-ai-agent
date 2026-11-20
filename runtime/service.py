@@ -31,6 +31,7 @@ from runtime.chat_store import (
     record_final_turn,
     start_new_chat,
 )
+from runtime.desktop_approval import DesktopApproval, desktop_ready
 from runtime.events import EventHistoryExpired, RunInfo, RuntimeEvent, RuntimeSnapshot
 from runtime.privileged_turn import ELEVATED_OPERATION, PendingPrivilege
 from runtime.persistence import PersistenceError, RuntimeStateStore, RuntimeStore, validate_checkpoint
@@ -73,6 +74,7 @@ class AgentRuntime:
         event_limit: int = 2048,
         persistence_path: Path | None = None,
         persistence_store: RuntimeStateStore | None = None,
+        desktop_review: DesktopApproval | None = None,
     ) -> None:
         if event_limit < 1:
             raise ValueError("event_limit must be positive")
@@ -93,6 +95,8 @@ class AgentRuntime:
         self._closed = False
         self._clients: dict[str, bool] = {}
         self._privileged_enabled = True
+        self._desktop_review = desktop_review
+        self._desktop_client_id: str | None = None
         self._context: dict = {"messages": [], "provider": None}
         self._context_run_id: str | None = None
         self._restoring = False
@@ -109,6 +113,19 @@ class AgentRuntime:
             except Exception:
                 self._store.close()
                 raise
+        if desktop_review is not None:
+            self._desktop_client_id = self.attach_client(can_approve=True)
+
+    @property
+    def desktop_approval_enabled(self) -> bool:
+        return self._desktop_review is not None
+
+    def set_desktop_elevation(self, enabled: bool) -> None:
+        # No API can use this identity to approve a request. It belongs to the
+        # host reviewer and is never sent to the browser or saved in a chat.
+        if not self.desktop_approval_enabled or (enabled and not desktop_ready()):
+            raise PermissionError('An unlocked local Windows approval desktop is required')
+        self.set_model_setting('elevated_commands', enabled, client_id=self._desktop_client_id)
 
     def initialize(self) -> None:
         with self._condition:
@@ -148,10 +165,12 @@ class AgentRuntime:
             return identity
 
     def disable_privileged_operations(self) -> None:
-        """Irreversible for this runtime; network hosts never grant UAC authority."""
+        """Irreversible for this runtime; used for hosts without a desktop reviewer."""
         with self._condition:
             self._require_idle()
             self._privileged_enabled = False
+            self._desktop_review = None
+            self._desktop_client_id = None
             self._clients = dict.fromkeys(self._clients, False)
             self.state.privileged_turn.revoke()
 
@@ -553,6 +572,7 @@ class AgentRuntime:
         self._condition.notify_all()
 
     def _on_tool(self, text: str) -> None:
+        review: PendingPrivilege | None = None
         with self._condition:
             self._publish("tool", text)
             if text.startswith(REQUEST_PROGRESS_PREFIX):
@@ -561,9 +581,14 @@ class AgentRuntime:
                 self._message("System", "Context compaction: " + text[len(CONTEXT_COMPACTION_PREFIX):])
             elif text.startswith(PRIVILEGED_APPROVAL_PREFIX):
                 identity = text[len(PRIVILEGED_APPROVAL_PREFIX):]
+                if self._desktop_review is not None:
+                    review = self.state.privileged_turn.pending().get(identity)
+                    hint = 'Review the exact request in the Windows desktop window. '
+                else:
+                    hint = 'Open \\pending (or F9) to review and accept or reject. '
                 self._message(
-                    "Approval", f"Administrator approval required — request #{identity}. "
-                    "Open \\pending (or F9) to review and accept or reject. Nothing has executed.",
+                    'Approval', f'Administrator approval required — request #{identity}. '
+                    f'{hint}Nothing has executed.',
                 )
                 self._publish("approval_required", identity)
             elif text.startswith(PRIVILEGED_EVIDENCE_PREFIX):
@@ -574,6 +599,28 @@ class AgentRuntime:
                     )
                 self._progress = text[len(PRIVILEGED_EVIDENCE_PREFIX):]
                 self._publish("progress", self._progress)
+        if review is not None:
+            self._review_on_desktop(review)
+
+    def _review_on_desktop(self, review: PendingPrivilege) -> None:
+        from adapters.textual.approval_review import render_privileged_review
+
+        reviewer = self._desktop_review
+        if reviewer is None:
+            return
+        gate = self.state.privileged_turn
+        accepted = False
+        if review.claim.operation == ELEVATED_OPERATION:
+            display = render_privileged_review(
+                review, decision_hint='Accepting the exact request here asks Windows for UAC. Reject or close to decline.',
+            ).plain
+            try:
+                accepted = reviewer.ask(display, review.review_sha256, lambda: gate.execution_cancelled(review.claim))
+            except Exception:
+                accepted = False  # Crash or invalid review transport is never approval.
+        with self._condition:
+            if gate.pending().get(review.id) == review:
+                self.decide_pending(review.id, accept=accepted, client_id=self._desktop_client_id)
 
     def _publish(
         self, kind: str, text: str = "", *, role: str = "",

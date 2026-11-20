@@ -84,7 +84,8 @@ class ConversationManager:
                 if runtime.state.chat_session_id != identity:
                     raise ValueError("Runtime factory returned a different chat")
                 runtime._file_decision_lock = self._file_decision_lock
-                runtime.disable_privileged_operations()
+                if not runtime.desktop_approval_enabled:
+                    runtime.disable_privileged_operations()
                 if saved is None:
                     # Hydrate old JSONL history once, atomically with the first
                     # checkpoint. Selecting a live chat never rebuilds context.
@@ -132,7 +133,7 @@ class ConversationManager:
             if operation == "decide_pending":
                 return runtime.decide_file_pending(**arguments)
             if operation not in {"submit", "reset_context", "reload_context", "compact_context",
-                                 "change_directory", "switch_model", "set_model_setting"}:
+                                 "change_directory", "switch_model", "set_model_setting", "set_desktop_elevation"}:
                 raise ValueError("Unknown conversation operation")
             return getattr(runtime, operation)(**arguments)
 

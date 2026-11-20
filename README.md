@@ -216,9 +216,11 @@ The local `stop_all.ps1` stops web access but deliberately leaves the agent back
 The machine-specific Caddy/Authelia/stack scripts remain Git-ignored; the reusable
 `agent_startup.ps1` and `start_backend.ps1` are tracked. No live processes are restarted by editing them.
 
-Privileged/UAC workflows are **not exposed remotely**. For the original trusted local
-interface, explicitly set `AI_AGENT_MODE=local` before starting Textual. That mode still
-owns an in-process runtime and stops when its hosting process closes.
+On Windows, the usual browser session can request elevation through `\\settings` when
+started with the standard Windows backend launcher. [Review happens on the unlocked
+Windows host desktop](docs/elevated_commands.md#using-the-usual-web-session), followed
+by Windows UAC. The browser cannot approve or bypass either prompt. Terminal Textual
+with `AI_AGENT_MODE=local` retains its F9 approval workflow.
 
 The main views support:
 

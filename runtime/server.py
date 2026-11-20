@@ -53,6 +53,10 @@ class SettingArgs(Arguments):
     value: bool | Literal["model", "none", "minimal", "low", "medium", "high", "xhigh", "max"] | None
 
 
+class DesktopElevationArgs(Arguments):
+    enabled: bool
+
+
 class DecisionArgs(Arguments):
     identity: int = Field(gt=0)
     accept: bool
@@ -64,7 +68,7 @@ ARGUMENTS: dict[str, type[Arguments]] = {
     "reload_context": Arguments, "compact_context": Arguments,
     "load_chat": SessionArgs, "change_directory": DirectoryArgs,
     "switch_model": ModelArgs, "set_model_setting": SettingArgs,
-    "decide_pending": DecisionArgs,
+    "decide_pending": DecisionArgs, "set_desktop_elevation": DesktopElevationArgs,
 }
 
 
@@ -74,7 +78,7 @@ class CommandRequest(Arguments):
     session_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
     operation: Literal["submit", "new_chat", "reset_context", "reload_context", "compact_context",
                        "load_chat", "change_directory", "switch_model", "set_model_setting",
-                       "decide_pending"]
+                       "decide_pending", "set_desktop_elevation"]
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -122,7 +126,9 @@ class CommandLedger:
             except RuntimeBusyError:
                 status, body = 409, {"detail": "This chat is busy or the backend parallel-run limit was reached"}
             except PermissionError:
-                status, body = 403, {"detail": "Operation is not permitted on this host"}
+                detail = ('An unlocked Windows approval desktop is required on the host'
+                          if command.operation == 'set_desktop_elevation' else 'Operation is not permitted on this host')
+                status, body = 403, {"detail": detail}
             except (ValueError, KeyError):
                 status, body = 409, {"detail": "Command rejected; refresh state and review its arguments"}
             except Exception:
@@ -321,14 +327,18 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--allowed-host", action="append", default=[])
     parser.add_argument("--max-parallel-runs", type=int, default=4)
+    parser.add_argument('--desktop-approval', action='store_true', help='Review requests on the local Windows desktop')
     args = parser.parse_args()
     token = os.environ.get("AI_AGENT_TOKEN", "")
     if len(token) < 32:
         parser.error("Set AI_AGENT_TOKEN to a strong random token (at least 32 characters)")
     from runtime.bootstrap import create_conversation_manager
+    from runtime.desktop_approval import DesktopApproval
     import uvicorn
+    desktop = DesktopApproval() if args.desktop_approval and os.name == 'nt' else None
     app = create_server(
-        create_conversation_manager(durable=True, max_parallel_runs=args.max_parallel_runs), token=token,
+        create_conversation_manager(durable=True, max_parallel_runs=args.max_parallel_runs, desktop_review=desktop),
+        token=token,
         allowed_hosts=["localhost", "127.0.0.1", "[::1]", *args.allowed_host],
     )
     uvicorn.run(app, host="127.0.0.1", port=args.port, proxy_headers=False, access_log=False)

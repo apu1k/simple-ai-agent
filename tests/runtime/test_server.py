@@ -122,6 +122,7 @@ def test_network_host_cannot_arm_or_decide_privileged_requests(host):
     client, runtime, agent, epoch = host
     assert command(client, epoch, "set_model_setting", {"key": "elevated_commands", "value": True}).status_code == 422
     assert command(client, epoch, "decide_pending", {"identity": "Efixture", "accept": True, "revision": "a" * 64}).status_code == 422
+    assert command(client, epoch, 'set_desktop_elevation', {'enabled': True}).status_code == 403
     with pytest.raises(PermissionError):
         runtime.attach_client(can_approve=True)
     with pytest.raises(PermissionError):

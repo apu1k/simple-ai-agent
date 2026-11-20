@@ -67,6 +67,10 @@ def public_frame(runtime: Any, server_id: str, cursor: int | None = None) -> dic
                                  "provider_label": model.provider_label,
                                  "model": model.model, "api_type": model.api_type},
                 "model_settings": asdict(state.model_settings),
+                "desktop_elevation": (
+                    {"status": state.privileged_turn.status, "armed_operation": state.privileged_turn.armed_operation}
+                    if runtime.desktop_approval_enabled else None
+                ),
             },
             "pending": pending,
         }
@@ -81,12 +85,14 @@ def display_state(data: dict[str, Any] | None = None) -> SimpleNamespace:
                          "model": "", "api_type": ""},
         "model_settings": {},
     }
+    desktop = data.get('desktop_elevation')
     return SimpleNamespace(
+        desktop_approval_enabled=isinstance(desktop, dict),
         cwd=data["cwd"], chat_session_id=data["chat_session_id"],
         model_config=SimpleNamespace(**data["model_config"]),
         model_settings=SimpleNamespace(**{**asdict(ModelSettings()), **data["model_settings"]}),
         privileged_turn=SimpleNamespace(
-            status="disabled (network client)", armed_operation=None,
+            **(desktop if isinstance(desktop, dict) else {'status': 'disabled (no desktop approval)', 'armed_operation': None}),
         ),
     )
 

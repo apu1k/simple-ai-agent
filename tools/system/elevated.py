@@ -12,10 +12,10 @@ from tools._base import tool
     description=(
         'Request execution of an inline PowerShell script or a local .ps1 file as '
         'Administrator on Windows. Set exactly one of script and script_path. '
-        'For a file, Pending shows the source path and full contents; only the frozen '
+        'For a file, approval review shows the source path and full contents; only the frozen '
         'snapshot is executed, not a later read of the original file. '
         'Requires Elevated commands: Enable next turn, per-request acceptance in the '
-        'Textual pending screen, a separately installed protected launcher, and UAC. '
+        'configured approval UI (local Textual or host desktop), a separately installed protected launcher, and UAC. '
         'The app and ordinary shell tool remain unelevated. Head agent only. '
         f'Execution timeout is 1-{MAX_TIMEOUT} seconds (15-minute maximum, installed policy may be lower); '
         'approval waiting is separate and expires with the turn. Script is shown verbatim, '

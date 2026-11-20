@@ -125,7 +125,7 @@ function Get-AgentRestartTarget {
     $textualPath = Join-Path $Project '.venv\Scripts\textual.exe'
     $python = '(?:"' + [Regex]::Escape($pythonPath) + '"|' + [Regex]::Escape($pythonPath) + ')'
     $textual = '(?:"' + [Regex]::Escape($textualPath) + '"|' + [Regex]::Escape($textualPath) + ')'
-    if ($Kind -eq 'backend') { $pattern = '^\s*' + $python + '\s+-m\s+runtime\.server\s*$' }
+    if ($Kind -eq 'backend') { $pattern = '^\s*' + $python + '\s+-m\s+runtime\.server(?:\s+--desktop-approval)?\s*$' }
     else { $pattern = '^\s*(?:' + $python + '\s+' + $textual + '|' + $textual + ')\s+serve\b.*\s+main_textual\.py\s*$' }
     if ($record.CommandLine -notmatch $pattern) {
         throw "Port $Port is not the expected project's $Kind process. It will not be stopped."

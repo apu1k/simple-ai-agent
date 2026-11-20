@@ -2,10 +2,11 @@
 
 The single **Elevated commands: Enable next turn** setting replaces the two
 operation-specific UI settings. It permits requests during the next head-agent
-turn, not execution. Every elevated request needs acceptance in `\pending` and
-Windows UAC. Ordinary `run_shell_command` calls and the app remain unelevated.
+turn, not execution. Every elevated request needs full per-request review and
+Windows UAC. Terminal Textual uses `\pending`; the usual web session uses a local
+Windows review window. Ordinary `run_shell_command` calls stay unelevated.
 
-## Workflow
+## Terminal Textual workflow
 
 1. Enable the setting in `\settings`. The unused arm expires after two minutes.
 2. Submit a task. The head turn has a 30-minute authorization budget.
@@ -39,6 +40,28 @@ forcibly dismiss Windows consent. Late consent is refused at the helper deadline
 Approvals are volatile and never restored from history. Headless runtimes fail
 closed rather than wait without an interactive approval frontend. Workers do not
 receive the elevated tool or inherit head authority.
+
+## Using the usual web session
+
+Restart the normal Windows backend and Textual Serve to load the new code, then
+refresh the usual browser URL. Its durable chat is reused. There is no extra
+listener, URL, pairing code or chat. Use `\settings` → **Elevated commands:
+Enable next turn** on the chat you want to authorize.
+
+When the agent requests elevation, review the frozen script and its SHA-256 in
+**the Windows desktop review window**, not in the browser. Explicitly accept
+there to request UAC, or reject/close the window to decline. Approve only requests
+you initiated. The browser can arm/revoke a turn but has no API to accept a
+privileged request. Even an authenticated browser elsewhere can ask for review;
+it cannot complete review or consent to UAC. No approval is saved on restart.
+
+The standard Windows launcher selects `--desktop-approval`. This requires an
+ordinary backend in the active unlocked Windows console session with Python's
+Tk available. A headless/manual backend without that flag cannot arm the setting.
+One review can be open at a time across chats. Review is bounded by the existing
+turn deadline and a two-minute window; a timeout, closed dialog, unavailable
+desktop, or invalid response cannot authorize execution. A second request needs
+another review and UAC. Do not set `AI_AGENT_MODE=local` in shared Textual Serve.
 
 ## General command tool
 

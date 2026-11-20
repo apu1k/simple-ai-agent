@@ -674,14 +674,30 @@ class AgentTextualApp(App):
              "Claude Messages API only; available levels vary by model.")
             for effort in ANTHROPIC_REASONING_EFFORTS
         )
-        if not getattr(self.runtime, "supports_privileged_approval", True):
-            options = [option for option in options if option[0] != "elevated_commands"]
+        can_approve = getattr(self.runtime, "supports_privileged_approval", True)
+        desktop_review = getattr(self.state, 'desktop_approval_enabled', False)
+        can_arm = can_approve or desktop_review
+        if desktop_review and not can_approve:
+            options[0] = (
+                'elevated_commands', True, 'Elevated commands: Enable next turn',
+                'Each request opens a full review on the Windows host desktop and still requires UAC. '
+                'Arm expires in 2 minutes. Ordinary shell calls remain unelevated.',
+            )
+        elif not can_arm:
+            options = [option for option in options if option[0] != 'elevated_commands']
+            options.insert(0, (
+                'elevated_commands', True, 'Elevated commands: Enable next turn (unavailable)',
+                'This backend has no Windows desktop reviewer. Restart with the standard Windows launcher '
+                'or use terminal Textual in local mode.',
+            ))
         query = self._model_settings_search.lower()
         visible = [
             option for option in options
             if not query or query in f"{option[0]} {option[2]} {option[3]}".lower()
         ]
-        self._visible_model_setting_matches = [(key, value) for key, value, _, _ in visible]
+        self._visible_model_setting_matches = [
+            (key, value) for key, value, _, _ in visible if can_arm or key != 'elevated_commands'
+        ]
 
         tree = self.query_one("#model_settings_tree", Tree)
         root = tree.root
@@ -690,6 +706,9 @@ class AgentTextualApp(App):
         root.expand()
 
         for key, value, label, description in visible:
+            if key == 'elevated_commands' and not can_arm:
+                root.add_leaf(f"{label} — {description}")  # Informational; no selection action.
+                continue
             if key == "elevated_commands":
                 gate = getattr(self.state, "privileged_turn", None)
                 current = gate is not None and gate.armed_operation == ELEVATED_OPERATION
@@ -702,7 +721,11 @@ class AgentTextualApp(App):
             node = root.add_leaf(f"{marker}{label} — {description}")
             node.data = ("model_setting", key, value)
 
-        if visible:
+        if visible and not self._visible_model_setting_matches:
+            self.query_one("#model_settings_header", Static).update(
+                "This setting requires a trusted local Windows approval session."
+            )
+        elif visible:
             self.query_one("#model_settings_header", Static).update(
                 "Select an item, or narrow to one and press Enter. "
                 "OpenAI Flex and effort apply to direct OpenAI requests. "
@@ -715,6 +738,8 @@ class AgentTextualApp(App):
             )
 
     def _submit_model_setting_selection(self) -> None:
+        if not self._visible_model_setting_matches:
+            return  # Keep the empty-search or local-only explanation visible.
         if len(self._visible_model_setting_matches) != 1:
             self.query_one("#model_settings_header", Static).update(
                 f"{len(self._visible_model_setting_matches)} matches. Narrow the search to one or select a tree item."

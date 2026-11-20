@@ -18,12 +18,16 @@ def _visible_script(value: str) -> str:
     )
 
 
-def render_privileged_review(request: PendingPrivilege) -> Text:
+def render_privileged_review(
+    request: PendingPrivilege, *, decision_hint: str = (
+        'Enter accepts this exact request and requests Windows UAC. Delete rejects.'
+    ),
+) -> Text:
     """Format a display only; approval still binds the original review_json bytes."""
     review = Text(no_wrap=False, overflow='fold')
     review.append(
         f'ADMINISTRATOR request #{request.id}\n'
-        'Enter accepts this exact request and requests Windows UAC. Delete rejects.\n'
+        f'{decision_hint}\n'
         'Not sandboxed. Referenced dependencies may change. No rollback or automatic retry.\n'
         f'Review SHA-256: {request.review_sha256}\n\n',
         style=WARNING_STYLE,

@@ -18,6 +18,8 @@ def create_textual_app(
     if runtime is None:
         mode = os.environ.get("AI_AGENT_MODE", "remote")
         if mode == "local":
+            if os.environ.get("TEXTUAL_DRIVER") == "textual.drivers.web_driver:WebDriver":
+                raise ValueError("Do not use in-process mode with Textual Serve. Use the shared backend's desktop review.")
             from runtime.bootstrap import create_default_runtime
             runtime = create_default_runtime()
         elif mode == "remote":

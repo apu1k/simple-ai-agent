@@ -26,7 +26,7 @@ try {
     }
 
     Write-Host 'Starting the ordinary-user agent backend on 127.0.0.1:8765...'
-    & (Join-Path $project '.venv\Scripts\python.exe') -m runtime.server
+    & (Join-Path $project '.venv\Scripts\python.exe') -m runtime.server --desktop-approval
     if ($LASTEXITCODE -ne 0) { throw "Agent backend exited with code $LASTEXITCODE. See its error log." }
 }
 finally {

@@ -211,7 +211,10 @@ class RemoteRuntimeClient:
 
     def set_model_setting(self, key: str, value: Any, *, client_id: str | None = None) -> None:
         if key == "elevated_commands":
-            raise PermissionError("Privileged operations remain local-only")
+            if type(value) is not bool or not self.state.desktop_approval_enabled:
+                raise PermissionError('This backend does not have desktop approval enabled')
+            self._command('set_desktop_elevation', enabled=value)
+            return
         self._command("set_model_setting", key=key, value=value)
 
     def decide_pending(self, identity: int | str, *, accept: bool,

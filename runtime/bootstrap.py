@@ -29,6 +29,7 @@ from runtime.state import AgentState, ModelConfig, ModelSettings
 from runtime.tool_profiles import AgentProfile, build_profile_registry
 
 if TYPE_CHECKING:
+    from runtime.desktop_approval import DesktopApproval
     from runtime.service import AgentRuntime
 
 
@@ -65,7 +66,8 @@ def create_default_runtime(*, durable: bool = False) -> "AgentRuntime":
     )
 
 
-def create_conversation_manager(*, durable: bool = True, max_parallel_runs: int = 4):
+def create_conversation_manager(*, durable: bool = True, max_parallel_runs: int = 4,
+                                desktop_review: DesktopApproval | None = None):
     """Share infrastructure, never mutable model clients or conversation state."""
     from dataclasses import replace
     from runtime.conversations import ConversationManager
@@ -90,7 +92,7 @@ def create_conversation_manager(*, durable: bool = True, max_parallel_runs: int 
             model_settings=replace(source.model_settings) if source else ModelSettings(),
             chat_store=history, chat_session_id=identity, tool_call_store=audit,
         )
-        return AgentRuntime(state=state, llm=llm, persistence_store=store)
+        return AgentRuntime(state=state, llm=llm, persistence_store=store, desktop_review=desktop_review)
 
     return ConversationManager(
         history=history, runtime_factory=factory,
