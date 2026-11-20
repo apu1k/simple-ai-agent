@@ -43,11 +43,25 @@ performs the read-only preflight and copy-only audit, with a budget check just
 before the switch to writable. This is a cooperative gate, not an interrupt or
 rollback of writes already started. The guest returns only bounded audit and
 unmount evidence, never host cleanup evidence or image acceptance. No VM console
-or hand-entered Linux command is part of this flow. The existing inspection
-credential publisher/reader remains inspection-only. A separately reviewed
-credential bootstrap, media/launcher integration and exact-VM watchdog are still
-required for a live finalization. The plaintext runner and publication path are
-unchanged.
+or hand-entered Linux command is part of this flow. The associated public-only
+bootstrap candidate uses `night-shift-finalize-tls-v1` in guest-originated KVP.
+The separate host reader scopes it to the new `night-shift-auth-finalize-<id>`
+VM GUID and sole owner marker, checks the running state, and freezes the first
+record and VM state stamp under the existing deadline. It refuses the inspection
+item and does not accept credentials from COM1. The corresponding guest
+publisher can append only the typed finalization public item to the existing
+pool. Neither adapter is called by the current media, runner or protected
+launcher; neither supplies private keys or proves media provenance.
+
+The exact-VM teardown action now has a distinct `finalization` operation using
+that same new name/owner family. It refuses legacy inspection identities,
+checks the exact disk binding, verifies removal and detachment, and always
+retains the finalized or uncertain copy. It is an action, not a watchdog.
+The original Ubuntu ISO does not establish a live KVP daemon; use of the
+[reviewed RAM-only support candidate](night_shift_bootstrap_feasibility.md)
+still needs separate validation. Protected per-attempt key creation, boot media
+and launcher integration, and the independent watchdog remain live prerequisites.
+The plaintext runner and publication path are unchanged.
 
 ## Before a real run
 

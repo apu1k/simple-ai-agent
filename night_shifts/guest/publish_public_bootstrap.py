@@ -16,10 +16,10 @@ from collections.abc import Callable
 from contextlib import ExitStack
 from typing import Protocol, cast
 
-from night_shifts.maintenance_credentials_prototype import PublicBootstrap
+from night_shifts.maintenance_credentials_prototype import FinalizationPublicBootstrap, PublicBootstrap
 from night_shifts.public_bootstrap_kvp import (
     MAX_ITEMS, POOL_RECORD_BYTES, BootstrapKvpRefused, Budget,
-    check_pool_for_append, pool_record,
+    check_pool_for_append, finalization_pool_record, pool_record,
 )
 
 _POOL = '.kvp_pool_1'
@@ -137,9 +137,9 @@ def _append_locked(fd: int, parent: int, record: bytes, budget: Budget) -> None:
                 raise BootstrapKvpRefused('publication_unknown' if mutated else 'pool_lock') from None
 
 
-def publish_public_bootstrap(
-    value: PublicBootstrap, *, timeout_seconds: float = 3.0,
-    cancelled: Callable[[], bool] = lambda: False,
+def _publish_public_record(
+    encode: Callable[[], bytes], *, timeout_seconds: float,
+    cancelled: Callable[[], bool], deadline: float | None,
 ) -> None:
     """Append the fixed public item to the EXISTING fixed guest pool, once.
 
@@ -151,8 +151,8 @@ def publish_public_bootstrap(
         raise BootstrapKvpRefused('linux_required')
     if os.geteuid() != 0 or os.getuid() != 0:
         raise BootstrapKvpRefused('root_required')
-    budget = Budget(timeout_seconds, cancelled)
-    record = pool_record(value)
+    budget = Budget(timeout_seconds, cancelled, deadline=deadline)
+    record = encode()
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     try:
         with ExitStack() as stack:
@@ -184,3 +184,23 @@ def publish_public_bootstrap(
                 raise BootstrapKvpRefused('publication_unknown') from None
     except OSError:
         raise BootstrapKvpRefused('pool_io') from None
+
+
+def publish_public_bootstrap(
+    value: PublicBootstrap, *, timeout_seconds: float = 3.0,
+    cancelled: Callable[[], bool] = lambda: False,
+) -> None:
+    """Publish only the inspection/feasibility public item."""
+    _publish_public_record(lambda: pool_record(value), timeout_seconds=timeout_seconds,
+                           cancelled=cancelled, deadline=None)
+
+
+def publish_finalization_bootstrap(
+    value: FinalizationPublicBootstrap, *, deadline: float, timeout_seconds: float = 3.0,
+    cancelled: Callable[[], bool] = lambda: False,
+) -> None:
+    """Publish only the finalization public item under the original guest deadline."""
+    if deadline is None:
+        raise BootstrapKvpRefused('configuration')
+    _publish_public_record(lambda: finalization_pool_record(value), timeout_seconds=timeout_seconds,
+                           cancelled=cancelled, deadline=deadline)

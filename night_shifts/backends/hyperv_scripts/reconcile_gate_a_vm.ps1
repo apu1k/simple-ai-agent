@@ -1,5 +1,5 @@
 param(
-    [Parameter(Mandatory = $true)][ValidateSet('inspection', 'smoke')][string]$Operation,
+    [Parameter(Mandatory = $true)][ValidateSet('inspection', 'finalization', 'smoke')][string]$Operation,
     [Parameter(Mandatory = $true)][string]$Identity,
     [Parameter(Mandatory = $true)][guid]$VmId,
     [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
@@ -22,6 +22,11 @@ $workspace = Join-Path $WorkspaceRoot $Identity
 if ($Operation -eq 'inspection') {
     $expectedName = 'night-shift-finalize-' + $Identity
     $expectedOwner = 'night-shift-finalize-owner:' + $Identity
+    $disk = Join-Path $workspace 'working-copy.vhdx'
+    $diskType = 'Dynamic'
+} elseif ($Operation -eq 'finalization') {
+    $expectedName = 'night-shift-auth-finalize-' + $Identity
+    $expectedOwner = 'night-shift-auth-finalize-owner:' + $Identity
     $disk = Join-Path $workspace 'working-copy.vhdx'
     $diskType = 'Dynamic'
 } else {

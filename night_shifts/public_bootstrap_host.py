@@ -15,14 +15,16 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from night_shifts.maintenance_credentials_prototype import (
-    PUBLIC_ITEM_NAME, CredentialPrototypeRefused, PublicBootstrap, PublicBootstrapLatch,
+    FINALIZATION_ITEM_NAME, PUBLIC_ITEM_NAME, CredentialPrototypeRefused,
+    FinalizationBootstrapLatch, FinalizationPublicBootstrap, PublicBootstrap, PublicBootstrapLatch,
 )
-from night_shifts.maintenance_tls_prototype import AttemptBinding
+from night_shifts.maintenance_tls_prototype import FINALIZATION_OPERATION, OPERATION, AttemptBinding
 from night_shifts.public_bootstrap_kvp import (
-    MAX_ITEMS, MAX_TOTAL_XML_CHARS, BootstrapKvpRefused, Budget, select_public_item,
+    MAX_ITEMS, MAX_TOTAL_XML_CHARS, BootstrapKvpRefused, Budget,
+    select_finalization_item, select_public_item,
 )
 
 MAX_CAPTURE_BYTES = 128 * 1024
@@ -34,8 +36,8 @@ $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $vmId = '__VM__'
 $attempt = '__ATTEMPT__'
-$expectedName = 'night-shift-bootstrap-' + $attempt
-$expectedOwner = 'night-shift-bootstrap-owner:' + $attempt
+$expectedName = '__NAME__'
+$expectedOwner = '__OWNER__'
 function Read-LocalRows([string]$Query, [string[]]$Properties) {
     $options = New-Object System.Management.EnumerationOptions
     $options.ReturnImmediately = $true
@@ -110,11 +112,29 @@ try {
 '''
 
 
-def query_script(binding: AttemptBinding) -> str:
-    """Render only validated GUID/hex values, never task/guest script fragments."""
+def _vm_labels(binding: AttemptBinding) -> tuple[str, str]:
     if type(binding) is not AttemptBinding:
         raise BootstrapKvpRefused('configuration')
-    return _QUERY.replace('__VM__', binding.vm_id).replace('__ATTEMPT__', binding.attempt_id)
+    if binding.operation == OPERATION:
+        family = 'night-shift-bootstrap'
+    elif binding.operation == FINALIZATION_OPERATION:
+        family = 'night-shift-auth-finalize'
+    else:
+        raise BootstrapKvpRefused('configuration')
+    return family + '-' + binding.attempt_id, family + '-owner:' + binding.attempt_id
+
+
+def _scoped_query_script(binding: AttemptBinding) -> str:
+    """Render only fixed labels and validated GUID/hex values."""
+    name, owner = _vm_labels(binding)
+    return (_QUERY.replace('__VM__', binding.vm_id).replace('__ATTEMPT__', binding.attempt_id)
+            .replace('__NAME__', name).replace('__OWNER__', owner))
+
+
+def query_script(binding: AttemptBinding) -> str:
+    if type(binding) is not AttemptBinding or binding.operation != OPERATION:
+        raise BootstrapKvpRefused('configuration')
+    return _scoped_query_script(binding)
 
 
 def _powershell() -> str:
@@ -216,11 +236,11 @@ def _snapshot(raw: bytes, binding: AttemptBinding) -> tuple[str, tuple[str, ...]
     except (ValueError, UnicodeError, RecursionError):
         raise BootstrapKvpRefused('provider_schema') from None
     fields = {'version', 'vm_id', 'attempt_id', 'vm_name', 'owner', 'state_stamp', 'items'}
+    expected_name, expected_owner = _vm_labels(binding)
     if (type(value) is not dict or set(value) != fields
             or type(value['version']) is not int or value['version'] != 1
             or value['vm_id'] != binding.vm_id or value['attempt_id'] != binding.attempt_id
-            or value['vm_name'] != 'night-shift-bootstrap-' + binding.attempt_id
-            or value['owner'] != 'night-shift-bootstrap-owner:' + binding.attempt_id
+            or value['vm_name'] != expected_name or value['owner'] != expected_owner
             or type(value['state_stamp']) is not str or not 1 <= len(value['state_stamp']) <= 64
             or type(value['items']) is not list or len(value['items']) > MAX_ITEMS
             or any(type(item) is not str for item in value['items'])
@@ -234,16 +254,23 @@ class LocalPublicBootstrapReader:
 
     No refresh/retrust after change, no VM discovery/lifecycle, no authorization
     boolean or trusted-snapshot input. Private _capture is mocked only in tests.
-    Name/marker select the future fresh feasibility VM, never retained V1/V2.
-    Name/owner/state checks are stability observations, NOT boot attestation.
+    Name/marker select the fixed VM family, never retained V1/V2. Name/owner/state
+    checks are stability observations, NOT boot attestation or cleanup evidence.
     """
 
+    _operation: ClassVar[str] = OPERATION
+    _item_name: ClassVar[str] = PUBLIC_ITEM_NAME
+    _select = staticmethod(select_public_item)
+    _latch_type: ClassVar[type[PublicBootstrapLatch]] = PublicBootstrapLatch
+
     def __init__(self, binding: AttemptBinding, *, timeout_seconds: float = 15.0,
-                 cancelled: Callable[[], bool] = lambda: False) -> None:
-        self._script = query_script(binding)
+                 cancelled: Callable[[], bool] = lambda: False, deadline: float | None = None) -> None:
+        if type(binding) is not AttemptBinding or binding.operation != self._operation:
+            raise BootstrapKvpRefused('configuration')
+        self._script = _scoped_query_script(binding)
         self._binding = binding
-        self._budget = Budget(timeout_seconds, cancelled)
-        self._latch = PublicBootstrapLatch(binding)
+        self._budget = Budget(timeout_seconds, cancelled, deadline=deadline)
+        self._latch = self._latch_type(binding)
         self._stamp: str | None = None
         self._observed = False
         self._failure: str | None = None
@@ -258,13 +285,13 @@ class LocalPublicBootstrapReader:
             if self._stamp is not None and stamp != self._stamp:
                 raise BootstrapKvpRefused('vm_state_changed')
             self._stamp = stamp
-            raw = select_public_item(items, self._binding)
+            raw = self._select(items, self._binding)
             if raw is None:
                 if self._observed:
                     raise BootstrapKvpRefused('public_record_disappeared')
                 return None
             result = self._latch.observe(raw, observed_vm_id=self._binding.vm_id,
-                                         item_name=PUBLIC_ITEM_NAME, item_source=1)
+                                         item_name=self._item_name, item_source=1)
             self._budget.check()
             self._observed = True
             return result
@@ -277,3 +304,23 @@ class LocalPublicBootstrapReader:
         if self._failure is None:
             self._failure = 'closed'
         self._latch.close()
+
+
+class LocalFinalizationBootstrapReader(LocalPublicBootstrapReader):
+    """Read only the public item of a new authenticated-finalization VM."""
+
+    _operation: ClassVar[str] = FINALIZATION_OPERATION
+    _item_name: ClassVar[str] = FINALIZATION_ITEM_NAME
+    _select = staticmethod(select_finalization_item)
+    _latch_type: ClassVar[type[PublicBootstrapLatch]] = FinalizationBootstrapLatch
+
+    def __init__(self, binding: AttemptBinding, *, deadline: float, timeout_seconds: float = 15.0,
+                 cancelled: Callable[[], bool] = lambda: False) -> None:
+        if deadline is None:
+            raise BootstrapKvpRefused('configuration')
+        super().__init__(binding, timeout_seconds=timeout_seconds, cancelled=cancelled, deadline=deadline)
+
+    def poll(self) -> FinalizationPublicBootstrap | None:
+        result = super().poll()
+        assert result is None or type(result) is FinalizationPublicBootstrap
+        return result

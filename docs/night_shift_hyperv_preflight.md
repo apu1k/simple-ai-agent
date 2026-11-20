@@ -40,8 +40,8 @@ then verifies GUID/name absence and disk detachment/no VM references. It
 retains the disk by default. The fixed smoke operation can also remove exactly
 its own `worker.vhdx` when explicitly selected by a future protected host owner.
 That path verifies the expected file before removal and confirms its absence
-through a successful directory query afterwards. The inspection path never
-removes the copy. Failed or ambiguous queries do not emit a success receipt.
+through a successful directory query afterwards. The inspection and authenticated finalization paths never
+remove their copy; finalization uses a distinct VM name and owner marker. Failed or ambiguous queries do not emit a success receipt.
 This is not a watchdog: it is unwired and relies on the future independent host
 owner to pin the execution closure and workspace identity, exclude another
 lifecycle writer, enforce the original deadline, and publish authoritative

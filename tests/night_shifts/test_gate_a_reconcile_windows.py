@@ -20,7 +20,9 @@ $ErrorActionPreference = 'Stop'
 $PSModuleAutoLoadingPreference = 'None'
 Import-Module Microsoft.PowerShell.Management -ErrorAction Stop
 Import-Module Microsoft.PowerShell.Utility -ErrorAction Stop
-$prefix = if ($Mode -eq 'smoke') { 'night-shift-' } else { 'night-shift-finalize-' }
+$prefix = if ($Mode -eq 'smoke') { 'night-shift-' }
+    elseif ($Mode -eq 'finalization' -and $Case -ne 'legacy_binding') { 'night-shift-auth-finalize-' }
+    else { 'night-shift-finalize-' }
 $diskFile = if ($Mode -eq 'smoke') { 'worker.vhdx' } else { 'working-copy.vhdx' }
 $expectedDiskType = if ($Mode -eq 'smoke') { 'Differencing' } else { 'Dynamic' }
 $fakeDisk = Join-Path (Join-Path $Root $Attempt) $diskFile
@@ -132,6 +134,11 @@ catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }
 @pytest.mark.parametrize(('mode', 'case', 'actions', 'error'), [
     ('inspection', 'off', ['remove'], None),
     ('inspection', 'running', ['stop', 'remove'], None),
+    ('finalization', 'running', ['stop', 'remove'], None),
+    ('finalization', 'off', ['remove'], None),
+    ('finalization', 'legacy_binding', [], 'VM identity is unconfirmed'),
+    ('finalization', 'referenced', ['stop', 'remove'], 'disk is still referenced'),
+    ('finalization', 'vhd_missing', ['stop', 'remove'], 'disk detachment was not observed'),
     ('smoke', 'running', ['stop', 'remove'], None),
     ('smoke', 'empty_id', [], 'Invalid Gate A teardown binding'),
     ('smoke', 'missing', [], 'VM identity is unconfirmed'),
@@ -193,6 +200,7 @@ def test_gate_a_reconciliation_observes_exact_vm_and_retains_disk(
     ('smoke', 'running', ['stop', 'remove', 'delete'], None),
     ('smoke', 'off', ['remove', 'delete'], None),
     ('inspection', 'running', [], 'only permitted for the fixed smoke operation'),
+    ('finalization', 'running', [], 'only permitted for the fixed smoke operation'),
     ('smoke', 'disk_missing_on_entry', [], 'regular unlinked smoke disk'),
     ('smoke', 'disk_directory', [], 'regular unlinked smoke disk'),
     ('smoke', 'disk_hard_link', [], 'regular unlinked smoke disk'),

@@ -12,10 +12,11 @@ import xml.etree.ElementTree as ET
 from collections.abc import Callable
 
 from night_shifts.maintenance_credentials_prototype import (
-    PUBLIC_ITEM_NAME, CredentialPrototypeRefused, PublicBootstrap,
-    decode_public_bootstrap, encode_public_bootstrap,
+    FINALIZATION_ITEM_NAME, PUBLIC_ITEM_NAME, CredentialPrototypeRefused,
+    FinalizationPublicBootstrap, PublicBootstrap, decode_finalization_bootstrap,
+    decode_public_bootstrap, encode_finalization_bootstrap, encode_public_bootstrap,
 )
-from night_shifts.maintenance_tls_prototype import AttemptBinding
+from night_shifts.maintenance_tls_prototype import FINALIZATION_OPERATION, OPERATION, AttemptBinding
 
 KEY_BYTES = 512
 VALUE_BYTES = 2048
@@ -32,11 +33,15 @@ class BootstrapKvpRefused(RuntimeError):
 class Budget:
     """Cooperative deadline/cancellation, NOT a native watchdog or I/O timeout."""
 
-    def __init__(self, seconds: float, cancelled: Callable[[], bool]) -> None:
+    def __init__(self, seconds: float, cancelled: Callable[[], bool], *,
+                 deadline: float | None = None) -> None:
         if (type(seconds) not in (int, float) or not math.isfinite(seconds)
-                or not 0 < seconds <= 30 or not callable(cancelled)):
+                or not 0 < seconds <= 30 or not callable(cancelled)
+                or (deadline is not None and (type(deadline) not in (int, float)
+                                               or not math.isfinite(deadline)))):
             raise BootstrapKvpRefused('configuration')
-        self._deadline = time.monotonic() + seconds
+        limit = time.monotonic() + seconds
+        self._deadline = min(limit, deadline) if deadline is not None else limit
         self._cancelled = cancelled
         self.check()
 
@@ -75,6 +80,16 @@ def pool_record(value: PublicBootstrap) -> bytes:
     return key.ljust(KEY_BYTES, b'\0') + raw.ljust(VALUE_BYTES, b'\0')
 
 
+def finalization_pool_record(value: FinalizationPublicBootstrap) -> bytes:
+    """Encode only the typed finalization public record under its reserved key."""
+    try:
+        raw = encode_finalization_bootstrap(value)
+    except CredentialPrototypeRefused:
+        raise BootstrapKvpRefused('public_record') from None
+    return (FINALIZATION_ITEM_NAME.encode('ascii').ljust(KEY_BYTES, b'\0')
+            + raw.ljust(VALUE_BYTES, b'\0'))
+
+
 def _cstring(raw: bytes) -> str:
     head, separator, _ = raw.partition(b'\0')
     if not separator:
@@ -101,7 +116,7 @@ def check_pool_for_append(raw: bytes) -> None:
         _cstring(record[KEY_BYTES:])
         if not key or key in seen:
             raise BootstrapKvpRefused('pool_shape')
-        if key == PUBLIC_ITEM_NAME:
+        if key in (PUBLIC_ITEM_NAME, FINALIZATION_ITEM_NAME):
             raise BootstrapKvpRefused('pool_collision')
         seen.add(key)
 
@@ -145,7 +160,7 @@ def _item(xml: str) -> tuple[str, str]:
     return values['Name'], values['Data']
 
 
-def select_public_item(items: tuple[str, ...], binding: AttemptBinding) -> bytes | None:
+def _select_item(items: tuple[str, ...], binding: AttemptBinding, *, item_name: str) -> bytes | None:
     """Select only custom guest data from an already scoped provider snapshot.
 
     Caller-supplied XML/VM strings do NOT attest a provider or grant trust.
@@ -164,12 +179,27 @@ def select_public_item(items: tuple[str, ...], binding: AttemptBinding) -> bytes
         if name in seen:
             raise BootstrapKvpRefused('item_duplicate')
         seen.add(name)
-        if name == PUBLIC_ITEM_NAME:
+        if name in (PUBLIC_ITEM_NAME, FINALIZATION_ITEM_NAME):
+            if name != item_name:
+                raise BootstrapKvpRefused('unexpected_public_operation')
             try:
                 raw = data.encode('ascii')
-                decode_public_bootstrap(raw, binding, observed_vm_id=binding.vm_id,
-                                        item_name=name, item_source=1)
+                decoder: Callable[..., PublicBootstrap] = (
+                    decode_finalization_bootstrap if name == FINALIZATION_ITEM_NAME else decode_public_bootstrap)
+                decoder(raw, binding, observed_vm_id=binding.vm_id, item_name=name, item_source=1)
             except (UnicodeError, CredentialPrototypeRefused):
                 raise BootstrapKvpRefused('public_record') from None
             result = raw
     return result
+
+
+def select_public_item(items: tuple[str, ...], binding: AttemptBinding) -> bytes | None:
+    if type(binding) is not AttemptBinding or binding.operation != OPERATION:
+        raise BootstrapKvpRefused('configuration')
+    return _select_item(items, binding, item_name=PUBLIC_ITEM_NAME)
+
+
+def select_finalization_item(items: tuple[str, ...], binding: AttemptBinding) -> bytes | None:
+    if type(binding) is not AttemptBinding or binding.operation != FINALIZATION_OPERATION:
+        raise BootstrapKvpRefused('configuration')
+    return _select_item(items, binding, item_name=FINALIZATION_ITEM_NAME)

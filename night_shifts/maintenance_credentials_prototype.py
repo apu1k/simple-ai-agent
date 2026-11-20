@@ -14,15 +14,16 @@ import json
 import re
 import ssl
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar, TypeVar
 
-from night_shifts.maintenance_tls_prototype import OPERATION, AttemptBinding
+from night_shifts.maintenance_tls_prototype import FINALIZATION_OPERATION, OPERATION, AttemptBinding
 from night_shifts.ubuntu_preparation_control import AclRule, AclSnapshot
 
 SYSTEM_SID = 'S-1-5-18'
 ADMINS_SID = 'S-1-5-32-544'
 FULL_CONTROL = 0x001F01FF
 PUBLIC_ITEM_NAME = 'night-shift-inspect-tls-v1'
+FINALIZATION_ITEM_NAME = 'night-shift-finalize-tls-v1'
 MAX_PUBLIC_RECORD_BYTES = 1000  # ASCII: below documented 1024-character KVP Data bound.
 MAX_CA_DER_BYTES = 512
 
@@ -88,27 +89,51 @@ class PublicBootstrap:
     server_ca_der: bytes = field(repr=False)
     server_leaf_sha256: str
 
+    _operation: ClassVar[str] = OPERATION
+    _item_name: ClassVar[str] = PUBLIC_ITEM_NAME
+
     def __post_init__(self) -> None:
-        if (type(self.binding) is not AttemptBinding or self.binding.operation != OPERATION or
+        if (type(self.binding) is not AttemptBinding or self.binding.operation != self._operation or
                 type(self.server_leaf_sha256) is not str or
                 re.fullmatch('[0-9a-f]{64}', self.server_leaf_sha256) is None):
             raise CredentialPrototypeRefused('bootstrap_schema')
         _public_ca(self.server_ca_der)
 
 
-def encode_public_bootstrap(value: PublicBootstrap) -> bytes:
-    if type(value) is not PublicBootstrap:
+@dataclass(frozen=True)
+class FinalizationPublicBootstrap(PublicBootstrap):
+    """Public guest CA and leaf pin for the separate finalization operation."""
+
+    _operation: ClassVar[str] = FINALIZATION_OPERATION
+    _item_name: ClassVar[str] = FINALIZATION_ITEM_NAME
+
+
+def _encode_public_bootstrap(value: PublicBootstrap) -> bytes:
+    if type(value) not in (PublicBootstrap, FinalizationPublicBootstrap):
         raise CredentialPrototypeRefused('bootstrap_schema')
+    value.__post_init__()
     # No private-key/credential field or arbitrary file/payload input exists.
     raw = json.dumps({
         'version': 1, 'attempt_id': value.binding.attempt_id, 'vm_id': value.binding.vm_id,
-        'operation': OPERATION,
+        'operation': value._operation,
         'server_ca_der_b64': base64.b64encode(value.server_ca_der).decode('ascii'),
         'server_leaf_sha256': value.server_leaf_sha256,
     }, sort_keys=True, separators=(',', ':'), ensure_ascii=True).encode('ascii')
     if len(raw) > MAX_PUBLIC_RECORD_BYTES:
         raise CredentialPrototypeRefused('bootstrap_size')
     return raw
+
+
+def encode_public_bootstrap(value: PublicBootstrap) -> bytes:
+    if type(value) is not PublicBootstrap:
+        raise CredentialPrototypeRefused('bootstrap_schema')
+    return _encode_public_bootstrap(value)
+
+
+def encode_finalization_bootstrap(value: FinalizationPublicBootstrap) -> bytes:
+    if type(value) is not FinalizationPublicBootstrap:
+        raise CredentialPrototypeRefused('bootstrap_schema')
+    return _encode_public_bootstrap(value)
 
 
 def _unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -124,19 +149,22 @@ def _constant(_: str) -> None:
     raise ValueError('invalid bootstrap constant')
 
 
-def decode_public_bootstrap(
-    raw: bytes, expected: AttemptBinding, *, observed_vm_id: str,
-    item_name: str, item_source: int,
-) -> PublicBootstrap:
+_PublicValue = TypeVar('_PublicValue', bound=PublicBootstrap)
+
+
+def _decode_public_bootstrap(
+    raw: bytes, expected: AttemptBinding, value_type: type[_PublicValue], *,
+    observed_vm_id: str, item_name: str, item_source: int,
+) -> _PublicValue:
     """Check data from a FUTURE independently trusted exact-VM acquisition path.
 
     Merely passing matching arguments is NOT WMI attestation. No query is made.
     A live adapter must obtain VM association/name/source itself, not from a
     pipe message, worker task, untrusted XML or guest-selected lookup target.
     """
-    if (type(expected) is not AttemptBinding or expected.operation != OPERATION or
+    if (type(expected) is not AttemptBinding or expected.operation != value_type._operation or
             type(observed_vm_id) is not str or
-            observed_vm_id != expected.vm_id or item_name != PUBLIC_ITEM_NAME or
+            observed_vm_id != expected.vm_id or item_name != value_type._item_name or
             type(item_source) is not int or item_source != 1):
         raise CredentialPrototypeRefused('bootstrap_origin')
     if type(raw) is not bytes or not 1 <= len(raw) <= MAX_PUBLIC_RECORD_BYTES:
@@ -150,7 +178,7 @@ def decode_public_bootstrap(
     if (type(value) is not dict or set(value) != fields or
             type(value['version']) is not int or value['version'] != 1 or
             value['attempt_id'] != expected.attempt_id or value['vm_id'] != expected.vm_id or
-            value['operation'] != OPERATION or type(value['server_ca_der_b64']) is not str):
+            value['operation'] != value_type._operation or type(value['server_ca_der_b64']) is not str):
         raise CredentialPrototypeRefused('bootstrap_schema')
     encoded = value['server_ca_der_b64']
     if not 4 <= len(encoded) <= 4 * ((MAX_CA_DER_BYTES + 2) // 3):
@@ -161,7 +189,23 @@ def decode_public_bootstrap(
         raise CredentialPrototypeRefused('public_certificate') from None
     if base64.b64encode(der).decode('ascii') != encoded:
         raise CredentialPrototypeRefused('public_certificate')
-    return PublicBootstrap(expected, der, value['server_leaf_sha256'])
+    return value_type(expected, der, value['server_leaf_sha256'])
+
+
+def decode_public_bootstrap(
+    raw: bytes, expected: AttemptBinding, *, observed_vm_id: str,
+    item_name: str, item_source: int,
+) -> PublicBootstrap:
+    return _decode_public_bootstrap(raw, expected, PublicBootstrap, observed_vm_id=observed_vm_id,
+                                    item_name=item_name, item_source=item_source)
+
+
+def decode_finalization_bootstrap(
+    raw: bytes, expected: AttemptBinding, *, observed_vm_id: str,
+    item_name: str, item_source: int,
+) -> FinalizationPublicBootstrap:
+    return _decode_public_bootstrap(raw, expected, FinalizationPublicBootstrap,
+                                    observed_vm_id=observed_vm_id, item_name=item_name, item_source=item_source)
 
 
 class PublicBootstrapLatch:
@@ -171,8 +215,10 @@ class PublicBootstrapLatch:
     Recreating this object does not prove a fresh/authorized VM or boot epoch.
     """
 
+    _value_type: ClassVar[type[PublicBootstrap]] = PublicBootstrap
+
     def __init__(self, binding: AttemptBinding) -> None:
-        if type(binding) is not AttemptBinding or binding.operation != OPERATION:
+        if type(binding) is not AttemptBinding or binding.operation != self._value_type._operation:
             raise CredentialPrototypeRefused('bootstrap_schema')
         self._binding = binding
         self._value: PublicBootstrap | None = None
@@ -183,8 +229,8 @@ class PublicBootstrapLatch:
         if self._failure is not None:
             raise CredentialPrototypeRefused(self._failure)
         try:
-            value = decode_public_bootstrap(
-                raw, self._binding, observed_vm_id=observed_vm_id,
+            value = _decode_public_bootstrap(
+                raw, self._binding, self._value_type, observed_vm_id=observed_vm_id,
                 item_name=item_name, item_source=item_source,
             )
             if self._value is not None and value != self._value:
@@ -201,3 +247,9 @@ class PublicBootstrapLatch:
         if self._failure is None:
             self._failure = 'closed'
         self._value = None
+
+
+class FinalizationBootstrapLatch(PublicBootstrapLatch):
+    """Freeze finalization credentials without accepting inspection records."""
+
+    _value_type: ClassVar[type[PublicBootstrap]] = FinalizationPublicBootstrap

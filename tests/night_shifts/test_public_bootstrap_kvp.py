@@ -29,9 +29,11 @@ from night_shifts import public_bootstrap_host as host
 from night_shifts import public_bootstrap_kvp as wire
 from night_shifts.guest import publish_public_bootstrap as guest
 from night_shifts.maintenance_credentials_prototype import (
-    PUBLIC_ITEM_NAME, PublicBootstrap, encode_public_bootstrap,
+    FINALIZATION_ITEM_NAME, PUBLIC_ITEM_NAME, CredentialPrototypeRefused,
+    FinalizationPublicBootstrap, PublicBootstrap, decode_finalization_bootstrap,
+    encode_finalization_bootstrap, encode_public_bootstrap,
 )
-from night_shifts.maintenance_tls_prototype import AttemptBinding
+from night_shifts.maintenance_tls_prototype import FINALIZATION_OPERATION, AttemptBinding
 
 
 @pytest.fixture(scope='module')
@@ -70,6 +72,110 @@ def snapshot(value, items=None, **changes):
 def other_record():
     # Actual daemon malloc padding after NUL need not be zero.
     return b'other\0'.ljust(wire.KEY_BYTES, b'X') + b'public\0'.ljust(wire.VALUE_BYTES, b'Y')
+
+
+@pytest.fixture
+def finalization_value(public_value):
+    b = public_value.binding
+    return FinalizationPublicBootstrap(AttemptBinding(b.attempt_id, b.vm_id, FINALIZATION_OPERATION),
+                                       public_value.server_ca_der, public_value.server_leaf_sha256)
+
+
+def finalization_snapshot(value, items=None, **changes):
+    b = value.binding
+    if items is None:
+        items = [item(encode_finalization_bootstrap(value).decode('ascii'), name=FINALIZATION_ITEM_NAME)]
+    fields = dict(vm_name='night-shift-auth-finalize-' + b.attempt_id,
+                  owner='night-shift-auth-finalize-owner:' + b.attempt_id)
+    return snapshot(value, items, **(fields | changes))
+
+
+def test_finalization_record_is_public_and_operation_specific(finalization_value, public_value):
+    value = finalization_value
+    raw = encode_finalization_bootstrap(value)
+    assert decode_finalization_bootstrap(raw, value.binding, observed_vm_id=value.binding.vm_id,
+                                         item_name=FINALIZATION_ITEM_NAME, item_source=1) == value
+    record = wire.finalization_pool_record(value)
+    assert record[:wire.KEY_BYTES].split(b'\0')[0] == FINALIZATION_ITEM_NAME.encode('ascii')
+    assert record[wire.KEY_BYTES:].split(b'\0')[0] == raw
+    with pytest.raises(wire.BootstrapKvpRefused, match='^pool_collision$'):
+        wire.check_pool_for_append(record)
+    with pytest.raises(wire.BootstrapKvpRefused, match='^public_record$'):
+        wire.pool_record(value)
+    with pytest.raises(CredentialPrototypeRefused):
+        encode_finalization_bootstrap(public_value)
+    with pytest.raises(CredentialPrototypeRefused):
+        PublicBootstrap(value.binding, value.server_ca_der, value.server_leaf_sha256)
+    with pytest.raises(CredentialPrototypeRefused):
+        FinalizationPublicBootstrap(public_value.binding, value.server_ca_der, value.server_leaf_sha256)
+
+
+@pytest.mark.parametrize('fault,reason', [
+    ('inspect_item', 'unexpected_public_operation'), ('source', 'item_schema'),
+    ('vm', 'public_record'), ('attempt', 'public_record'), ('operation', 'public_record'),
+    ('secret_field', 'public_record'), ('duplicate', 'item_duplicate'),
+])
+def test_finalization_selector_refuses_substitution(finalization_value, fault, reason):
+    b = finalization_value.binding
+    fields = json.loads(encode_finalization_bootstrap(finalization_value))
+    overrides = {'vm': {'vm_id': 'different'}, 'attempt': {'attempt_id': 'f' * 32},
+                 'operation': {'operation': 'inspect_image_copy'},
+                 'secret_field': {'private_key': 'PRIVATE_CANARY'}}
+    raw = json.dumps(fields | overrides.get(fault, {}))
+    entry = item(raw, name=PUBLIC_ITEM_NAME if fault == 'inspect_item' else FINALIZATION_ITEM_NAME,
+                 source='0' if fault == 'source' else '1')
+    with pytest.raises(wire.BootstrapKvpRefused, match='^' + reason + '$') as error:
+        wire.select_finalization_item((entry,) * (2 if fault == 'duplicate' else 1), b)
+    assert 'CANARY' not in str(error.value)
+
+
+@pytest.mark.parametrize('fault,reason', [
+    ('rename', 'provider_schema'), ('owner', 'provider_schema'), ('state', 'vm_state_changed'),
+    ('pin', 'bootstrap_changed'), ('missing', 'public_record_disappeared'),
+])
+def test_finalization_reader_checks_vm_and_never_retrusts(finalization_value, monkeypatch, fault, reason):
+    value = finalization_value
+    b = value.binding
+    changed_pin = FinalizationPublicBootstrap(b, value.server_ca_der, 'b' * 64)
+    changed = {'rename': finalization_snapshot(value, vm_name='night-shift-finalize-' + b.attempt_id),
+               'owner': finalization_snapshot(value, owner='night-shift-finalize-owner:' + b.attempt_id),
+               'state': finalization_snapshot(value, state_stamp='changed'),
+               'pin': finalization_snapshot(changed_pin), 'missing': finalization_snapshot(value, [])}
+    outputs = [finalization_snapshot(value, []), finalization_snapshot(value), changed[fault]]
+
+    def capture(script, budget):
+        assert b.vm_id in script and 'night-shift-auth-finalize-' + b.attempt_id in script
+        assert 'night-shift-auth-finalize-owner:' + b.attempt_id in script
+        assert 'night-shift-finalize-owner:' not in script
+        budget.check()
+        return outputs.pop(0)
+
+    monkeypatch.setattr(host, '_capture', capture)
+    reader = host.LocalFinalizationBootstrapReader(b, deadline=wire.time.monotonic() + 5)
+    assert reader.poll() is None
+    assert reader.poll() == value
+    for _ in range(2):
+        with pytest.raises(wire.BootstrapKvpRefused, match='^' + reason + '$'):
+            reader.poll()
+    assert outputs == []
+
+
+def test_finalization_bootstrap_uses_original_deadline(finalization_value, monkeypatch):
+    now = [10.0]
+    monkeypatch.setattr(wire.time, 'monotonic', lambda: now[0])
+    reader = host.LocalFinalizationBootstrapReader(finalization_value.binding, deadline=11.0)
+    now[0] = 11.0
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('expired authorization attempted native acquisition')
+
+    monkeypatch.setattr(host, '_capture', forbidden)
+    with pytest.raises(wire.BootstrapKvpRefused, match='^timeout$'):
+        reader.poll()
+    with pytest.raises(wire.BootstrapKvpRefused, match='^configuration$'):
+        host.LocalPublicBootstrapReader(finalization_value.binding)
+    with pytest.raises(wire.BootstrapKvpRefused, match='^configuration$'):
+        host.LocalFinalizationBootstrapReader(finalization_value.binding, deadline=None)
 
 
 def test_linux_pool_abi_and_public_record_only(public_value):
@@ -252,6 +358,21 @@ def test_pool_security_refusals(changes):
         guest._profile(info(**changes), directory=False)
 
 
+def test_finalization_publisher_passes_only_the_fixed_public_record(finalization_value, monkeypatch):
+    observed = []
+    deadline = 12345.0
+
+    def mock_publish(encode, *, timeout_seconds, cancelled, deadline):
+        observed.append((encode(), timeout_seconds, cancelled(), deadline))
+
+    monkeypatch.setattr(guest, '_publish_public_record', mock_publish)
+    guest.publish_finalization_bootstrap(finalization_value, deadline=deadline)
+    assert observed == [(wire.finalization_pool_record(finalization_value), 3.0, False, deadline)]
+    with pytest.raises(wire.BootstrapKvpRefused, match='^configuration$'):
+        guest.publish_finalization_bootstrap(finalization_value, deadline=None)
+    assert len(observed) == 1
+
+
 def test_version_ignores_atime_not_length_or_mtime():
     assert guest._version(info(atime=1)) == guest._version(info(atime=9))
     assert guest._version(info(size=1)) != guest._version(info())
@@ -393,8 +514,22 @@ def test_host_script_parses_without_executing_it(public_value):
 
 @pytest.mark.skipif(os.name != 'nt', reason='synthetic PowerShell selection; native WMI removed')
 @pytest.mark.parametrize('case', ['ok', 'wrong_vm', 'wrong_owner', 'off', 'ambiguous', 'wrong_component'])
-def test_host_query_selection_without_native_provider(public_value, case):
-    script = host.query_script(public_value.binding)
+@pytest.mark.parametrize('mode', ['inspection', 'finalization'])
+def test_host_query_selection_without_native_provider(public_value, finalization_value, case, mode):
+    finalizing = mode == 'finalization'
+    value = finalization_value if finalizing else public_value
+    if finalizing:
+        script = host.LocalFinalizationBootstrapReader(value.binding, deadline=wire.time.monotonic() + 5)._script
+        family = 'night-shift-auth-finalize'
+        raw = encode_finalization_bootstrap(finalization_value)
+        label = FINALIZATION_ITEM_NAME
+        select = wire.select_finalization_item
+    else:
+        script = host.query_script(value.binding)
+        family = 'night-shift-bootstrap'
+        raw = encode_public_bootstrap(public_value)
+        label = PUBLIC_ITEM_NAME
+        select = wire.select_public_item
     start = script.index('function Read-LocalRows(')
     end = script.index('function Read-OwnedVm', start)
     mock = r'''
@@ -408,16 +543,16 @@ function Read-LocalRows([string]$Query, [string[]]$Properties) {
 '''
     script = script[:start] + mock + script[end:]
     assert 'ManagementObjectSearcher' not in script and 'ManagementScope' not in script
-    b = public_value.binding
+    b = value.binding
     fixture = dict(
-        vm=dict(Name=b.vm_id, ElementName='night-shift-bootstrap-' + b.attempt_id,
+        vm=dict(Name=b.vm_id, ElementName=family + '-' + b.attempt_id,
                 CreationClassName='Msvm_ComputerSystem', EnabledState=2,
                 TimeOfLastStateChange='20261018000000.000000+000'),
         settings=dict(VirtualSystemIdentifier=b.vm_id, VirtualSystemType='Microsoft:Hyper-V:System:Realized',
-                      Notes=['night-shift-bootstrap-owner:' + b.attempt_id]),
+                      Notes=[family + '-owner:' + b.attempt_id]),
         component=dict(SystemName=b.vm_id, SystemCreationClassName='Msvm_ComputerSystem',
                        CreationClassName='Msvm_KvpExchangeComponent', EnabledState=2,
-                       OperationalStatus=[2], GuestExchangeItems=[item(encode_public_bootstrap(public_value).decode())]))
+                       OperationalStatus=[2], GuestExchangeItems=[item(raw.decode('ascii'), name=label)]))
     if case == 'wrong_vm':
         fixture['vm']['Name'] = 'different'
     elif case == 'wrong_owner':
@@ -435,7 +570,7 @@ function Read-LocalRows([string]$Query, [string[]]$Properties) {
     if case == 'ok':
         assert result.returncode == 0, result.stderr.decode(errors='replace')
         stamp, items = host._snapshot(result.stdout, b)
-        assert stamp and wire.select_public_item(items, b) == encode_public_bootstrap(public_value)
+        assert stamp and select(items, b) == raw
     else:
         assert result.returncode == 2
         assert json.loads(result.stdout) == {'error': 'provider_refused'}
