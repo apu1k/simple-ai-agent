@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory = $true)][ValidateSet('inspection', 'smoke')][string]$Operation,
     [Parameter(Mandatory = $true)][string]$Identity,
     [Parameter(Mandatory = $true)][guid]$VmId,
-    [Parameter(Mandatory = $true)][string]$WorkspaceRoot
+    [Parameter(Mandatory = $true)][string]$WorkspaceRoot,
+    [switch]$RemoveSmokeDisk
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -13,6 +14,9 @@ if ($Identity -cnotmatch '^[0-9a-f]{32}\z' -or $VmId -eq [guid]::Empty -or
     $WorkspaceRoot -notmatch '^[A-Z]:\\[^\\]' -or
     [IO.Path]::GetFullPath($WorkspaceRoot) -cne $WorkspaceRoot) {
     throw 'Invalid Gate A teardown binding'
+}
+if ($RemoveSmokeDisk -and $Operation -ne 'smoke') {
+    throw 'Disk removal is only permitted for the fixed smoke operation'
 }
 $workspace = Join-Path $WorkspaceRoot $Identity
 if ($Operation -eq 'inspection') {
@@ -47,6 +51,31 @@ function Get-OwnedTarget {
     $target
 }
 
+function Get-SmokeDiskEntry {
+    # This is a consistency check, not a workspace lease. The protected owner
+    # must hold trusted ancestry/identity and exclude all other writers.
+    $dir = [IO.DirectoryInfo]$workspace
+    while ($dir) {
+        $observed = Get-Item -LiteralPath $dir.FullName -Force -ErrorAction Stop
+        if ($observed -isnot [IO.DirectoryInfo] -or
+            ($observed.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'Smoke disk ancestry was not confirmed'
+        }
+        $dir = $dir.Parent
+    }
+    Get-ChildItem -LiteralPath $workspace -Force -ErrorAction Stop |
+        Where-Object { $_.Name -ieq 'worker.vhdx' }
+}
+function Assert-SmokeDiskEntry {
+    $entries = @(Get-SmokeDiskEntry)
+    if ($entries.Count -ne 1 -or $entries[0] -isnot [IO.FileInfo] -or
+        $entries[0].FullName -ine $disk -or $entries[0].Name -cne 'worker.vhdx' -or
+        ($entries[0].Attributes -band [IO.FileAttributes]::ReparsePoint) -or $entries[0].LinkType) {
+        throw 'Exact regular unlinked smoke disk entry was not confirmed'
+    }
+}
+
+if ($RemoveSmokeDisk) { Assert-SmokeDiskEntry }
 $target = Get-OwnedTarget
 if ($target.State -ne 'Off') {
     Stop-VM -VM $target -TurnOff -Force -ErrorAction Stop | Out-Null
@@ -69,7 +98,15 @@ if ($vhd.Count -ne 1 -or $vhd[0].Path -ine $disk -or $vhd[0].VhdFormat -ne 'VHDX
     $vhd[0].VhdType -ne $diskType -or $vhd[0].Attached -isnot [bool] -or $vhd[0].Attached) {
     throw 'Gate A disk detachment was not observed'
 }
-# Retain the image copy/smoke disk. This result is VM teardown evidence, not
-# filesystem deletion, guest unmount, a release of claims, or Gate A success.
-[ordered]@{ version = 1; operation = $Operation.ToLowerInvariant(); id = $Identity; vm_id = $VmId.ToString();
-    vm_absent = $true; disk_unattached_and_unreferenced = $true; disk_retained = $true } | ConvertTo-Json -Compress
+$receipt = [ordered]@{ version = 1; operation = $Operation.ToLowerInvariant(); id = $Identity;
+    vm_id = $VmId.ToString(); vm_absent = $true; disk_unattached_and_unreferenced = $true; disk_retained = $true }
+if ($RemoveSmokeDisk) {
+    Assert-SmokeDiskEntry
+    Remove-Item -LiteralPath $disk -Force -ErrorAction Stop | Out-Null
+    if (@(Get-SmokeDiskEntry).Count -ne 0) { throw 'Smoke disk absence was not observed' }
+    $receipt.disk_retained = $false
+    $receipt['disk_absent'] = $true
+}
+# No recursive deletion, retries or release of claims. This outcome is host
+# state only and says nothing about guest unmount, a reply, or Gate A success.
+$receipt | ConvertTo-Json -Compress

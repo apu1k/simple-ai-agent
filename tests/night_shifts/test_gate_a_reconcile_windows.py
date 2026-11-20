@@ -15,7 +15,7 @@ _SCRIPT = (Path(__file__).resolve().parents[2] / 'night_shifts/backends/hyperv_s
 _VM_ID = '51434da9-9168-428a-8624-72a246ccc18d'
 _ATTEMPT = 'a' * 32
 _FIXTURE = r"""
-param([string]$Target, [string]$Case, [string]$Mode, [string]$Root, [string]$Attempt)
+param([string]$Target, [string]$Case, [string]$Mode, [string]$Root, [string]$Attempt, [string]$DiskAction = 'retain')
 $ErrorActionPreference = 'Stop'
 $PSModuleAutoLoadingPreference = 'None'
 Import-Module Microsoft.PowerShell.Management -ErrorAction Stop
@@ -102,8 +102,29 @@ function Remove-VM {
     if ($Case -eq 'remove_error') { Write-Error 'fixture remove error'; return }
     $fake.Removed = $true
 }
+function Remove-Item {
+    [CmdletBinding()]
+    param([string]$LiteralPath, [switch]$Force)
+    if (-not $fake.Removed -or $LiteralPath -cne $fakeDisk -or -not $Force) { throw 'unexpected disk deletion' }
+    [Console]::WriteLine('delete')
+    if ($Case -eq 'delete_error') { Write-Error 'fixture delete error'; return }
+    if ($Case -eq 'delete_no_effect') { return }
+    Microsoft.PowerShell.Management\Remove-Item -LiteralPath $LiteralPath -Force -ErrorAction Stop
+    $fake.Deleted = $true
+}
+function Get-ChildItem {
+    [CmdletBinding()]
+    param([string]$LiteralPath, [switch]$Force)
+    if ($LiteralPath -ine (Split-Path -Parent $fakeDisk) -or -not $Force) { throw 'unexpected workspace query' }
+    if ($Case -eq 'absence_error' -and $fake.Deleted) { Write-Error 'fixture absence query error'; return }
+    Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $LiteralPath -Force -ErrorAction Stop
+}
 $selectedId = if ($Case -eq 'empty_id') { [guid]::Empty } else { $exact }
-try { & $Target -Operation $Mode -Identity $Attempt -VmId $selectedId -WorkspaceRoot $Root; exit 0 }
+try {
+    & $Target -Operation $Mode -Identity $Attempt -VmId $selectedId -WorkspaceRoot $Root `
+        -RemoveSmokeDisk:($DiskAction -eq 'remove')
+    exit 0
+}
 catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }
 """
 
@@ -166,3 +187,61 @@ def test_gate_a_reconciliation_observes_exact_vm_and_retains_disk(
             'version': 1, 'operation': mode, 'id': _ATTEMPT, 'vm_id': _VM_ID,
             'vm_absent': True, 'disk_unattached_and_unreferenced': True, 'disk_retained': True,
         }
+
+
+@pytest.mark.parametrize(('mode', 'case', 'actions', 'error'), [
+    ('smoke', 'running', ['stop', 'remove', 'delete'], None),
+    ('smoke', 'off', ['remove', 'delete'], None),
+    ('inspection', 'running', [], 'only permitted for the fixed smoke operation'),
+    ('smoke', 'disk_missing_on_entry', [], 'regular unlinked smoke disk'),
+    ('smoke', 'disk_directory', [], 'regular unlinked smoke disk'),
+    ('smoke', 'disk_hard_link', [], 'regular unlinked smoke disk'),
+    ('smoke', 'post_error', ['stop', 'remove'], 'fixture inventory error'),
+    ('smoke', 'renamed', ['stop', 'remove'], 'VM absence was not observed'),
+    ('smoke', 'referenced', ['stop', 'remove'], 'disk is still referenced'),
+    ('smoke', 'attached', ['stop', 'remove'], 'disk detachment was not observed'),
+    ('smoke', 'delete_error', ['stop', 'remove', 'delete'], 'fixture delete error'),
+    ('smoke', 'delete_no_effect', ['stop', 'remove', 'delete'], 'Smoke disk absence was not observed'),
+    ('smoke', 'absence_error', ['stop', 'remove', 'delete'], 'fixture absence query error'),
+])
+def test_gate_a_reconciliation_removes_only_the_smoke_disk_after_verified_vm_teardown(
+    tmp_path: Path, mode: str, case: str, actions: list[str], error: str | None,
+) -> None:
+    powershell = Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
+    fixture = tmp_path / 'reconcile-fixture.ps1'
+    fixture.write_text(_FIXTURE, encoding='ascii')
+    workspace = tmp_path / _ATTEMPT
+    workspace.mkdir()
+    disk = workspace / ('worker.vhdx' if mode == 'smoke' else 'working-copy.vhdx')
+    neighbor = workspace / 'untouched.vhdx'
+    neighbor.write_bytes(b'keep')
+    if case == 'disk_directory':
+        disk.mkdir()
+    elif case == 'disk_hard_link':
+        os.link(neighbor, disk)
+    elif case != 'disk_missing_on_entry':
+        disk.write_bytes(b'not a VHDX')
+    result = subprocess.run(
+        [str(powershell), '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'RemoteSigned',
+         '-File', str(fixture), str(_SCRIPT), case, mode, str(tmp_path), _ATTEMPT, 'remove'],
+        capture_output=True, text=True, check=False, timeout=12,
+    )
+    lines = result.stdout.splitlines()
+    assert neighbor.read_bytes() == b'keep'
+    assert lines[:len(actions)] == actions, result.stderr
+    if error is None:
+        assert result.returncode == 0 and not result.stderr, result.stderr
+        assert len(lines) == len(actions) + 1
+        assert json.loads(lines[-1]) == {
+            'version': 1, 'operation': 'smoke', 'id': _ATTEMPT, 'vm_id': _VM_ID,
+            'vm_absent': True, 'disk_unattached_and_unreferenced': True,
+            'disk_retained': False, 'disk_absent': True,
+        }
+    else:
+        assert result.returncode == 1 and error in result.stderr, result.stderr
+        assert lines == actions
+    if error is None or case in {'absence_error', 'disk_missing_on_entry'}:
+        with pytest.raises(FileNotFoundError):
+            disk.lstat()
+    else:
+        assert disk.exists()
