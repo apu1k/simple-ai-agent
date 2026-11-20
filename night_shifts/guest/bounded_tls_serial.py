@@ -1,4 +1,4 @@
-"""Unwired inspection-only guest TLS server over fixed bounded Linux ttyS0.
+"""Unwired operation-bound guest TLS server over fixed bounded Linux ttyS0.
 
 Trusted contexts, pins and per-attempt bindings are supplied by a future reviewed
 bootstrap. No key discovery/provisioning, command dispatcher, CLI, service entry,

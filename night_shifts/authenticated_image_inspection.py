@@ -15,7 +15,7 @@ from typing import Any, Protocol
 from night_shifts.bounded_tls_pipe import BoundedTlsPipe
 from night_shifts.guest import finalize_image_copy as guest
 from night_shifts.guest.bounded_tls_serial import GuestTlsSerial
-from night_shifts.maintenance_tls_prototype import AttemptBinding
+from night_shifts.maintenance_tls_prototype import OPERATION, AttemptBinding
 
 _REQUEST = {'version': 1, 'action': 'inspect_image_copy'}
 _FAILURE = {'version': 1, 'status': 'inspection_not_verified'}
@@ -93,6 +93,8 @@ def inspect_once(channel: _TLSChannel) -> dict[str, dict[str, str]]:
 
 def serve_inspection_once(channel: _GuestTLSChannel) -> bool:
     """Guest: authenticate one request before touching the copy; never finalize."""
+    if channel.binding.operation != OPERATION:
+        raise InspectionRefused('invalid_inspection_request')
     message = channel.receive_message()
     if not (type(message) is dict and message == _REQUEST and type(message['version']) is int):
         raise InspectionRefused('invalid_inspection_request')
@@ -124,6 +126,8 @@ def connect_and_inspect_once(
     maintenance prefix, arbitrary endpoint or plaintext fallback is supported.
     The deadline is on this host process's monotonic clock.
     """
+    if binding.operation != OPERATION:
+        raise InspectionRefused('invalid_inspection_request')
     path = rf'\\.\pipe\night-shift-{binding.attempt_id}-com1'
     with BoundedTlsPipe(path, context, binding, peer_sha256=peer_sha256, timeout_seconds=900,
                         cancelled=cancelled, deadline=deadline) as channel:
@@ -135,6 +139,8 @@ def connect_and_serve_once(
     deadline: float, cancelled: Callable[[], bool],
 ) -> bool:
     """Serve on fixed ttyS0 under the guest's own local monotonic deadline."""
+    if binding.operation != OPERATION:
+        raise InspectionRefused('invalid_inspection_request')
     with GuestTlsSerial(context, binding, peer_sha256=peer_sha256, timeout_seconds=900,
                         cancelled=cancelled, deadline=deadline) as channel:
         return serve_inspection_once(channel)

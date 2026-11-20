@@ -20,7 +20,7 @@ legacy maintenance pipe. Its guest uses only `/dev/ttyS0`. Each side uses its
 own original local monotonic deadline through open, handshake and exchange.
 The guest checks that the authenticated attempt and the live recovery request
 agree before touching any block device;
-finalization is not a TLS operation. The controller validates a bounded guest
+the inspection operation cannot finalize. The controller validates a bounded guest
 receipt, not host-side disconnection, removal, or acceptance. Unreviewed link
 targets do not cross the wire. There is no new production launcher or media
 bundle, and the existing plaintext refusal is unchanged. In particular, a
@@ -32,6 +32,22 @@ supervision paths must still supply the trusted credentials, observe the exact n
 configured pipe, and verify teardown. Stream failure leaves teardown to that
 independent supervision; exiting a TLS context does not repeat uncertain cleanup.
 A timeout is not evidence that the VM or guest worked.
+
+A separate, unwired **automatic finalization exchange** binds TLS frames to
+`finalize_image_copy`, distinct from inspection. The protected controller would
+send only a fixed grant containing the digest of the exact reviewed recovery
+request. The live guest checks the authenticated attempt and compares that
+digest to its trusted local NoCloud request before opening the copy; no profile,
+paths or commands come over the wire. The same guest maintenance routine
+performs the read-only preflight and copy-only audit, with a budget check just
+before the switch to writable. This is a cooperative gate, not an interrupt or
+rollback of writes already started. The guest returns only bounded audit and
+unmount evidence, never host cleanup evidence or image acceptance. No VM console
+or hand-entered Linux command is part of this flow. The existing inspection
+credential publisher/reader remains inspection-only. A separately reviewed
+credential bootstrap, media/launcher integration and exact-VM watchdog are still
+required for a live finalization. The plaintext runner and publication path are
+unchanged.
 
 ## Before a real run
 

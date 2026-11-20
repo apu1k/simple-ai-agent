@@ -1,6 +1,6 @@
 """Unwired controller-side TLS/pipe adapter; not a live VM authorization.
 
-The existing inspection-only TLS prototype supplies authentication and framing.
+The TLS prototype supplies authentication and operation-bound framing.
 One authoritative IOBudget covers opening, handshake and all message traffic.
 No credentials are provisioned, no endpoint identity is discovered, and no
 production transport, protected payload, ACL or Hyper-V resource is changed.
@@ -53,6 +53,7 @@ class BoundedTlsPipe:
         deadline: float | None = None,
     ) -> None:
         self._owner = threading.get_ident()
+        self._binding = binding
         self._busy = False
         self._closed = False
         self._pipe: BoundedPipe | None = None
@@ -72,6 +73,10 @@ class BoundedTlsPipe:
                 self._drain()
                 if not self._endpoint.authenticated:
                     self._read()
+
+    @property
+    def binding(self) -> AttemptBinding:
+        return self._binding
 
     @property
     def closed(self) -> bool:

@@ -89,7 +89,7 @@ class PublicBootstrap:
     server_leaf_sha256: str
 
     def __post_init__(self) -> None:
-        if (type(self.binding) is not AttemptBinding or
+        if (type(self.binding) is not AttemptBinding or self.binding.operation != OPERATION or
                 type(self.server_leaf_sha256) is not str or
                 re.fullmatch('[0-9a-f]{64}', self.server_leaf_sha256) is None):
             raise CredentialPrototypeRefused('bootstrap_schema')
@@ -134,7 +134,8 @@ def decode_public_bootstrap(
     A live adapter must obtain VM association/name/source itself, not from a
     pipe message, worker task, untrusted XML or guest-selected lookup target.
     """
-    if (type(expected) is not AttemptBinding or type(observed_vm_id) is not str or
+    if (type(expected) is not AttemptBinding or expected.operation != OPERATION or
+            type(observed_vm_id) is not str or
             observed_vm_id != expected.vm_id or item_name != PUBLIC_ITEM_NAME or
             type(item_source) is not int or item_source != 1):
         raise CredentialPrototypeRefused('bootstrap_origin')
@@ -171,7 +172,7 @@ class PublicBootstrapLatch:
     """
 
     def __init__(self, binding: AttemptBinding) -> None:
-        if type(binding) is not AttemptBinding:
+        if type(binding) is not AttemptBinding or binding.operation != OPERATION:
             raise CredentialPrototypeRefused('bootstrap_schema')
         self._binding = binding
         self._value: PublicBootstrap | None = None

@@ -15,6 +15,7 @@ import shutil
 import stat
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -292,7 +293,7 @@ def recovery_request() -> dict[str, Any]:
     return request
 
 
-def _maintain_copy(request: dict[str, Any]) -> dict[str, Any]:
+def _maintain_copy(request: dict[str, Any], *, before_write: Callable[[], None] | None = None) -> dict[str, Any]:
     """Operate after the caller validates live boot and the attempt's channel."""
     validate_request(request)
     receipt: dict[str, Any] = {'version': 1, 'id': request['id'], 'mode': request['mode'],
@@ -325,6 +326,8 @@ def _maintain_copy(request: dict[str, Any]) -> dict[str, Any]:
             prepare(ROOT, request)
             command('/usr/bin/umount', str(ROOT))
             mounted = False
+            if before_write is not None:
+                before_write()  # A stale grant must not allow journal replay or copy writes.
             for device in devices:
                 command('/usr/sbin/blockdev', '--setrw', device)
             command('/usr/bin/mount', '-t', 'ext4', '-o', 'rw,nodev,nosuid,noexec', devices[2], str(ROOT))

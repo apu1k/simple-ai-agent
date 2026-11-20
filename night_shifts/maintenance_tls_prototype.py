@@ -30,6 +30,7 @@ MAX_MESSAGES = 1024
 MAX_SECONDS = 900
 SERVER_NAME = 'night-shift-maintenance.invalid'
 OPERATION = 'inspect_image_copy'
+FINALIZATION_OPERATION = 'finalize_image_copy'
 
 
 class PrototypeRefused(RuntimeError):
@@ -44,9 +45,11 @@ class PrototypeRefused(RuntimeError):
 class AttemptBinding:
     attempt_id: str
     vm_id: str
+    operation: str = OPERATION
 
     def __post_init__(self) -> None:
-        if (type(self.attempt_id) is not str or
+        if (type(self.operation) is not str or self.operation not in (OPERATION, FINALIZATION_OPERATION) or
+                type(self.attempt_id) is not str or
                 re.fullmatch('[0-9a-f]{32}', self.attempt_id) is None or
                 type(self.vm_id) is not str):
             raise ValueError('invalid prototype binding')
@@ -306,7 +309,7 @@ class OfflineTlsEndpoint:
             self._fail('frame_value')
         envelope = dict(
             version=1, attempt_id=self._binding.attempt_id, vm_id=self._binding.vm_id,
-            operation=OPERATION, sender=self._role, sequence=self._tx_sequence, payload=payload,
+            operation=self._binding.operation, sender=self._role, sequence=self._tx_sequence, payload=payload,
         )
         try:
             _tree(envelope)
@@ -342,7 +345,7 @@ class OfflineTlsEndpoint:
         if (type(value) is not dict or set(value) != fields or
                 type(value['version']) is not int or value['version'] != 1 or
                 value['attempt_id'] != self._binding.attempt_id or
-                value['vm_id'] != self._binding.vm_id or value['operation'] != OPERATION or
+                value['vm_id'] != self._binding.vm_id or value['operation'] != self._binding.operation or
                 value['sender'] != peer or type(value['payload']) is not dict):
             self._fail('frame_binding')
         if (type(value['sequence']) is not int or value['sequence'] != self._rx_sequence or
