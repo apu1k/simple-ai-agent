@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from night_shifts.gate_a_watchdog import HostCleanup, TeardownTarget, validate_cleanup_receipt
+
 pytestmark = pytest.mark.skipif(sys.platform != 'win32', reason='Windows PowerShell fixture')
 
 _SCRIPT = (Path(__file__).resolve().parents[2] / 'night_shifts/backends/hyperv_scripts'
@@ -194,6 +196,9 @@ def test_gate_a_reconciliation_observes_exact_vm_and_retains_disk(
             'version': 1, 'operation': mode, 'id': _ATTEMPT, 'vm_id': _VM_ID,
             'vm_absent': True, 'disk_unattached_and_unreferenced': True, 'disk_retained': True,
         }
+        if mode == 'finalization':
+            target = TeardownTarget(mode, _ATTEMPT, _VM_ID)
+            assert validate_cleanup_receipt(target, lines[-1].encode('ascii')) == HostCleanup(target, True)
 
 
 @pytest.mark.parametrize(('mode', 'case', 'actions', 'error'), [
@@ -245,6 +250,8 @@ def test_gate_a_reconciliation_removes_only_the_smoke_disk_after_verified_vm_tea
             'vm_absent': True, 'disk_unattached_and_unreferenced': True,
             'disk_retained': False, 'disk_absent': True,
         }
+        target = TeardownTarget('smoke', _ATTEMPT, _VM_ID)
+        assert validate_cleanup_receipt(target, lines[-1].encode('ascii')) == HostCleanup(target, False)
     else:
         assert result.returncode == 1 and error in result.stderr, result.stderr
         assert lines == actions

@@ -42,10 +42,11 @@ its own `worker.vhdx` when explicitly selected by a future protected host owner.
 That path verifies the expected file before removal and confirms its absence
 through a successful directory query afterwards. The inspection and authenticated finalization paths never
 remove their copy; finalization uses a distinct VM name and owner marker. Failed or ambiguous queries do not emit a success receipt.
-This is not a watchdog: it is unwired and relies on the future independent host
-owner to pin the execution closure and workspace identity, exclude another
-lifecycle writer, enforce the original deadline, and publish authoritative
-observations. Do not point this candidate at any retained attempt or run it as a
-general-purpose cleanup command.
+The [watchdog candidate](night_shift_gate_a_watchdog.md) adds exact Windows
+lifetime signals and a one-shot cleanup protocol for finalization and smoke.
+No production owner invokes the action yet. The future protected host must pin
+the execution closure and workspace identity, establish that no lifecycle
+operation can race teardown, and publish authoritative observations. Do not point
+this candidate at a retained attempt or run it as a general-purpose cleanup command.
 
 **Gate A passes only with recorded real-host observations and confirmed cleanup, not with fake-runner or local protocol tests.** Missing approved host/image/permissions is an explicit blocker. Gate B (real workspace transfer) remains separate.
