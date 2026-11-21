@@ -65,6 +65,11 @@ class IOBudget:
         limit = clock() + timeout_seconds
         self._deadline = min(limit, deadline) if deadline is not None else limit
 
+    @property
+    def deadline(self) -> float:
+        """Carry this already-clamped monotonic limit into later local stages."""
+        return self._deadline
+
     def remaining(self) -> float:
         try:
             cancelled = self._cancelled()

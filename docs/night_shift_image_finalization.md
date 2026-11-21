@@ -50,8 +50,15 @@ VM GUID and sole owner marker, checks the running state, and freezes the first
 record and VM state stamp under the existing deadline. It refuses the inspection
 item and does not accept credentials from COM1. The corresponding guest
 publisher can append only the typed finalization public item to the existing
-pool. Neither adapter is called by the current media, runner or protected
-launcher; neither supplies private keys or proves media provenance.
+pool. The host and guest handoff functions compose these adapters with the
+one-shot finalization exchange: the host freezes the first VM-scoped public
+credential before opening COM1, and the guest checks its read-only optical
+mount, VM UUID, swap state and recovery request before publishing. Each side
+loads only the other side's exact CA in a fresh TLS context and checks the
+expected leaf pin; neither uses ambient trust stores or falls back to plaintext.
+These functions take already-protected local PEM identities from their future
+owner, not from KVP, the VM task or recovery media. They do not generate keys,
+start the daemon or run from the current media, runner or protected launcher.
 
 The exact-VM teardown action now has a distinct `finalization` operation using
 that same new name/owner family. It refuses legacy inspection identities,
