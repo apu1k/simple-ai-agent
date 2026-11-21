@@ -33,10 +33,12 @@ class BootstrapKvpRefused(RuntimeError):
 class Budget:
     """Cooperative deadline/cancellation, NOT a native watchdog or I/O timeout."""
 
+    _max_seconds = 30
+
     def __init__(self, seconds: float, cancelled: Callable[[], bool], *,
                  deadline: float | None = None) -> None:
         if (type(seconds) not in (int, float) or not math.isfinite(seconds)
-                or not 0 < seconds <= 30 or not callable(cancelled)
+                or not 0 < seconds <= self._max_seconds or not callable(cancelled)
                 or (deadline is not None and (type(deadline) not in (int, float)
                                                or not math.isfinite(deadline)))):
             raise BootstrapKvpRefused('configuration')

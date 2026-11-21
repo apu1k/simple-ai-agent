@@ -15,7 +15,7 @@ from night_shifts.authenticated_image_finalization import (
 )
 from night_shifts.finalization_tls_identity import LocalPemIdentity, controller_context
 from night_shifts.maintenance_tls_prototype import FINALIZATION_OPERATION, AttemptBinding
-from night_shifts.public_bootstrap_host import LocalFinalizationBootstrapReader
+from night_shifts.public_bootstrap_host import FINALIZATION_BOOTSTRAP_SECONDS, LocalFinalizationBootstrapReader
 from night_shifts.serial_pipe_io import IOBudget
 
 
@@ -30,10 +30,10 @@ def finalize_bootstrapped_copy_once(
         raise FinalizationRefused('invalid_bootstrap_configuration')
     budget = IOBudget(900, cancelled=cancelled, deadline=deadline)
     budget.remaining()
-    # Bound KVP separately after the owner observes boot/readiness; TLS and disk
-    # work are not required to finish within the shorter KVP acquisition window.
-    reader = LocalFinalizationBootstrapReader(binding, deadline=budget.deadline, timeout_seconds=30,
-                                             cancelled=cancelled)
+    # Even after Start-VM reports Running, the Ubuntu ISO spends 30 seconds in
+    # GRUB before Linux/cloud-init. Allow that boot delay within the same overall cap.
+    reader = LocalFinalizationBootstrapReader(binding, deadline=budget.deadline,
+                                             timeout_seconds=FINALIZATION_BOOTSTRAP_SECONDS, cancelled=cancelled)
     try:
         while (peer := reader.poll()) is None:
             time.sleep(min(0.05, budget.remaining()))

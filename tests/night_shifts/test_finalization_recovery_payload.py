@@ -1,8 +1,12 @@
 """Offline finalization payload and isolated source import regressions."""
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import json
+import zipfile
+from dataclasses import replace
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +15,8 @@ import pytest
 from cryptography.hazmat.primitives.serialization import Encoding
 
 from night_shifts import finalization_recovery_payload as payload
+from night_shifts.finalization_recovery_iso import RecoveryIsoRefused, build_recovery_iso, verify_recovery_iso
+from night_shifts.guest.finalization_recovery_entry import ENTRY, RecoveryEntryRefused, parse_context, pin_archive
 from night_shifts.finalization_tls_identity import (
     ControllerPublicTrust, FinalizationIdentityRefused, decode_controller_trust, encode_controller_trust,
 )
@@ -99,9 +105,6 @@ def test_payload_refuses_substitution_even_when_rehashed(trust, built, change, r
         binding = AttemptBinding(trust.binding.attempt_id, 'de85a5dc-75ba-4537-ab3b-2d89d4c5254f',
                                  FINALIZATION_OPERATION)
     elif change != 'pin':
-        import io
-        import zipfile
-
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
             files = {name: archive.read(name) for name in archive.namelist()}
         if change == 'inventory':
@@ -129,3 +132,67 @@ def test_builder_refuses_non_profile_artifact_or_license(trust, assets):
 def test_configured_sources_are_bounded_and_fixed():
     assert all(not Path(name).is_absolute() and '..' not in Path(name).parts for name in payload._SOURCES)
     assert len(payload._NAMES) == len(set(payload._NAMES))
+
+
+def test_seed_readback_and_fixed_cloud_init_entry(trust, built):
+    pycdlib = pytest.importorskip('pycdlib')
+    iso = build_recovery_iso(built, trust.binding)
+    assert iso.sha256 == sha(iso.raw) and iso.request_sha256 == built.request_sha256
+    verify_recovery_iso(iso.raw, built, trust.binding, expected_sha256=iso.sha256)
+    image = pycdlib.PyCdlib()
+    image.open_fp(io.BytesIO(iso.raw))
+    try:
+        data = io.BytesIO()
+        image.get_file_from_iso_fp(data, rr_path='/user-data')
+    finally:
+        image.close()
+    prefix, value = data.getvalue().split(b'\n', 1)
+    assert prefix == b'#cloud-config'
+    user_data = json.loads(value)
+    assert 'autoinstall' not in user_data and user_data['users'] == []
+    [command] = user_data['runcmd']
+    assert command == ['/usr/bin/env', '-i', 'LANG=C', 'LC_ALL=C', '/usr/bin/unshare', '--mount', '--net',
+                       '--propagation', 'private', '/usr/bin/python3.12', '-I', '-B', '-S', ENTRY,
+                       trust.binding.attempt_id, trust.binding.vm_id, built.sha256]
+    [source] = user_data['write_files']
+    assert source['owner'] == 'root:root' and source['permissions'] == '0400' and source['path'] == ENTRY
+    entry = base64.b64decode(source['content'], validate=True)
+    assert entry == payload._source('guest/finalization_recovery_entry.py')
+    compile(entry, ENTRY, 'exec')
+
+
+def test_seed_refuses_request_fingerprint_substitution(trust, built):
+    with pytest.raises(RecoveryIsoRefused, match='^request_digest$'):
+        build_recovery_iso(replace(built, request_sha256='0' * 64), trust.binding)
+
+
+def test_seed_refuses_media_substitution_or_appended_data(trust, built):
+    pytest.importorskip('pycdlib')
+    iso = build_recovery_iso(built, trust.binding)
+    with pytest.raises(RecoveryIsoRefused, match='^iso_pin$'):
+        verify_recovery_iso(iso.raw[:-1] + b'X', built, trust.binding, expected_sha256=iso.sha256)
+    raw = iso.raw + b'\0' * 2048
+    with pytest.raises(RecoveryIsoRefused, match='^iso_shape$'):
+        verify_recovery_iso(raw, built, trust.binding, expected_sha256=sha(raw))
+
+
+def test_guest_checks_pin_before_parsing_and_does_not_extract(built, monkeypatch):
+    entries = pin_archive(built.raw, expected_sha256=built.sha256)
+    assert set(entries) == {'controller.json', 'request.json', 'night-shift-protocol-test.service', 'hv_kvp_daemon'}
+    assert entries['hv_kvp_daemon'] == b'DAEMON_TEST_ONLY'
+
+    def no_parse(*args, **kwargs):
+        pytest.fail('attempted zip parse before checking the trusted pin')
+
+    monkeypatch.setattr(zipfile, 'ZipFile', no_parse)
+    with pytest.raises(RecoveryEntryRefused, match='^payload_pin$'):
+        pin_archive(built.raw + b'change', expected_sha256=built.sha256)
+
+
+@pytest.mark.parametrize('bad', [0, 1, 2])
+def test_guest_entry_arguments_are_exact(trust, built, bad):
+    valid = [trust.binding.attempt_id, trust.binding.vm_id, built.sha256]
+    assert parse_context(*valid) == tuple(valid)
+    valid[bad] = '../../not-an-attempt'
+    with pytest.raises(RecoveryEntryRefused, match='^binding$'):
+        parse_context(*valid)

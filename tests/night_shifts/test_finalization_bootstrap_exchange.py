@@ -21,7 +21,8 @@ from night_shifts.finalization_tls_identity import (
 from night_shifts.guest import finalization_bootstrap as boot
 from night_shifts.guest.serial_device_io import SerialDevice
 from night_shifts.maintenance_credentials_prototype import FinalizationPublicBootstrap
-from night_shifts.maintenance_tls_prototype import FINALIZATION_OPERATION, AttemptBinding, PrototypeRefused
+from night_shifts.maintenance_tls_prototype import FINALIZATION_OPERATION, OPERATION, AttemptBinding, PrototypeRefused
+from night_shifts.public_bootstrap_kvp import BootstrapKvpRefused
 from night_shifts.serial_pipe_io import BoundedPipe, IOBudget, PipeIOError
 from tests.night_shifts.test_authenticated_image_finalization import _BINDING, local_receipt, local_request
 from tests.night_shifts.test_authenticated_image_inspection import ByteLink
@@ -186,6 +187,34 @@ def test_controller_refuses_to_open_any_resource_after_expiry(material, monkeypa
     with pytest.raises(PipeIOError, match='^deadline$'):
         host.finalize_bootstrapped_copy_once(_BINDING, identity, request_sha256='a' * 64,
                                              deadline=time.monotonic() - 1, cancelled=never_cancelled)
+
+
+def test_bootstrap_outwaits_the_iso_grub_menu_without_extending_original_deadline(material, monkeypatch):
+    server, _, _, _ = identities(material)
+    clock = [100.0]
+    monkeypatch.setattr(kvp.time, 'monotonic', lambda: clock[0])
+    present = [False]
+
+    def capture(script, budget):
+        budget.check()
+        return finalization_snapshot(server, None if present[0] else [])
+
+    monkeypatch.setattr(kvp, '_capture', capture)
+    reader = kvp.LocalFinalizationBootstrapReader(_BINDING, timeout_seconds=kvp.FINALIZATION_BOOTSTRAP_SECONDS,
+                                                 deadline=160.0)
+    try:
+        assert reader.poll() is None
+        clock[0] += 45  # beyond the GRUB wait and the former KVP cap
+        present[0] = True
+        assert reader.poll() == server
+        clock[0] = 160.0
+        with pytest.raises(BootstrapKvpRefused, match='^timeout$'):
+            reader.poll()
+    finally:
+        reader.close()
+    legacy = AttemptBinding(_BINDING.attempt_id, _BINDING.vm_id, OPERATION)
+    with pytest.raises(BootstrapKvpRefused, match='^configuration$'):
+        kvp.LocalPublicBootstrapReader(legacy, timeout_seconds=kvp.FINALIZATION_BOOTSTRAP_SECONDS)
 
 
 def test_constrained_budget_is_not_extended_when_handed_to_next_stage():

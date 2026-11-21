@@ -28,6 +28,14 @@ from night_shifts.public_bootstrap_kvp import (
 )
 
 MAX_CAPTURE_BYTES = 128 * 1024
+FINALIZATION_BOOTSTRAP_SECONDS = 120
+
+
+class _FinalizationBootBudget(Budget):
+    # Aggregate boot wait; individual WMI queries keep their existing provider bounds.
+    _max_seconds = FINALIZATION_BOOTSTRAP_SECONDS
+
+
 # No remote server/moniker, friendly-name lookup, module import, VM action,
 # InvokeMethod, KVP Set/Delete, serial access, dynamic script or guest target.
 _QUERY = r'''
@@ -262,6 +270,7 @@ class LocalPublicBootstrapReader:
     _item_name: ClassVar[str] = PUBLIC_ITEM_NAME
     _select = staticmethod(select_public_item)
     _latch_type: ClassVar[type[PublicBootstrapLatch]] = PublicBootstrapLatch
+    _budget_type: ClassVar[type[Budget]] = Budget
 
     def __init__(self, binding: AttemptBinding, *, timeout_seconds: float = 15.0,
                  cancelled: Callable[[], bool] = lambda: False, deadline: float | None = None) -> None:
@@ -269,7 +278,7 @@ class LocalPublicBootstrapReader:
             raise BootstrapKvpRefused('configuration')
         self._script = _scoped_query_script(binding)
         self._binding = binding
-        self._budget = Budget(timeout_seconds, cancelled, deadline=deadline)
+        self._budget = self._budget_type(timeout_seconds, cancelled, deadline=deadline)
         self._latch = self._latch_type(binding)
         self._stamp: str | None = None
         self._observed = False
@@ -313,6 +322,7 @@ class LocalFinalizationBootstrapReader(LocalPublicBootstrapReader):
     _item_name: ClassVar[str] = FINALIZATION_ITEM_NAME
     _select = staticmethod(select_finalization_item)
     _latch_type: ClassVar[type[PublicBootstrapLatch]] = FinalizationBootstrapLatch
+    _budget_type = _FinalizationBootBudget
 
     def __init__(self, binding: AttemptBinding, *, deadline: float, timeout_seconds: float = 15.0,
                  cancelled: Callable[[], bool] = lambda: False) -> None:
