@@ -6,12 +6,17 @@ trust a certificate store, or accept credentials from the serial wire.
 """
 from __future__ import annotations
 
+import base64
+import binascii
+import json
 import re
 import ssl
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from night_shifts.maintenance_credentials_prototype import CredentialPrototypeRefused, _public_ca
+from night_shifts.maintenance_credentials_prototype import (
+    MAX_PUBLIC_RECORD_BYTES, CredentialPrototypeRefused, _public_ca,
+)
 from night_shifts.maintenance_tls_prototype import FINALIZATION_OPERATION, AttemptBinding
 
 
@@ -35,6 +40,43 @@ class ControllerPublicTrust:
             _public_ca(self.ca_der)
         except CredentialPrototypeRefused:
             raise FinalizationIdentityRefused('controller_public_trust') from None
+
+
+def encode_controller_trust(trust: ControllerPublicTrust) -> bytes:
+    """The only credential data included in the reviewed recovery payload."""
+    if type(trust) is not ControllerPublicTrust:
+        raise FinalizationIdentityRefused('controller_public_trust')
+    trust.__post_init__()
+    raw = (json.dumps({
+        'version': 1, 'attempt_id': trust.binding.attempt_id, 'vm_id': trust.binding.vm_id,
+        'operation': FINALIZATION_OPERATION, 'ca_der_b64': base64.b64encode(trust.ca_der).decode('ascii'),
+        'leaf_sha256': trust.leaf_sha256,
+    }, sort_keys=True, separators=(',', ':')) + '\n').encode('ascii')
+    if len(raw) > MAX_PUBLIC_RECORD_BYTES:
+        raise FinalizationIdentityRefused('controller_public_trust')
+    return raw
+
+
+def decode_controller_trust(raw: bytes, binding: AttemptBinding) -> ControllerPublicTrust:
+    """Check exact canonical bytes from already integrity-pinned media only."""
+    if (type(binding) is not AttemptBinding or binding.operation != FINALIZATION_OPERATION
+            or type(raw) is not bytes or not 0 < len(raw) <= MAX_PUBLIC_RECORD_BYTES):
+        raise FinalizationIdentityRefused('controller_public_trust')
+    try:
+        value = json.loads(raw.decode('ascii'))
+        if (type(value) is not dict or type(value.get('version')) is not int or value['version'] != 1
+                or value.get('attempt_id') != binding.attempt_id or value.get('vm_id') != binding.vm_id
+                or value.get('operation') != FINALIZATION_OPERATION or type(value.get('ca_der_b64')) is not str
+                or type(value.get('leaf_sha256')) is not str):
+            raise ValueError
+        trust = ControllerPublicTrust(binding, base64.b64decode(value['ca_der_b64'], validate=True),
+                                      value['leaf_sha256'])
+        # Reject extra/duplicate fields, noncanonical base64/JSON and trailing data.
+        if encode_controller_trust(trust) != raw:
+            raise ValueError
+        return trust
+    except (ValueError, UnicodeError, RecursionError, binascii.Error):
+        raise FinalizationIdentityRefused('controller_public_trust') from None
 
 
 @dataclass(frozen=True)

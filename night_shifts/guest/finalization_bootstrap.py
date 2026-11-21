@@ -7,6 +7,7 @@ KVP daemon. No target filesystem is opened before mutual TLS and its grant.
 from __future__ import annotations
 
 import json
+import ssl
 from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID
@@ -16,6 +17,7 @@ from night_shifts.authenticated_image_finalization import (
 )
 from night_shifts.finalization_tls_identity import ControllerPublicTrust, LocalPemIdentity, guest_context
 from night_shifts.guest import finalize_image_copy as guest
+from night_shifts.guest.finalization_guest_identity import new_guest_identity
 from night_shifts.guest.publish_public_bootstrap import publish_finalization_bootstrap
 from night_shifts.maintenance_credentials_prototype import FinalizationPublicBootstrap
 from night_shifts.maintenance_tls_prototype import AttemptBinding
@@ -57,7 +59,26 @@ def serve_bootstrapped_copy_once(
     budget.remaining()
     _check_live_boot(server.binding)
     budget.remaining()
-    context = guest_context(identity, controller)
+    return _publish_and_serve(server, controller, guest_context(identity, controller), budget, cancelled)
+
+
+def serve_fresh_guest_once(controller: ControllerPublicTrust, *, deadline: float,
+                           cancelled: Callable[[], bool]) -> bool:
+    """Future recovery boot entry after reviewed KVP daemon startup/ownership."""
+    if type(controller) is not ControllerPublicTrust or deadline is None:
+        raise FinalizationRefused('invalid_bootstrap_configuration')
+    budget = IOBudget(900, cancelled=cancelled, deadline=deadline)
+    budget.remaining()
+    _check_live_boot(controller.binding)
+    with new_guest_identity(controller.binding, budget) as (server, identity):
+        budget.remaining()
+        context = guest_context(identity, controller)
+    # OpenSSL owns the TLS key now; no private descriptors need to remain open.
+    return _publish_and_serve(server, controller, context, budget, cancelled)
+
+
+def _publish_and_serve(server: FinalizationPublicBootstrap, controller: ControllerPublicTrust,
+                       context: ssl.SSLContext, budget: IOBudget, cancelled: Callable[[], bool]) -> bool:
     budget.remaining()
     publish_finalization_bootstrap(server, deadline=budget.deadline, cancelled=cancelled)
     budget.remaining()

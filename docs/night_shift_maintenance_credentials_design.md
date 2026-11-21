@@ -88,7 +88,15 @@ approved, available or vendored in a protected worker. Do not use certificate
 stores, persistent key containers, arbitrary OpenSSL downloads or unreviewed
 low-level crypto wrappers as an automatic fallback.
 
-### Guest keys: RAM only is a requirement, not yet a fact
+### Guest keys: sealed RAM implementation, not yet a live fact
+
+An unwired guest issuer now uses fixed OpenSSL arguments and sealed, non-executable
+anonymous Linux descriptors instead of persistent key filenames. The guest boot
+entry checks the live boot, VM ID, optical media and no-swap state before
+issuance; descriptors are closed before the public KVP advertisement. The host
+private-store gate and independently supervised live boot gate remain open.
+The section below still states the deployment requirements; unit and synthetic
+OpenSSL tests do not establish the real Ubuntu/Hyper-V boundary.
 
 Future trusted live recovery code must generate fresh keys before exposing any
 unvalidated target filesystem. It must verify a root-owned private directory on
