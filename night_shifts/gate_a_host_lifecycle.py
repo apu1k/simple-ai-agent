@@ -46,6 +46,14 @@ def _local_path(value: str) -> PureWindowsPath:
     return PureWindowsPath(value)
 
 
+def _action_args(target: TeardownTarget, workspace: str, asset: str,
+                 deadline_ns: int) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    common = ('-Operation', target.operation, '-Identity', target.attempt_id,
+              '-VmId', target.vm_id, '-WorkspaceRoot', workspace)
+    start = common + ('-BootAsset', asset, '-WorkUntilNanoseconds', str(deadline_ns - CLEANUP_RESERVE_NS))
+    return start, common + (('-RemoveSmokeDisk',) if target.remove_smoke_disk else ())
+
+
 def _start_outcome(raw: bytes, target: TeardownTarget) -> bool:
     if type(raw) is not bytes or not 0 < len(raw) <= MAX_RECEIPT_BYTES:
         raise WatchdogRefused('start_unknown')
@@ -79,15 +87,15 @@ class GateAHostLifecycle:
             raise WatchdogRefused('held_path')
         self._target, self._deadline, self._clock = target, deadline_ns, clock
         self._actions = actions
-        self._binding = ('-Operation', target.operation, '-Identity', target.attempt_id,
-                         '-VmId', target.vm_id, '-WorkspaceRoot', held_workspace_root)
         self._work_until = deadline_ns - CLEANUP_RESERVE_NS
-        self._start_args = self._binding + ('-BootAsset', held_boot_asset, '-WorkUntilNanoseconds', str(self._work_until))
+        self._start_args, self._reconcile_args = _action_args(target, held_workspace_root, held_boot_asset, deadline_ns)
         self._changed = Condition()
         self._last = 0
         self._bad_clock = False
         self._watching = self._armed = self._sealed = self._can_reconcile = self._reconcile_used = False
         self._start_state = 'unadmitted'
+        self._signals: WatchSignals | None = None
+        self._worker_released = False
         if not 0 < deadline_ns - self._now() <= MAX_WINDOW_NS:
             raise WatchdogRefused('host_window')
 
@@ -116,6 +124,7 @@ class GateAHostLifecycle:
             if self._watching:
                 raise WatchdogRefused('one_shot')
             self._watching = True
+            self._signals = signals
         host = self
 
         class OwnedSignals:
@@ -127,14 +136,33 @@ class GateAHostLifecycle:
 
         return GateAWatchdog(self._target, OwnedSignals(), self, deadline_ns=self._deadline, clock=self._clock).run()
 
+    def _work_open(self) -> bool:
+        # This extra zero-wait closes the gap between the watchdog acknowledging
+        # armed and its own wait loop observing a stop. The watchdog still owns
+        # sealing/cancellation; a newly arriving signal can race an admitted op.
+        if not self._armed or self._sealed or self._signals is None or self._now() >= self._work_until:
+            return False
+        try:
+            return self._signals.wait(0) is None and self._now() < self._work_until
+        except Exception:
+            return False
+
+    def release_worker_once(self, release: Callable[[], None]) -> bool:
+        """Signal the exact prepared worker through a local, bounded host gate."""
+        with self._changed:
+            if self._worker_released or self._start_state != 'running' or not self._work_open():
+                return False
+            self._worker_released = True  # even uncertain delivery is not retried
+            release()
+            return True
+
     def start_once(self) -> bool:
         """Return True only for a settled Start-VM with an exact Running readback."""
         with self._changed:
-            if (not self._armed or self._sealed or self._start_state != 'unadmitted'
-                    or self._now() >= self._work_until):
+            if self._start_state != 'unadmitted' or not self._work_open():
                 raise WatchdogRefused('start_closed')
             self._start_state = 'pending'  # before crossing the process/VM boundary
-        settled = False
+        settled, running = False, False
         try:
             running = _start_outcome(self._actions.run(_START, self._start_args, deadline_ns=self._work_until,
                                                        stdout_limit=MAX_RECEIPT_BYTES), self._target)
@@ -148,7 +176,7 @@ class GateAHostLifecycle:
             raise WatchdogRefused('start_unknown') from None
         finally:
             with self._changed:
-                self._start_state = 'settled' if settled else 'unknown'
+                self._start_state = ('running' if running else 'not_started') if settled else 'unknown'
                 self._changed.notify_all()
 
     def _same_attempt(self, target: TeardownTarget, deadline_ns: int) -> bool:
@@ -170,7 +198,8 @@ class GateAHostLifecycle:
                         return False
                 if self._now() >= settle_by:
                     return False
-            self._can_reconcile = self._start_state in ('unadmitted', 'settled') and self._now() < deadline_ns
+            self._can_reconcile = (self._start_state in ('unadmitted', 'running', 'not_started')
+                                   and self._now() < deadline_ns)
             return self._can_reconcile
 
     def reconcile_once(self, target: TeardownTarget, *, deadline_ns: int) -> bytes:
@@ -179,5 +208,5 @@ class GateAHostLifecycle:
                     or self._reconcile_used or self._now() >= self._deadline):
                 raise WatchdogRefused('reconcile_closed')
             self._reconcile_used = True
-        args = self._binding + (('-RemoveSmokeDisk',) if target.remove_smoke_disk else ())
-        return self._actions.run(_RECONCILE, args, deadline_ns=deadline_ns, stdout_limit=MAX_RECEIPT_BYTES)
+        return self._actions.run(_RECONCILE, self._reconcile_args, deadline_ns=deadline_ns,
+                                 stdout_limit=MAX_RECEIPT_BYTES)

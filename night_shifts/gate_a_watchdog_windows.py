@@ -72,3 +72,32 @@ class WindowsWatchSignals:
         self._arm_attempted = True  # never try again even if delivery was uncertain
         if not self._kernel.SetEvent(self._armed):
             raise WatchdogRefused('signal_arm')
+
+
+class WindowsOwnerSignals(WindowsWatchSignals):
+    """Borrow one additional initially clear manual-reset worker gate.
+
+    The same protected owner creates/holds the events and keeps exclusive
+    modify access to armed and worker_gate. The worker gets only a wait handle
+    and must check cancellation and the inherited work cutoff when released.
+    """
+
+    def __init__(self, *, cancelled: int, runtime: int, worker: int, armed: int, worker_gate: int) -> None:
+        super().__init__(cancelled=cancelled, runtime=runtime, worker=worker, armed=armed)
+        if (type(worker_gate) is not int or not 0 < worker_gate < 2**63
+                or worker_gate in (cancelled, runtime, worker, armed)):
+            raise WatchdogRefused('worker_gate_handle')
+        flags = c.c_uint32()
+        if (not self._kernel.GetHandleInformation(worker_gate, c.byref(flags)) or flags.value != 0
+                or self._kernel.GetProcessId(worker_gate)
+                or self._kernel.WaitForSingleObject(worker_gate, 0) != _WAIT_TIMEOUT):
+            raise WatchdogRefused('worker_gate_handle')
+        self._cancel, self._gate = cancelled, worker_gate
+
+    def release_worker(self) -> None:
+        if not self._kernel.SetEvent(self._gate):
+            raise WatchdogRefused('worker_gate_unknown')
+
+    def request_cancel(self) -> None:
+        if not self._kernel.SetEvent(self._cancel):
+            raise WatchdogRefused('cancel_signal_unknown')
