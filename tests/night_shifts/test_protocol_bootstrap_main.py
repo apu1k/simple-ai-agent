@@ -11,7 +11,9 @@ import pytest
 
 from night_shifts.guest import protocol_test_bootstrap as bootstrap
 from night_shifts.models import AgentPlan
-from night_shifts.protocol import WorkerTask, encode_task
+from night_shifts.protocol import WorkerTask, encode_ready, encode_task
+
+READY = (encode_ready() + "\n").encode()
 
 
 class _DuplexChannel:
@@ -45,6 +47,7 @@ def _bind_channel(monkeypatch: pytest.MonkeyPatch, channel: _DuplexChannel) -> N
         return channel
 
     monkeypatch.setattr(bootstrap, "_open_serial", open_fake)
+    monkeypatch.setattr(bootstrap, "_wait_readable", lambda _channel, _seconds: True)
 
 
 def test_main_fails_closed_when_serial_open_raises_io_error(
@@ -76,7 +79,7 @@ def test_main_closes_channel_when_reading_task_raises_io_error(
 
     assert bootstrap.main([]) == 1
     assert channel.closed
-    assert channel.outgoing.getvalue() == b""
+    assert channel.outgoing.getvalue() == READY
     assert "Input/output error" in capsys.readouterr().err
 
 
@@ -88,7 +91,7 @@ def test_main_fails_closed_on_controller_disconnect_before_task(
 
     assert bootstrap.main([]) == 1
     assert channel.closed
-    assert channel.outgoing.getvalue() == b""
+    assert channel.outgoing.getvalue() == READY
     assert "controller closed the serial channel before sending a task" in capsys.readouterr().err
 
 
@@ -107,10 +110,33 @@ def test_main_emits_result_and_closes_after_controller_eof(
     assert bootstrap.main([]) == 0
     assert channel.closed
     messages = [json.loads(line) for line in channel.outgoing.getvalue().splitlines()]
-    assert [message["kind"] for message in messages] == ["event", "event", "result"]
+    assert [message["kind"] for message in messages] == ["ready", "event", "event", "result"]
     assert messages[-1]["payload"]["job_id"] == task.job_id
     assert messages[-1]["payload"]["outcome"] == "success"
     assert capsys.readouterr().err == ""
+
+
+def test_ready_is_repeated_until_the_controller_sends_data() -> None:
+    channel = _DuplexChannel(b"")
+    answers = iter([False, False, True])
+    waits: list[float] = []
+
+    def wait(_channel: object, seconds: float) -> bool:
+        waits.append(seconds)
+        return next(answers)
+
+    bootstrap.announce_ready(channel, wait)  # type: ignore[arg-type]
+    assert channel.outgoing.getvalue() == READY * 3
+    assert waits == [bootstrap.READY_INTERVAL_SECONDS] * 3
+
+
+def test_ready_gives_up_when_no_task_ever_arrives(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bootstrap, "MAX_READY_ANNOUNCEMENTS", 3)
+    channel = _DuplexChannel(b"")
+
+    with pytest.raises(ValueError, match="no task"):
+        bootstrap.announce_ready(channel, lambda _channel, _seconds: False)  # type: ignore[arg-type]
+    assert channel.outgoing.getvalue() == READY * 3
 
 
 def test_protocol_unit_keeps_poweroff_on_success_and_failure() -> None:

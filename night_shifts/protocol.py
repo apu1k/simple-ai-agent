@@ -133,6 +133,16 @@ def encode_result(result: WorkerResult) -> str:
     })
 
 
+def encode_ready() -> str:
+    return _encode("ready", {})
+
+
+def is_ready_message(line: str) -> bool:
+    """True for the guest's empty ``ready`` frame; raises ProtocolError on bad JSON."""
+    message = _decode_envelope(line)
+    return message.get("kind") == "ready" and message.get("payload") == {}
+
+
 def decode_worker_message(line: str) -> NightShiftEvent | WorkerResult:
     message = _decode_envelope(line)
     kind = message.get("kind")

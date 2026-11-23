@@ -96,7 +96,8 @@ def real_channel() -> HyperVSerialTransport:
     return HyperVSerialTransport(
         connect_timeout_seconds=_positive_environment(
             "NIGHT_SHIFT_HYPERV_SERIAL_TIMEOUT_SECONDS", "90"
-        )
+        ),
+        await_guest_ready=True,
     )
 
 

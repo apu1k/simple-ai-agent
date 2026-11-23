@@ -21,6 +21,8 @@ from typing import Any, BinaryIO
 PROTOCOL_VERSION = 1
 MAX_FRAME_BYTES = 1024 * 1024
 SUCCESS_OBJECTIVE = "phase3-protocol-success"
+READY_INTERVAL_SECONDS = 2.0
+MAX_READY_ANNOUNCEMENTS = 900  # 30 minutes, then fail and power off.
 _SLEEP_OBJECTIVE = re.compile(r"^phase3-protocol-sleep:([0-9]+(?:\.[0-9]+)?)$")
 
 
@@ -66,6 +68,29 @@ def _event(job_id: str, event_type: str, payload: dict[str, Any]) -> dict[str, A
         "payload": payload,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def announce_ready(
+    channel: BinaryIO,
+    wait_readable: Callable[[BinaryIO, float], bool],
+) -> None:
+    """Repeat a ready frame until the controller starts sending its task.
+
+    Bytes the host writes before this process opens ttyS0 are lost, so the
+    host holds the task until it sees this frame.
+    """
+    for _ in range(MAX_READY_ANNOUNCEMENTS):
+        _write_frame(channel, "ready", {})
+        if wait_readable(channel, READY_INTERVAL_SECONDS):
+            return
+    raise ValueError("controller sent no task after the guest announced readiness")
+
+
+def _wait_readable(channel: BinaryIO, seconds: float) -> bool:
+    import select
+
+    readable, _, _ = select.select([channel], [], [], seconds)
+    return bool(readable)
 
 
 def run_once(channel: BinaryIO, *, sleep: Callable[[float], None] = time.sleep) -> None:
@@ -133,6 +158,8 @@ def _open_serial(path: str) -> BinaryIO:
             descriptor,
             when=termios.TCSANOW,  # type: ignore[attr-defined]
         )
+        # Drop anything that arrived before raw mode; the task follows "ready".
+        termios.tcflush(descriptor, termios.TCIFLUSH)  # type: ignore[attr-defined]
         return os.fdopen(descriptor, "r+b", buffering=0)
     except Exception:
         os.close(descriptor)
@@ -145,6 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     try:
         with _open_serial(arguments.serial_device) as channel:
+            announce_ready(channel, _wait_readable)
             run_once(channel)
             while channel.read(4096):
                 pass
