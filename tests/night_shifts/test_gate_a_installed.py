@@ -127,6 +127,24 @@ def test_protected_pytest_ignores_ambient_configuration(tmp_path: Path, monkeypa
                         '--noconftest']
 
 
+def test_protected_powershell_resolves_without_mixed_case_environment_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """GateARun passes {**os.environ}; on Windows its keys are upper case."""
+    observed: list[str] = []
+
+    def fake(argv, timeout, env):
+        observed.extend(argv)
+        return subprocess.CompletedProcess(argv, 0, '', '')
+
+    monkeypatch.setattr(installed, '_run', fake)
+    monkeypatch.setattr(installed, 'windows_directory', lambda: tmp_path / 'Windows')
+    run = installed._fixed_child_runner(tmp_path)
+    run(['powershell.exe', '-NoProfile', '-Command', 'Get-VM'], 1, {'SYSTEMROOT': r'C:\Windows', 'PATH': ''})
+    assert observed == [str(tmp_path / 'Windows/System32/WindowsPowerShell/v1.0/powershell.exe'),
+                        '-NoProfile', '-Command', 'Get-VM']
+
+
 def test_client_dispatches_one_fixed_task_and_does_not_claim_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ):

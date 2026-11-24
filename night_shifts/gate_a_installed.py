@@ -59,7 +59,9 @@ def _fixed_child_runner(root: Path) -> Runner:
             # folders, even for a package in an Administrator-owned directory.
             argv = [argv[0], '-I', '-B', *argv[1:], '-c', str(root / 'app/gate-a-pytest.ini'), '--noconftest']
         elif argv[0] == 'powershell.exe':
-            exe = Path(env['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
+            # Resolve natively: {**os.environ} upper-cases keys on Windows
+            # ('SYSTEMROOT'), so a dict lookup of 'SystemRoot' fails.
+            exe = windows_directory() / 'System32/WindowsPowerShell/v1.0/powershell.exe'
             argv = [str(exe), *argv[1:]]
         else:
             raise GateAError('unexpected protected Gate A child process')
