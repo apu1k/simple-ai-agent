@@ -25,6 +25,38 @@ SHA-256 `4ccedb4f00fbe3b9726f21a9909ef563ab95305fdbd03e3c557ed657e171b667`.
 Cleanup audit `pass`; removed the three `etc/night-shift-diagnostic-027/*`
 files and the `debug-shell.service` wants-link.
 
+## Recovering an interrupted run
+
+Use an elevated Windows terminal from the repository root. Pass the **one run
+folder** whose `report.json` and `sandboxes` you want to inspect. The first
+command is a read-only preview; only `--apply` changes VM or disk state.
+
+```powershell
+.\.venv\Scripts\python.exe -m night_shifts.gate_a_cleanup --run-dir 'D:\NightShift\gate-a\gate-a-<full-run-id>'
+.\.venv\Scripts\python.exe -m night_shifts.gate_a_cleanup --run-dir 'D:\NightShift\gate-a\gate-a-<full-run-id>' --apply
+```
+
+Before applying, confirm the old runner, its pytest and PowerShell children,
+and any in-flight Hyper-V operation for the run have stopped. If that's
+unknown, use preview only. The run lock prevents concurrent use by the new
+runner; it is not proof that a child or an admitted provider operation exited.
+A timeout is not proof of cleanup or permission to retry.
+
+The command finds sandbox IDs in the selected run's sandbox folder and any
+new VM names captured in its report. It does not sweep other runs or use a name
+prefix alone. It retains preexisting VMs and refuses mismatched ownership,
+paths, disk parent, references, or linked entries. It removes verified
+`worker.vhdx` disks and empty sandbox directories only; it never removes the
+base image, the run report, or the logs. `review_needed` means some state could
+not be verified or safely removed. Capture the JSON stdout for the cleanup
+record; it does not replace the original Gate A report.
+
+This is attended recovery, not an automatic watchdog. Live acceptance is a
+separate check: in a fresh test run, deliberately leave one disposable sandbox
+behind, verify that the runner and children have stopped, then preview and
+apply. Confirm the exact VM ID/name and sandbox path are gone, the before/after
+inventory of unrelated VMs is unchanged, and the pinned image hash is unchanged.
+
 ## Elevated helper environment
 
 The helper runs as the interactive user (`JULIANPC\JulianSiek`, profile `jul20`),

@@ -169,6 +169,9 @@ def test_interrupted_case_is_cleanup_unknown(tmp_path: Path):
 
     def runner(argv, timeout, env):
         if 'pytest' in argv:
+            run_dir = Path(env['NIGHT_SHIFT_HYPERV_WORKSPACE']).parent
+            on_disk = json.loads((run_dir / 'report.json').read_text(encoding='utf-8'))
+            assert on_disk['preexisting_sandbox_vms'] == [VM_A]
             raise subprocess.TimeoutExpired(argv, timeout, output='partial')
         return host(argv, timeout, env)
 

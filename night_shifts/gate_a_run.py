@@ -25,7 +25,8 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Any
@@ -94,6 +95,25 @@ def ensure_host_environment(environ: Any = os.environ) -> None:
     known = {p.rstrip('\\').lower() for p in current}
     required = [str(system), str(system / 'Wbem'), str(system / 'WindowsPowerShell' / 'v1.0')]
     environ['PATH'] = os.pathsep.join([p for p in required if p.lower() not in known] + current)
+
+
+@contextmanager
+def gate_a_run_lease(run_dir: Path) -> Iterator[None]:
+    """Exclude concurrent attended work in this run directory, not provider activity."""
+    with (run_dir / '.gate-a.lock').open('a+b') as lease:
+        lease.seek(0)
+        try:
+            if sys.platform == 'win32':
+                import msvcrt
+
+                msvcrt.locking(lease.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise GateAError('Gate A run directory is locked; no concurrent cleanup or run') from exc
+        yield  # Closing the descriptor releases the OS lock; leave the lock file in place.
 
 
 def sha256(path: Path) -> str:
@@ -184,7 +204,10 @@ class GateARun:
 
     # -- bookkeeping -------------------------------------------------------
     def _save(self) -> None:
-        (self.run_dir / 'report.json').write_text(json.dumps(self.report, indent=2, sort_keys=True))
+        # Retain the last complete report if the runner is interrupted mid-write.
+        pending = self.run_dir / '.report.json.tmp'
+        pending.write_text(json.dumps(self.report, indent=2, sort_keys=True), encoding='utf-8')
+        pending.replace(self.run_dir / 'report.json')
 
     def _step(self, name: str, **data: Any) -> None:
         self.report['steps'].append({'step': name, 'seconds': round(self.clock() - self.started, 1), **data})
@@ -318,6 +341,10 @@ class GateARun:
     # -- driver ------------------------------------------------------------
     def execute(self) -> dict[str, Any]:
         self.run_dir.mkdir(parents=True, exist_ok=False)
+        with gate_a_run_lease(self.run_dir):
+            return self._execute_locked()
+
+    def _execute_locked(self) -> dict[str, Any]:
         self._save()
         vms_before: set[str] | None = None
         try:
@@ -334,6 +361,7 @@ class GateARun:
             if vms_before is None:
                 raise GateAError('could not list Hyper-V VMs before the tests')
             self.report['preexisting_sandbox_vms'] = sorted(vms_before)
+            self._save()  # Recovery needs the baseline even if the first case never returns.
             self.run_cases(base, digest)
         except Exception as exc:
             self.report['error'] = f'{type(exc).__name__}: {exc}'[:500]
