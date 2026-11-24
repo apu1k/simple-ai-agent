@@ -205,8 +205,36 @@ Install 3 run `gate-a-d34858715f4f4eaaa8c193d2e2d9c9ca` (19:54:05-20:00:34 UTC):
 while the run was in progress; the task kept running (it is independent of the
 app), and the result was read after reopening. Task Last Result `0`.
 
+## Recovery check after an interrupted run (2026-11-24)
+
+One approved elevated request (commit 9ddaec3), run
+`D:\NightShift\gate-a\gate-a-874de6552b04489f89be94c70c4c94ec`:
+
+1. Preconditions: scheduled task idle, no `night-shift-*` VMs.
+2. Started an attended `gate_a_run` with only the timeout test against the
+   passing image on `D:`.
+3. After 23 s its VM `night-shift-55fd80efe23e46c7b85cae14990217ad`
+   (ID `adbb8495-a1c8-4c6d-be9b-6b541a83cebf`) was `Running` with
+   `worker.vhdx` in its sandbox folder; waited 10 s more.
+4. Force-killed the whole runner tree (4 `python.exe` + `conhost.exe`); all
+   gone 5 s later. Result: report status `running`, VM still `Running`, sandbox
+   folder present, `preexisting_sandbox_vms` empty.
+5. `python -m night_shifts.gate_a_cleanup --run-dir <run>`: `preview`, sandbox
+   classified `vm_candidate`.
+6. `... --apply`: `clean`.
+7. Independent check: VM absent by ID and by name, no `night-shift-*` VMs,
+   sandbox folder gone, `base.vhdx` SHA-256 still `13bc9864...94d6`.
+
+The run folder is kept as evidence (`report.json`, `.gate-a.lock`, empty
+`sandboxes`).
+
+Scope: this proves manual recovery after a hard kill of an attended run. It
+does not cover a killed **scheduled task** run: that leaves `latest.json` at
+`running_or_unknown`, which blocks new starts until an administrator reviews
+it; there is no automatic watchdog cleanup yet.
+
 ## Next
 
-1. Recovery check: deliberately interrupt a separate run and confirm
-   `gate_a_cleanup` removes exactly that VM and sandbox folder.
-2. If the invalid-JSON failure recurs, use the new excerpt to find the cause.
+1. If the invalid-JSON failure recurs, use the new excerpt to find the cause.
+2. Decide whether the scheduled task should run `gate_a_cleanup` itself on the
+   next start after a `running_or_unknown` receipt, or keep that manual.
