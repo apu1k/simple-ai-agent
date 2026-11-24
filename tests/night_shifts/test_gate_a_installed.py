@@ -43,6 +43,34 @@ def test_build_isolated_bundle_from_fixed_sources(tmp_path: Path):
         bundle.build_bundle(output, runtime, wheels)
 
 
+def test_bundle_contains_the_full_gate_a_import_closure(tmp_path: Path):
+    """Import the installed modules from the extracted bundle only (no checkout, no site)."""
+    runtime = _archive(tmp_path / 'embed.zip', dict.fromkeys(bundle._PYTHON_REQUIRED, b'inert'))
+    wheels = {name: _archive(tmp_path / f'{name}-1.0-py3-none-any.whl', {roots[0] + '/__init__.py': b''})
+              for name, roots in bundle._WHEELS.items()}
+    output = tmp_path / 'bundle.zip'
+    bundle.build_bundle(output, runtime, wheels)
+    extracted = tmp_path / 'extracted'
+    with zipfile.ZipFile(output) as result:
+        result.extractall(extracted, [n for n in result.namelist() if n.startswith('app/')
+                                      and not n.startswith('app/vendor/')])
+    app = extracted / 'app'
+    probe = (
+        'import sys\n'
+        f'sys.path.insert(0, {str(app)!r})\n'
+        'import night_shifts.gate_a_installed, night_shifts.gate_a_run, night_shifts.backends\n'
+        'import night_shifts.models, night_shifts.protocol, night_shifts.storage\n'
+        'outside = sorted(n for n, m in sys.modules.items() if n != "__main__"\n'
+        '                 and n.split(".")[0] not in sys.stdlib_module_names\n'
+        f'                 and not str(getattr(m, "__file__", "") or "").startswith({str(app)!r}))\n'
+        'print(outside)\n'
+    )
+    result = subprocess.run([sys.executable, '-I', '-S', '-c', probe], capture_output=True, text=True,
+                            cwd=tmp_path, timeout=60, check=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == '[]'
+
+
 @pytest.mark.parametrize('name', ['../outside.py', 'pytest/.hidden', 'C:/evil.py', 'pytest/COM1.py',
                                  'pytest/loader.pth', 'pytest/hook.dll'])
 def test_wheel_refuses_escaping_and_startup_payloads(tmp_path: Path, name: str):

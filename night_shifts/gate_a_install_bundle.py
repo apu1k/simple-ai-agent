@@ -18,6 +18,7 @@ _WHEELS = {
 _PYTHON_REQUIRED = {'python.exe', 'python314.zip', 'python314.dll'}
 _PYTHON_PATH = b'python314.zip\n.\n..\\app\n..\\app\\vendor\n'
 _LIMIT = 64 * 1024 * 1024
+_SUPPORT_FILES = (REPO / 'llm' / '__init__.py', REPO / 'llm' / 'base.py')
 _PART = re.compile(r'[a-zA-Z0-9_][A-Za-z0-9_.-]*')
 _RESERVED = re.compile(r'CON|NUL|PRN|AUX|COM[0-9]|LPT[0-9]', re.IGNORECASE)
 
@@ -84,7 +85,9 @@ def build_bundle(output: Path, python_zip: Path, wheels: dict[str, Path]) -> str
     # No checkout .env, Git metadata, config, conftest, or external pytest plugins.
     source_paths = [p for p in (REPO / 'night_shifts').rglob('*') if p.is_file()
                     and p.suffix in ('.py', '.ps1') and '__pycache__' not in p.parts]
-    source_paths.append(REPO / TEST_FILE)
+    # night_shifts/__init__.py imports night_shifts.inference, which needs llm.base
+    # (stdlib-only). Without it the installed runner cannot even import itself.
+    source_paths.extend([*_SUPPORT_FILES, REPO / TEST_FILE])
     for path in source_paths:
         if path.resolve() != path or not path.is_file():
             raise ValueError(f'refusing linked source: {path}')
