@@ -142,6 +142,10 @@ def test_real_host_serial_round_trip_and_cleanup(
         on_event=events.append,
     )
 
+    # Shown by pytest only on failure; the event trail says how far the guest got.
+    for event in events:
+        print(f"event: {event.event_type} {event!r}")
+    print(f"result: {result!r}")
     assert result.outcome is WorkerOutcome.SUCCESS
     assert "protocol validation succeeded" in result.summary
     assert any(event.event_type == "protocol_test_echo" for event in events)

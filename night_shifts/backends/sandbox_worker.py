@@ -134,11 +134,19 @@ class SandboxWorkerBackend(WorkerBackend):
             )
 
         if cleanup_error is not None:
+            error = cleanup_error
+            if result is not None:
+                # Keep the job's own outcome; otherwise a cleanup failure hides
+                # whether the guest actually answered.
+                prior = f"{result.outcome.value}: {result.summary}"
+                if result.error:
+                    prior += f"; {result.error}"
+                error += f" (job result before cleanup: {prior})"
             return WorkerResult(
                 job_id=task.job_id,
                 outcome=WorkerOutcome.FAILED,
                 summary="Sandbox cleanup failed.",
-                error=cleanup_error,
+                error=error,
             )
         assert result is not None
         return result

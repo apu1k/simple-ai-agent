@@ -235,7 +235,9 @@ def test_cleanup_failure_overrides_successful_worker_result():
 
     assert result.outcome is WorkerOutcome.FAILED
     assert result.summary == "Sandbox cleanup failed."
-    assert result.error == "sandbox destroy failed: could not remove VM"
+    assert result.error is not None
+    assert result.error.startswith("sandbox destroy failed: could not remove VM")
+    assert "(job result before cleanup: success: " in result.error
 
 
 def test_channel_close_failure_does_not_bypass_sandbox_destruction():
@@ -245,7 +247,9 @@ def test_channel_close_failure_does_not_bypass_sandbox_destruction():
     result = backend.run(task(), timeout_seconds=1)
 
     assert result.outcome is WorkerOutcome.FAILED
-    assert result.error == "channel close failed: could not close channel"
+    assert result.error is not None
+    assert result.error.startswith("channel close failed: could not close channel")
+    assert "(job result before cleanup: success: " in result.error
     assert provider.calls[-1] == "destroy"
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import re
 import subprocess
 from collections.abc import Sequence
@@ -404,6 +405,27 @@ class HyperVSandboxController:
 
     def _remove_workspace(self, sandbox: SandboxRecord) -> None:
         workspace = self._disk_path(sandbox).parent
+        # Remove-VM deletes the VM's files but leaves Hyper-V's empty
+        # vm-config\<name>\Virtual Machines directories behind. Remove only
+        # empty directories; any file or link keeps the workspace for review.
+        config = workspace / "vm-config"
+        if config.is_symlink() or config.is_junction():
+            raise HyperVError("Refusing to remove a linked vm-config entry")
+        if config.exists():
+            if not config.is_dir():
+                raise HyperVError("Refusing to remove an unexpected vm-config entry")
+            directories: list[Path] = []
+            for dirpath, dirnames, filenames in os.walk(config):
+                current = Path(dirpath)
+                if filenames:
+                    raise HyperVError("VM configuration files remain after VM removal")
+                for name in dirnames:
+                    child = current / name
+                    if child.is_symlink() or child.is_junction():
+                        raise HyperVError("Refusing to remove a linked vm-config entry")
+                directories.append(current)
+            for directory in reversed(directories):
+                directory.rmdir()
         try:
             workspace.rmdir()
         except FileNotFoundError:

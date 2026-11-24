@@ -160,6 +160,39 @@ def test_lifecycle_updates_durable_host_observed_state(tmp_path: Path):
     ]
 
 
+def _leave_hyperv_config_dirs(controller: HyperVSandboxController, sandbox: SandboxRecord) -> Path:
+    workspace = controller.config.workspace_root.resolve() / sandbox.sandbox_id
+    (workspace / "vm-config" / sandbox.external_id / "Virtual Machines").mkdir(parents=True)
+    return workspace
+
+
+def test_destroy_removes_empty_config_dirs_left_by_remove_vm(tmp_path: Path):
+    # Live Gate A run: Remove-VM left vm-config\<name>\Virtual Machines empty,
+    # so rmdir of the sandbox workspace failed with WinError 145.
+    controller, _ = build_controller(tmp_path)
+    sandbox = controller.create(job_id="job-1", spec=SandboxSpec())
+    workspace = _leave_hyperv_config_dirs(controller, sandbox)
+
+    controller.destroy(sandbox)
+
+    assert not workspace.exists()
+    assert sandbox.status is SandboxStatus.DESTROYED
+
+
+def test_destroy_keeps_workspace_when_config_files_remain(tmp_path: Path):
+    controller, _ = build_controller(tmp_path)
+    sandbox = controller.create(job_id="job-1", spec=SandboxSpec())
+    workspace = _leave_hyperv_config_dirs(controller, sandbox)
+    leftover = workspace / "vm-config" / sandbox.external_id / "Virtual Machines" / "state.vmcx"
+    leftover.write_bytes(b"still here")
+
+    with pytest.raises(HyperVError, match="files remain"):
+        controller.destroy(sandbox)
+
+    assert leftover.read_bytes() == b"still here"
+    assert sandbox.status is SandboxStatus.ERROR
+
+
 def test_create_rejects_changed_base_image_before_hyperv_call(tmp_path: Path):
     controller, runner = build_controller(tmp_path)
     controller.config.base_image.write_bytes(b"tampered")

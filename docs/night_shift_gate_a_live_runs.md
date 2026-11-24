@@ -1,7 +1,8 @@
 # Gate A live runs (2026-11-22)
 
-First live attempts of `python -m night_shifts.gate_a_run` through the elevated
-command helper. Gate A has **not passed** yet.
+Live attempts of `python -m night_shifts.gate_a_run` through the elevated
+command helper. **Gate A passed on attempt 6 (2026-11-24): 7/7 real-host cases,
+no leftover VMs or sandbox folders.**
 
 ## Results
 
@@ -11,8 +12,14 @@ command helper. Gate A has **not passed** yet.
 | 2 | Copy, WSL cleanup and detach succeeded. Stopped at the Hyper-V VM inventory with `FileNotFoundError` (`powershell.exe` not on `PATH`). |
 | 3 | `test_real_host_prerequisites` passed. `test_real_host_serial_round_trip_and_cleanup` hung ~13.5 min until killed; 5 cases not started. One VM and its sandbox folder left behind (`cleanup_unknown`). |
 | 4 | Same pattern, killed at the 420 s case cap (run `gate-a-e445a867…`). Stack dump located the hang (see below). VM `night-shift-b531690a41d142d78e2fa9251c07a78e` and its sandbox folder left behind. |
+| 5 | Fresh copy cleaned with the `ready`-handshake guest script (run `gate-a-32e883a9…`). Round-trip case ended in 20 s; VM and disk removed, but `Remove-VM` left empty `vm-config\<name>\Virtual Machines` dirs, so the workspace `rmdir` failed (WinError 145) and the cleanup error hid the job result. Fixed: remove only empty config dirs; keep the job result in cleanup errors. |
+| 6 | **Passed** (run `gate-a-541c03ed…`, 398 s, `--base-image` from attempt 5). All 7 cases passed: prerequisites, round trip, rejection, disconnect, cancellation, timeout (243 s), reconciliation. Inventory before/after equal; no sandbox dirs left. |
 
-Cleaned base image (attempt 2, reusable via `--base-image`):
+Gate A base image (attempt 5, with `ready` handshake):
+`D:\NightShift\gate-a\gate-a-32e883a99e1f493b84494d1930e5dafe\base.vhdx`,
+SHA-256 `13bc986452a63d145b6cdd2d5b79e629d9244745269b0996b3bf24daf39894d6`.
+
+Superseded cleaned image (attempt 2, old guest script):
 `D:\NightShift\gate-a\gate-a-7ad0a82d93fa4248bbbefc0528bf1f3e\base.vhdx`,
 SHA-256 `4ccedb4f00fbe3b9726f21a9909ef563ab95305fdbd03e3c557ed657e171b667`.
 Cleanup audit `pass`; removed the three `etc/night-shift-diagnostic-027/*`
@@ -109,7 +116,6 @@ Seven older VMs from earlier work remain and were not touched:
 
 ## Next
 
-1. Add the `ready` handshake (guest bootstrap + host transport) and update the
-   guest file in a fresh cleaned image via the WSL path.
-2. Rerun Gate A; the close fix ensures a failing case still removes its VM.
-3. Remaining cases: rejection, disconnect, cancellation, timeout, reconciliation.
+1. Remove the seven older VMs above in a separate scoped cleanup.
+2. Protected runtime Gate A: trigger the same run as a fixed operation without
+   per-run elevation approval (launcher + watchdog work).
