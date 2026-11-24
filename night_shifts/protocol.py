@@ -202,7 +202,12 @@ def _decode_envelope(line: str, expected_kind: str | None = None) -> dict[str, A
     try:
         value = json.loads(line)
     except json.JSONDecodeError as exc:
-        raise ProtocolError(f"Invalid worker JSON: {exc.msg}") from exc
+        # Bounded, escaped excerpt so a live failure shows what actually arrived.
+        excerpt = line[:160]
+        raise ProtocolError(
+            f"Invalid worker JSON: {exc.msg} at char {exc.pos} of {len(line)}; "
+            f"starts with {excerpt!r}"
+        ) from exc
     message = _object(value, "protocol envelope")
     if message.get("version") != PROTOCOL_VERSION:
         raise ProtocolError(f"Unsupported protocol version: {message.get('version')!r}")

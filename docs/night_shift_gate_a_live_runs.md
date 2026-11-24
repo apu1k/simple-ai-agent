@@ -146,8 +146,67 @@ Seven older VMs from earlier work remain and were not touched:
 `night-shift-image-prep-{20ce30aa…, 2486645f…, 6584fc35…, 8e3e0fce…}`,
 `night-shift-recovery-8c4c51e2…`.
 
+## Next (historical, done)
+
+1. Remove the seven older VMs above in a separate scoped cleanup. *(Done: all
+   seven removed and confirmed gone.)*
+2. Protected runtime Gate A: trigger the same run as a fixed operation without
+   per-run elevation approval. *(Done: see below.)*
+
+## Gate A through the fixed scheduled task (2026-11-24)
+
+One-time elevated install of `\AiAgentGateA` (SYSTEM, no triggers, demand-only,
+`PT15M`, `IgnoreNew`) into `C:\Program Files\AiAgentGateA`, with an embedded
+Python 3.14.8 (python.org SHA-256 verified) and six PyPI wheels (SHA-256
+verified). The operator account has read/execute only; writes to the install
+folder, `runs\` and code were refused. Runs are started unelevated with
+`python -m night_shifts.gate_a_task start` and read with `... status`.
+
+| Install | Bundle SHA-256 | Result |
+|---|---|---|
+| 1 | `23406485...4805d` | **failed** after 2.6 s, `KeyError: 'SystemRoot'`; no VM created |
+| 2 | `e2fb2e9a...260c` | **failed**: prerequisites passed, reply test got an invalid JSON line after `protocol_test_echo`; VM removed, no leftovers |
+| 3 | `b0883bb7...1f3b` | **passed 7/7** in 388.6 s, no new VMs, no sandbox folders |
+
+Findings:
+
+- **Bundle missing `llm/base.py`** (`night_shifts/__init__.py` imports
+  `night_shifts.inference`). Caught in review before install; the bundle now
+  ships `llm/__init__.py` + `llm/base.py` and a test imports the Gate A modules
+  from an extracted bundle only.
+- **Install 1:** `{**os.environ}` has upper-case keys on Windows
+  (`SYSTEMROOT`), so the fixed child runner's `env['SystemRoot']` failed on the
+  first PowerShell call (listing VMs, before any test). Fixed by resolving
+  PowerShell via `GetSystemWindowsDirectoryW`.
+- **Install 2:** intermittent invalid JSON line from the guest after the echo
+  event. Guest writes are single-threaded and the host line splitter is
+  correct; **cause unknown**. It did not recur in install 3. Worker JSON errors
+  now include position, length and a 160-character escaped excerpt, so a
+  recurrence shows what arrived. Treat as an open risk.
+- **Evidence:** install 1's run files were lost during the first reinstall
+  (`Copy-Item -LiteralPath` with `*` copied nothing, without error); recreated
+  from the session in `D:\NightShift\gate-a\task-attempts\install-1\`.
+  Install 2's files were copied and SHA-256 verified per file before removal
+  (`task-attempts\install-2\`).
+
+Install 3 run `gate-a-d34858715f4f4eaaa8c193d2e2d9c9ca` (19:54:05-20:00:34 UTC):
+
+| Test | Result | Time |
+|---|---|---|
+| Prerequisites | passed | 4.0 s |
+| Fixed reply over COM1, then cleanup | passed | 20.5 s |
+| Unsupported task rejected | passed | 30.5 s |
+| Guest disconnect | passed | 31.4 s |
+| Cancellation | passed | 28.0 s |
+| Timeout forces cleanup | passed | ~244 s |
+| Restart cleanup removes only its orphan | passed | ~30 s |
+
+**Chat-close check:** the operator closed the agent app for about one minute
+while the run was in progress; the task kept running (it is independent of the
+app), and the result was read after reopening. Task Last Result `0`.
+
 ## Next
 
-1. Remove the seven older VMs above in a separate scoped cleanup.
-2. Protected runtime Gate A: trigger the same run as a fixed operation without
-   per-run elevation approval (launcher + watchdog work).
+1. Recovery check: deliberately interrupt a separate run and confirm
+   `gate_a_cleanup` removes exactly that VM and sandbox folder.
+2. If the invalid-JSON failure recurs, use the new excerpt to find the cause.
