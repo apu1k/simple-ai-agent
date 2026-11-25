@@ -233,8 +233,30 @@ does not cover a killed **scheduled task** run: that leaves `latest.json` at
 `running_or_unknown`, which blocks new starts until an administrator reviews
 it; there is no automatic watchdog cleanup yet.
 
+## Reply stress test (2026-11-25)
+
+Goal: measure how often the one-off `Invalid worker JSON: Expecting value`
+failure (task install 2) recurs. Elevated helper, repo venv, only
+`test_real_host_serial_round_trip_and_cleanup`, 15 consecutive runs against the
+Gate A base image (`13bc9864...94d6`), job timeout 120 s, per-run cap 300 s.
+
+- **15/15 passed**, 25.8-27.3 s each (`D:\NightShift\gate-a\stress-20261125-065405`,
+  `summary.json` and one `pytest.log` per run). No invalid JSON.
+- No leftover VM or sandbox entry after any run; Hyper-V inventory identical
+  before and after; base image last-write time unchanged.
+- Two earlier attempts the same morning did not run any test: the script
+  missed the documented helper fixes (missing `COMPUTERNAME` made `Get-VM`
+  fail; `&` silently did not start Python). A read-only check confirmed
+  Hyper-V was healthy with no VMs or stale configs.
+
+Interpretation: the failure is rare. Zero failures in 15 runs puts the rate
+under roughly 20% (95% bound) for this path. It does not rule out a cause
+specific to the SYSTEM scheduled task, where the only failure occurred.
+
 ## Next
 
 1. If the invalid-JSON failure recurs, use the new excerpt to find the cause.
+   Before Gate B, consider repeating the stress test through the scheduled
+   task path (SYSTEM) as well.
 2. Decide whether the scheduled task should run `gate_a_cleanup` itself on the
    next start after a `running_or_unknown` receipt, or keep that manual.

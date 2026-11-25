@@ -39,6 +39,41 @@ unchanged production launcher/policy pins, existing tracked source preservation,
 worker, log, policy or daemon was executed/read; no elevation, media writing,
 VM/service/network operation, restart or new commit occurred. **Gate A is unrun.**
 
+> **Superseded (Gate A update):** Gate A has since **passed** on the real host.
+> See "Gate A passed on the real host" below and
+> [Gate A live runs](night_shift_gate_a_live_runs.md). Statements above and in
+> older sections that Gate A is unrun or **BLOCKED** are historical.
+
+## Gate A passed on the real host
+
+Gate A validates the existing opt-in Hyper-V lifecycle with the protocol-test
+image: create a disposable network-off VM from a pinned cleaned image, exchange a
+fixed task/result over COM1, and confirm VM and differencing-disk removal after
+success, rejected objective, disconnect, cancellation, timeout and restart
+reconciliation. It does no model work and transfers no repository data.
+
+Real-host evidence (details, attempts and SHA-256s in
+[night_shift_gate_a_live_runs.md](night_shift_gate_a_live_runs.md)):
+
+- **7/7 passed** in an operator-approved elevated run against
+  `D:\NightShift\gate-a\gate-a-32e883a9...\base.vhdx` (SHA-256
+  `13bc9864...94d6`); Hyper-V VM inventory identical before and after.
+- **7/7 passed through the fixed scheduled task** (`gate_a_task start`) started
+  from an unelevated session without a per-run prompt; the run continued while
+  the chat app was closed. Commit `9ddaec3`.
+- **Interrupted-run recovery passed:** a run killed mid-test left one VM; the
+  recovery command removed exactly that VM and its sandbox folder, base image
+  unchanged. Commit `9e4f863`.
+
+Open risks (do not block Gate A, matter for Gate B):
+
+- **Intermittent invalid JSON on COM1:** one task run (install 2) rejected the
+  guest's line after `protocol_test_echo` with `Invalid worker JSON: Expecting
+  value`; cause unknown. The error now includes a bounded excerpt of the line.
+- A killed scheduled-task run is not cleaned up automatically; its
+  `running_or_unknown` result blocks new starts until an administrator reviews it.
+- Resource-limit guarantees beyond the tested lifecycle remain unverified.
+
 ## Local desktop resumed — audit-correlation checkpoint verified offline
 
 The operator is now local and has committed Flex as `a7c717c` and recovery
@@ -685,9 +720,9 @@ Limits not established by this step: no real Hyper-V named-pipe tool transport/s
 
 | Gate | State | Evidence needed / operator action |
 | --- | --- | --- |
-| A: real lifecycle | **BLOCKED — not run** | Operator-approved dedicated Windows Hyper-V host/permissions, reviewed provenance and SHA-256 of network-off protocol-test Linux VHDX with serial bootstrap, storage/resource settings and pipe access review. Run only opt-in real-host tests after review; capture VM/differencing-disk cleanup and sanitized results. The existing test includes fixed protocol exchange, timeout/cancel and exact-ID orphan cleanup; disconnect/failure cleanup and actual resource-limit guarantees still require verification. |
+| A: real lifecycle | **PASSED — real host** | 7/7 opt-in real-host tests passed (elevated run and fixed scheduled task), interrupted-run recovery passed; see [Gate A live runs](night_shift_gate_a_live_runs.md). Open: intermittent invalid-JSON line on COM1 (cause unknown), no automatic cleanup after a killed task run, resource-limit guarantees unverified. |
 | B: real transfer | **BLOCKED — no real data-path evidence** | Offline fixture transfer passed fake-serial tests; Linux guest installation and a real named-pipe session have not been validated on this Windows host. Review/deploy the guest image, implement an interruptible bounded serial adapter and run operator-approved real VM boot/inject/check/retrieve/destroy including failed-retrieval cleanup. No arbitrary checkout transfer or live model work. |
-| C: first model result | **BLOCKED by A/B** | Approved model/settings and paid-call consent; reproduce a fixture patch in a separate disposable workspace, report checks, usage and cleanup. |
+| C: first model result | **BLOCKED by B** | Approved model/settings and paid-call consent; reproduce a fixture patch in a separate disposable workspace, report checks, usage and cleanup. |
 | D: unattended queue | **BLOCKED by C** | Durable claiming, supervised runner, multi-job/restart evaluation with retained review bundles and owner-safe reconciliation. |
 
 Existing code provides a Hyper-V lifecycle controller and whole-task COM1 JSONL transport, a host-side tool-session contract plus offline fixture transfer, a guest tool prototype, host-side inference gateway and synchronous service. It does **not** provide an interruptible real serial tool transport, deployed fixture guest service, demonstrated Hyper-V workspace/result transfer, real guest artifact retrieval, a live-bound independently retrieved review patch, hard USD cost enforcement, or a durable runner. An offline review-patch/bundle builder exists separately, but is not wired into the sandbox backend. The Commit 06 executor is location-neutral, with a compatibility import from `guest/`, and treats a final summary as an unverified submission. The offline Commit 06 changes were committed as `99ceeb8`. The guest CLI defaults to `UnavailableWorkerExecutor`.
