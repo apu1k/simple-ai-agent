@@ -20,9 +20,36 @@ No regular `create_agent(profile="coding-worker")` runtime/tool registry: those 
 
 1. **Commit 01:** this architecture and an observed baseline; docs only.
 2. **Commit 02 / Gate A:** document and validate the existing opt-in Hyper-V lifecycle/protocol-test image on an operator-approved real host. Mocked tests are not Gate A.
-3. **Commits 03–04 / Gate B:** bounded tool session and safe workspace/result transfer, including real-host boot/inject/fixed check/retrieve/destroy and failure cleanup. No live model tasks until Gates A and B have real evidence.
+3. **Gate B (revised, see below):** multi-source workspace snapshot on a per-run data disk, result retrieval, real-host boot/inject/fixed check/retrieve/destroy and failure cleanup. No live model tasks until Gates A and B have real evidence. The earlier Commit 03–04 serial-only fixture transfer (64 text files, ~2 MB) remains as offline groundwork, not the target design.
 4. **Commits 05–08:** practical guest tools, host-neutral executor and honest submission semantics, unified budgets/cancellation, independently collected durable review bundles and patch validation in another disposable workspace.
 5. **Commit 09 / Gate C:** one approved live-model fixture task with replayable patch, checks, usage, and verified cleanup; failures and cancellation included. Never use the main project as the first task.
 6. **Commits 10–12 / Gate D:** one separately supervised sequential runner, narrow head tools, small evaluation set, restart recovery and operator runbook. No unscoped cleanup against another live runner.
+
+## Gate B design (revised)
+
+Goal: give the offline VM a workspace built from several sources, from a few MB up to many GB (code, measurement data, later 3D/computer-use material). The PC prepares everything; the VM never gets network access.
+
+**Workspace profile** (defined per run): a list of sources, each mounted at `/workspace/<name>`:
+- `git`: a local checkout (GitHub repos are fetched/cloned on the PC beforehand, never from the VM). Only the files of one exact **committed** tree are exported from Git objects; no working tree, no uncommitted changes, no history, no hooks/filters run on the PC. Default: the commit must already be on the upstream remote (i.e. published); allowing unpushed commits is an explicit option. The VM gets a fresh Git repo of that tree so a patch can be produced.
+- `folder`: a normal folder on the PC, copied as-is (also for unpushed projects or extra files).
+- Per source: `read-only` or `writable`, and optional include/exclude patterns. **No default exclusions.**
+
+**Preview and approval:** before each run the PC builds a preview (sources, file counts, sizes, include/exclude effects, symlinks/junctions refused, warnings for files that look like secrets: warn only, never auto-exclude). The operator approves it once; the full path-to-SHA-256 manifest is stored with the run.
+
+**Transport:** large data does not go over COM1. Per run the PC creates a **data disk** (VHDX) with the snapshot and manifest and attaches it read-only; an empty **output disk** is attached writable. COM1 carries only control messages and the short result. The VM stays network-off; no host folder is shared or mounted into the VM.
+
+**Results:** patch against the start commit for writable `git` sources; changed/new/deleted files compared to the manifest for writable `folder` sources; size-limited and validated on the PC, stored in the run folder. **Never written back to the original folders automatically.** Reading the guest-written output disk on the PC is a parsing risk and must be reviewed in B4.
+
+**Image change:** the guest needs a small service that mounts the data disk at `/workspace` (read-only source, copied to a writable work area where allowed) and the output disk at `/output`. That requires a new cleaned image and a Gate A rerun with it.
+
+| Step | Content | Check |
+|---|---|---|
+| B1 | Profile + snapshot builder + preview/manifest on the PC (no VM) | Unit tests; real preview reviewed by operator |
+| B2 | Data/output disk creation and attach; guest mount service; new image | Gate A rerun with new image |
+| B3 | Guest prepares workspace, fixed check recomputes all SHA-256 against manifest | Live run, manifest matches in VM |
+| B4 | Result retrieval (patch / changed files), limits, host validation | Live run with a deliberate change in the VM |
+| B5 | Full Gate B through the scheduled task, including a mid-run failure | Results correct, VM and disks gone, originals unchanged |
+
+Out of scope for Gate B: GPU/3D, GUI/computer use, writing results back, network access in the VM.
 
 Before any real VM, model call, image build/download, elevation, host reconfiguration, or paid evaluation: obtain explicit operator authorization. If Hyper-V is unavailable, report a blocker; do not fall back to an unisolated local worker. Report test type (mock, real VM, live model), image identity, cleanup evidence, and unresolved risks separately at each gate.
