@@ -9,6 +9,7 @@ import sys
 
 import pytest
 
+from night_shifts import gate_b_stage
 from night_shifts.gate_b_files import open_directory
 from night_shifts.gate_b_preview import build_preview, sha256
 from night_shifts.gate_b_profile import PreviewError, load_profile, portable
@@ -217,3 +218,119 @@ def test_cli_summary_is_json_and_omits_file_list(tmp_path):
     summary = json.loads(result.stdout)
     assert summary["total_files"] == 1 and "manifest" not in summary
     assert len(summary["preview_sha256"]) == 64
+
+
+def _review_file(tmp_path, profile, *, encoding="utf-8"):
+    result = build_preview(profile)
+    path = tmp_path / "preview.json"
+    path.write_text(json.dumps(result, indent=2), encoding=encoding)
+    return path, result["preview_sha256"]
+
+
+def test_stage_copies_exact_git_and_local_bytes(tmp_path, git_checkout):
+    repo, revision = git_checkout
+    source = tmp_path / "measurements"
+    (source / "empty").mkdir(parents=True)
+    (source / "sample.bin").write_bytes(b"\xff\x00" * (2 * 1024**2))
+    profile = load_profile(_profile(tmp_path, _folder(source),
+                                    {"name": "code", "kind": "git", "path": str(repo), "revision": revision,
+                                     "upstream": "refs/remotes/origin/main"}))
+    path, digest = _review_file(tmp_path, profile, encoding="utf-16")
+    dest = tmp_path / "stage"
+    seal = gate_b_stage.stage_workspace(profile, path, digest, dest)
+    assert json.loads((dest / "sealed.json").read_text(encoding="ascii")) == seal
+    assert seal["preview_sha256"] == digest
+    assert (dest / "workspace" / "data" / "empty").is_dir()
+    assert (dest / "workspace" / "data" / "sample.bin").read_bytes() == (source / "sample.bin").read_bytes()
+    assert (dest / "workspace" / "code" / "committed.bin").read_bytes() == b"\x00published\xff"
+    assert not (dest / "workspace" / "code" / "next.txt").exists()
+    assert (repo / "committed.bin").read_bytes() == b"modified on disk"
+    manifest_bytes = (dest / "manifest.json").read_bytes()
+    assert hashlib.sha256(manifest_bytes).hexdigest() == seal["manifest_sha256"]
+    assert set(json.loads(manifest_bytes)) == {"sources", "version"}
+
+
+def test_stage_demands_separate_digest_and_full_matching_manifest(tmp_path):
+    source = tmp_path / "data"
+    source.mkdir()
+    (source / "x").write_bytes(b"approved")
+    profile = load_profile(_profile(tmp_path, _folder(source)))
+    path, digest = _review_file(tmp_path, profile)
+    dest = tmp_path / "stage"
+    with pytest.raises(PreviewError, match="explicitly approved SHA-256"):
+        gate_b_stage.stage_workspace(profile, path, "0" * 64, dest)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["manifest"]["sources"][0]["entries"][0]["sha256"] = "0" * 64
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(PreviewError, match="manifest does not match"):
+        gate_b_stage.stage_workspace(profile, path, digest, dest)
+    assert not dest.exists()
+
+
+@pytest.mark.parametrize("mutation", ["changed", "extra", "missing"])
+def test_stage_rejects_changed_source_and_cleans_partial_copy(tmp_path, mutation):
+    source = tmp_path / "data"
+    source.mkdir()
+    (source / "one").write_bytes(b"same")
+    (source / "two").write_bytes(b"good")
+    profile = load_profile(_profile(tmp_path, _folder(source)))
+    path, digest = _review_file(tmp_path, profile)
+    if mutation == "changed":
+        (source / "two").write_bytes(b"oops")  # same size, different digest
+    elif mutation == "extra":
+        (source / "three").write_bytes(b"new")
+    else:
+        (source / "two").unlink()
+    dest = tmp_path / "stage"
+    with pytest.raises(PreviewError, match="changed|not in the approved"):
+        gate_b_stage.stage_workspace(profile, path, digest, dest)
+    assert not dest.exists()
+    assert (source / "one").read_bytes() == b"same"
+
+
+def test_stage_refuses_stale_git_head(tmp_path, git_checkout):
+    repo, _ = git_checkout
+    profile = load_profile(_profile(tmp_path, {"name": "code", "kind": "git", "path": str(repo),
+                                               "allow_unpublished": True}))
+    path, digest = _review_file(tmp_path, profile)
+    _git(repo, "commit", "--allow-empty", "-m", "New HEAD with the same tree")
+    dest = tmp_path / "stage"
+    with pytest.raises(PreviewError, match="revision or cached upstream tip changed"):
+        gate_b_stage.stage_workspace(profile, path, digest, dest)
+    assert not dest.exists()
+
+
+def test_stage_rejects_overwrite_or_destination_inside_source(tmp_path):
+    source = tmp_path / "data"
+    source.mkdir()
+    profile = load_profile(_profile(tmp_path, _folder(source)))
+    path, digest = _review_file(tmp_path, profile)
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    (existing / "keep").write_bytes(b"untouched")
+    with pytest.raises(FileExistsError):
+        gate_b_stage.stage_workspace(profile, path, digest, existing)
+    with pytest.raises(PreviewError, match="must not be inside a source"):
+        gate_b_stage.stage_workspace(profile, path, digest, source / "stage")
+    assert not (source / "stage").exists()
+    assert (existing / "keep").read_bytes() == b"untouched"
+
+
+def test_stage_fails_when_destination_readback_differs(tmp_path, monkeypatch):
+    source = tmp_path / "data"
+    source.mkdir()
+    (source / "x").write_bytes(b"good")
+    profile = load_profile(_profile(tmp_path, _folder(source)))
+    path, digest = _review_file(tmp_path, profile)
+    verify = gate_b_stage._verify_payload
+
+    def corrupt_before_readback(destination, review, max_bytes):
+        assert not (destination / "sealed.json").exists()
+        (destination / "workspace" / "data" / "x").write_bytes(b"oops")
+        verify(destination, review, max_bytes)
+
+    monkeypatch.setattr(gate_b_stage, "_verify_payload", corrupt_before_readback)
+    dest = tmp_path / "stage"
+    with pytest.raises(PreviewError, match="destination readback differs"):
+        gate_b_stage.stage_workspace(profile, path, digest, dest)
+    assert not dest.exists()

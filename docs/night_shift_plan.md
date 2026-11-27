@@ -45,7 +45,7 @@ Goal: give the offline VM a workspace built from several sources, from a few MB 
 | Step | Content | Check |
 |---|---|---|
 | B1 | Profile + snapshot builder + preview/manifest on the PC (no VM); see the [B1 preview guide](night_shift_gate_b_preview.md) | Unit tests; real preview reviewed by operator |
-| B2 | Data/output disk creation and attach; guest mount service; new image | Gate A rerun with new image |
+| B2 | [Approved input staging](night_shift_gate_b_disks.md), then data/output disk creation and attach; guest mount service; new image | Staging checks, disk-only round trip, then Gate A rerun with new image |
 | B3 | Guest prepares workspace, fixed check recomputes all SHA-256 against manifest | Live run, manifest matches in VM |
 | B4 | Result retrieval (patch / changed files), limits, host validation | Live run with a deliberate change in the VM |
 | B5 | Full Gate B through the scheduled task, including a mid-run failure | Results correct, VM and disks gone, originals unchanged |

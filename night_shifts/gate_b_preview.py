@@ -9,9 +9,10 @@ import os
 import stat
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO
+from typing import IO, Protocol
 
 from night_shifts.gate_b_files import Directory, open_directory, signature
 from night_shifts.gate_b_git import blob_size, open_git
@@ -38,13 +39,15 @@ def sha256(value: object) -> str:
     return hashlib.sha256(canonical(value)).hexdigest()
 
 
-def _hash_stream(stream: IO[bytes], count: int) -> str:
+def _hash_stream(stream: IO[bytes], count: int, output: IO[bytes] | None = None) -> str:
     digest = hashlib.sha256()
     while count:
         chunk = stream.read(min(count, _CHUNK))
         if not chunk:
             raise PreviewError("file ended before its declared size")
         digest.update(chunk)
+        if output is not None and output.write(chunk) != len(chunk):
+            raise PreviewError("short write while staging a workspace file")
         count -= len(chunk)
     return digest.hexdigest()
 
@@ -73,10 +76,17 @@ class _Budget:
         self.remaining -= size
 
 
+class _CopySink(Protocol):
+    def bind_git(self, revision: str, upstream_tip: str | None) -> None: ...
+
+    def file(self, path: str, stream: IO[bytes], length: int, mode: str) -> str: ...
+
+
 @dataclass
 class _Scan:
     source: Source
     budget: _Budget
+    sink: _CopySink | None = None
     entries: dict[str, dict[str, object]] = field(default_factory=dict)
     names: dict[str, str] = field(default_factory=dict)
     warnings: set[str] = field(default_factory=set)
@@ -116,8 +126,8 @@ class _Scan:
         path = portable(parts)
         self.directory(parts[:-1])
         self.budget.bytes(length)
-        self._entry(path, {"path": path, "kind": "file", "size": length,
-                           "sha256": _hash_stream(stream, length), "mode": mode})
+        digest = _hash_stream(stream, length) if self.sink is None else self.sink.file(path, stream, length, mode)
+        self._entry(path, {"path": path, "kind": "file", "size": length, "sha256": digest, "mode": mode})
         self.size += length
         self.files += 1
 
@@ -147,6 +157,8 @@ class _Scan:
     def git(self) -> None:
         with open_git(self.source) as git:
             self.revision, self.upstream_tip = git.revision, git.upstream_tip
+            if self.sink is not None:
+                self.sink.bind_git(git.revision, git.upstream_tip)
             with (git.reader("ls-tree", "--full-tree", "-rtz", git.revision) as (_, listing),
                   git.reader("cat-file", "--batch", batch=True) as (stdin, blobs)):
                 assert stdin is not None
@@ -188,10 +200,14 @@ class _Scan:
 
 def build_preview(profile: Profile) -> dict[str, object]:
     """Hash selected file bytes, not paths alone. No source content is copied or executed."""
+    return _build_preview(profile)
+
+
+def _build_preview(profile: Profile, sink_for: Callable[[Source], _CopySink] | None = None) -> dict[str, object]:
     budget = _Budget(profile.max_bytes)
     scans = []
     for source in profile.sources:
-        scan = _Scan(source, budget)
+        scan = _Scan(source, budget, None if sink_for is None else sink_for(source))
         try:
             if source.kind == "git":
                 scan.git()
