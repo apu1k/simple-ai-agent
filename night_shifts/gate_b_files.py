@@ -16,6 +16,12 @@ from typing import BinaryIO
 from night_shifts.gate_b_profile import PreviewError
 
 
+class _FileBasicInfo(ctypes.Structure):
+    _fields_ = [("creation_time", ctypes.c_int64), ("last_access_time", ctypes.c_int64),
+                ("last_write_time", ctypes.c_int64), ("change_time", ctypes.c_int64),
+                ("attributes", wintypes.DWORD)]
+
+
 class _WindowsFiles:
     def __init__(self) -> None:
         dll = ctypes.WinDLL("kernel32.dll", use_last_error=True)
@@ -43,10 +49,12 @@ class _WindowsFiles:
         if handle == ctypes.c_void_p(-1).value:
             raise PreviewError(f"cannot open {str(path)!r}: {ctypes.WinError(ctypes.get_last_error())}")
         try:
-            info = (wintypes.DWORD * 2)()
-            if not self.info(handle, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            # Query attributes on the same no-follow handle. exFAT on Windows
+            # rejects FileAttributeTagInfo (9), but supports FileBasicInfo (0).
+            info = _FileBasicInfo()
+            if not self.info(handle, 0, ctypes.byref(info), ctypes.sizeof(info)):
                 raise ctypes.WinError(ctypes.get_last_error())
-            attributes = info[0]
+            attributes = info.attributes
             if attributes & (0x400 | 0x1000 | 0x40000 | 0x400000):
                 raise PreviewError(f"link, reparse point or offline file is not allowed: {str(path)!r}")
             if bool(attributes & 0x10) != directory:

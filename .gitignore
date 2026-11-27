@@ -55,6 +55,7 @@ Caddyfile
 !/scripts/privileged_command_bootstrap.cs
 !/scripts/install_privileged_command_helper.ps1
 !/scripts/install_gate_a_task.ps1
+!/scripts/gate_b_disk_smoke.ps1
 !/scripts/validate_native_store_privileged_fixture.ps1
 !/scripts/validate_retained_store_ordinary_access.ps1
 !/scripts/validate_native_store_guard_checks.ps1

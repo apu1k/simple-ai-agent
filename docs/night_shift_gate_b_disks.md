@@ -14,7 +14,31 @@ The command refuses a changed profile, altered preview, changed Git revision/ups
 
 The seal records verification at staging time. It is not proof that files have not changed since then or that the backing disk was flushed and detached. B2.1 proves no VM isolation or large-disk throughput by itself.
 
-## B2.2: build and attach the disks (next)
+## B2.2: disk-only test, then VM attachment
+
+The attended Windows test uses `scripts/gate_b_disk_smoke.ps1`, with `Open` and `Close` as separate explicit Administrator operations. It is **not** a worker action, automation endpoint, or general disk utility. It can only create a new 256 MiB dynamic VHDX under a unique protected `AiAgentGateB-DiskSmoke-<run-id>` directory in Program Files. It takes neither a disk number nor a path. `Open` uses two independent Windows lookups to cross-check the VHDX-to-disk mapping and initializes only an explicitly verified blank file-backed disk. `Close` validates the creation receipt and the VHDX identity, detaches by exact path, and checks `Get-VHD` again before hashing the detached VHDX. It does not delete the evidence. Nothing is attached to a VM.
+
+1. Prepare a synthetic local folder with a binary file (include an empty directory and a non-ASCII filename). Save its full B1 preview and review the file list and digest while no disk is attached. Generate an independent 32-hex-character run ID for each trial.
+2. Approve `Open` for the first ID. If successful, verify that the drive letter still resolves to the reported `volume_path` (for example, with `GetVolumeNameForVolumeMountPointW`) before writing to it. Create a fresh parent directory on that volume, then run B2.1 as the normal user with the reviewed digest and a new child destination there. Verify the seal, the files and their hashes. Approve `Close` for the same run ID and verify the drive was removed and the script reported a detached VHDX hash.
+3. Repeat with a fresh disk and run ID, changing one byte in the synthetic source **after** the preview. Require staging to refuse it and leave no staged directory or seal. Approve `Close` even after the expected staging failure, and verify that disk detached as well.
+4. No private data, guest-written disk, or existing VM/image is used. The exFAT volume has no per-file access controls; do not treat this scratch drive as private storage. If any elevated operation is interrupted or reports an unknown outcome, stop and inspect attachments before asking for any separately approved recovery. A timeout is not proof of detachment. Retain both test artifacts until reviewed; deletion is separate.
+
+### Live progress (2026-11-27)
+
+- First `Open` stopped before creating a disk: this host uses the versioned `Hyper-V/2.0.0.0` module directory. Module discovery was corrected and checked in native Windows PowerShell with a restricted module path.
+- Next `Open` (`cc883ad3944e47fc85a18d124bf5036d`) created the new exFAT VHDX and reported `E:`. The unelevated check matched `E:` to the exact volume GUID. Staging stopped before copying any payload: on this exFAT volume, `GetFileInformationByHandleEx(FileAttributeTagInfo)` returned WinError 87; a diagnostic on the same directory handle confirmed `FileBasicInfo` works instead.
+- `Close` reported the VHDX detached with SHA-256 `835ca97b9051b348ce003963fe27cd2daff0398d004473c7ded0518cf7fed6c7`. An independent check found both the temporary drive letter and the volume GUID path gone. The backing file is retained under Program Files; no VM or Gate A image was touched.
+
+**Windows disk-only acceptance passed** after switching the no-follow handle query to `FileBasicInfo`. In both trials the unelevated process checked the drive-letter-to-volume-GUID mapping before writing, and after `Close` the Windows drive list returned to its baseline and the exact volume path was gone. No real workspace data, VM or Gate A image was used.
+
+| Trial | Result | Scratch run ID | Detached VHDX SHA-256 |
+| --- | --- | --- | --- |
+| Approved copy | Two files (1,048,606 bytes, including `mésure.bin`) and an empty directory staged and independently read back; manifest and seal matched. | `cfe9afae2e1049f48390c06bd59bf359` | `59305686dac94a6080c917ad3f8356f5806b27f304153b4b01f16a1e8bd2f345` |
+| Same-size one-byte change | Staging exited 2 with `file bytes changed after review`; no partial directory or seal remained. | `5d59b771934b43b9b92c90cf32744839` | `92650b59aec47d3aa6c42b018ebb9bf70ccb565939b5aa67b09cbe2e529d2b5f` |
+
+The backing files are retained in the corresponding `AiAgentGateB-DiskSmoke-<run-id>` directories under Program Files. The approved-copy disk contains its manifest and synthetic fixture and can be considered for a separately reviewed read-only guest smoke test. These trials do not prove guest compatibility, large-workspace performance or the result-disk path.
+
+### Remaining disk and guest design
 
 - Keep the passing Gate A image untouched. Use a fresh run-owned input VHDX and a separately bounded output VHDX. Candidate input filesystem: **exFAT**, to fill from Windows and mount read-only in Ubuntu. Verify the exact guest kernel's exFAT support and test portable names, binary data and disk size before committing to it. Unix executable bits come from the manifest, not the transport filesystem.
 - Separate privileged disk setup/teardown from copying. Format only the new, blank VHDX positively identified by its backing file and attachment; fail closed on ambiguous mapping. Do not accept a raw physical disk number from the caller. Stage directly onto the mounted input volume to avoid an extra full-size copy. Dismount and record the exact sealed VHDX hash outside the disk. Check identity, capacity/free-space bounds, and ownership again before attachment.
