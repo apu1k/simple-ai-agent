@@ -269,8 +269,12 @@ def create_server(
         try:
             await websocket.accept()
             session_id = websocket.query_params.get("session_id") or None
+            resume_recent = websocket.query_params.get("resume_recent") == "1"
             selection = int(websocket.query_params.get("selection", "0"))
-            selected = await asyncio.to_thread(selected_runtime, session_id)
+            if resume_recent and session_id is None and isinstance(runtime, ConversationManager):
+                selected = await asyncio.to_thread(runtime.recent_chat)
+            else:
+                selected = await asyncio.to_thread(selected_runtime, session_id)
             session_id = selected.state.chat_session_id if multi_chat else None
             client_id = selected.attach_client(can_approve=False)
             try:
@@ -308,7 +312,11 @@ def create_server(
                     selected.detach_client(client_id)
                     selected = target
                     client_id = selected.attach_client(can_approve=False)
-                    session_id = selected.state.chat_session_id
+                    opened_id = selected.state.chat_session_id
+                    if (resume_recent and isinstance(runtime, ConversationManager)
+                            and opened_id is not None and opened_id != session_id):
+                        await asyncio.to_thread(runtime.remember_chat, opened_id)
+                    session_id = opened_id
                     selection = next_selection
                     cursor, previous = None, None
                 except asyncio.TimeoutError:

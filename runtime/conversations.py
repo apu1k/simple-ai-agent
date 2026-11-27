@@ -45,9 +45,41 @@ class ConversationManager:
                 if self.storage:
                     self.storage.set_default(default)
             self.default_chat_id = default
+            self._recent_chat_id = self.storage.recent_chat() if self.storage else None
         except Exception:
             self.close()
             raise
+
+    def recent_chat(self) -> AgentRuntime:
+        """Resolve a new UI's starting chat without moving existing clients."""
+        with self._condition:
+            self._require_open()
+            identity = self._recent_chat_id
+            if identity is not None and identity in self._runtimes:
+                return self._runtimes[identity]
+            # Older installs have no opening record. Seed from existing history
+            # (most recent creation or turn first), not an empty default.
+            for session in self.history.list_sessions(limit=0):
+                if session.session_id == self.default_chat_id and not session.turn_count:
+                    continue
+                try:
+                    selected = self.get(session.session_id)
+                except ValueError:
+                    continue
+                self.remember_chat(session.session_id)
+                return selected
+            self.remember_chat(self.default_chat_id)
+            return self.get(self.default_chat_id)
+
+    def remember_chat(self, identity: str) -> None:
+        with self._condition:
+            self._require_open()
+            if identity not in self._runtimes:
+                raise ValueError("Unknown chat session")
+            if identity != self._recent_chat_id:
+                if self.storage:
+                    self.storage.set_recent_chat(identity)
+                self._recent_chat_id = identity
 
     @property
     def providers(self):
@@ -130,9 +162,13 @@ class ConversationManager:
                     raise RuntimeBusyError("This chat already has an active run")
                 if sum(r.snapshot().processing for r in self._runtimes.values()) >= self.max_parallel_runs:
                     raise RuntimeBusyError("The backend parallel-run limit has been reached")
+                run_id = runtime.submit(**arguments)
+                # Count user activity, not a background reply arriving later.
+                self.remember_chat(identity)
+                return run_id
             if operation == "decide_pending":
                 return runtime.decide_file_pending(**arguments)
-            if operation not in {"submit", "reset_context", "reload_context", "compact_context",
+            if operation not in {"reset_context", "reload_context", "compact_context",
                                  "change_directory", "switch_model", "set_model_setting", "set_desktop_elevation"}:
                 raise ValueError("Unknown conversation operation")
             return getattr(runtime, operation)(**arguments)

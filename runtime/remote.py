@@ -398,8 +398,10 @@ class RemoteRuntimeClient:
                         generation = self._selection_generation
                         subscription: dict[str, Any] = {
                             "after": self._server_cursor, "server_id": self._server_id or "",
-                            "selection": generation,
+                            "selection": generation, "resume_recent": "1",
                         }
+                        # Only a new instance asks for the most recent chat;
+                        # an existing client keeps its chat across reconnects.
                         if self._selected_session_id is not None:
                             subscription["session_id"] = self._selected_session_id
                     query = urlencode(subscription)

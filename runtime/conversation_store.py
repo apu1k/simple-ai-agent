@@ -85,6 +85,16 @@ class ConversationStorage:
         with self.root.transaction() as db:
             db.execute("INSERT OR REPLACE INTO conversation_meta VALUES ('default_chat',?)", (identity,))
 
+    def recent_chat(self) -> str | None:
+        with self.root.transaction() as db:
+            row = db.execute("SELECT value FROM conversation_meta WHERE key='recent_chat'").fetchone()
+            return row[0] if row else None
+
+    def set_recent_chat(self, identity: str) -> None:
+        validate_chat_id(identity)
+        with self.root.transaction() as db:
+            db.execute("INSERT OR REPLACE INTO conversation_meta VALUES ('recent_chat',?)", (identity,))
+
     def scope(self, identity: str) -> ChatRuntimeStore:
         return ChatRuntimeStore(self.root, validate_chat_id(identity))
 

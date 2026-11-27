@@ -178,9 +178,11 @@ Client terminal:
 python main_textual.py
 ```
 
-Textual connects to `http://127.0.0.1:8765` by default. Multiple clients share one live
-conversation. Closing Textual disconnects only the interface; keep the server process
-running. The server checkpoints context, ordinary proposals, recent events and execution
+Textual connects to `http://127.0.0.1:8765` by default. New Textual windows resume the
+last chat opened or sent a message on that backend, including after a backend restart.
+On first use, existing chat history supplies the starting chat automatically. Already-open
+windows keep their own chats. Closing Textual disconnects only the interface; keep the server
+process running. The server checkpoints context, ordinary proposals, recent events and execution
 records in `.agent_runtime/runtime.sqlite3` (single writer; keep this private). Restarts
 restore state, not execution: interrupted commands are marked unknown and never retried
 automatically. Coherent OpenAI Responses continuation is restored; interrupted chains
